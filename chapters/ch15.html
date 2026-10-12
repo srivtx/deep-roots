@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 15 — JavaScript: V8's hidden classes and the scavenger — deep-roots</title>
+<meta name="description" content="Chapter 15 of the memory-models module: Chapter 15 — JavaScript: V8's hidden classes and the scavenger">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 15 — JavaScript: V8's hidden classes and the scavenger — deep-roots">
+<meta property="og:description" content="Chapter 15 of the memory-models module: Chapter 15 — JavaScript: V8's hidden classes and the scavenger">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 15 — JavaScript: V8's hidden classes and the scavenger — deep-roots">
+<meta name="twitter:description" content="Chapter 15 of the memory-models module: Chapter 15 — JavaScript: V8's hidden classes and the scavenger">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part II · the languages</div>
+<h1 class="post-title">Chapter 15 — JavaScript: V8's hidden classes and the scavenger</h1>
+<div class="post-meta">chapter 15 &middot; ~24 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> ECMAScript says nothing about memory — no <code>sizeof</code>, no address-of, no <code>free</code> — so every engine invents its own heap. V8 (Chrome, Node, Edge, Electron) answers the four questions like this: a <em>value</em> is a tagged word — a Smi is the integer itself packed into the tag bits and never allocated, everything else is a pointer whose first target word is a <strong>map</strong>, the hidden class. Because the spec makes objects string-keyed dictionaries, V8 turns property lookup into <em>map check + fixed offset load</em> — that is what hidden-class transition trees, inline caches, and elements kinds exist for, and why insertion order and <code>delete</code> decide whether your object access runs at load speed or hash speed. The heap is generational like the JVM's (ch12): two equal semispaces scavenged by Cheney copying (survive twice → old space), then mark-compact with time-sliced concurrent marking. Leaks are <em>reference</em> leaks through closures' heap-allocated Contexts and listener registries; ArrayBuffers park their bytes outside the heap. Numbers: V8 as of the Node 20 / Chrome 120 era (2023–2024), 64-bit, unless a line says otherwise.</blockquote>
+<h2 id="1-the-spec-is-silent-one-language-many-heaps">1. The spec is silent: one language, many heaps</h2>
+<p>Part II's four questions — what is a value, who owns it, who frees it, what safety — have no ECMAScript answer. The spec defines <em>observable behavior</em>: which properties a <code>{}</code> has, what <code>===</code> sees, in what order <code>for-in</code> enumerates. It never defines a byte, an address, or an object size, and it has no <code>sizeof</code> or <code>free</code> to violate. So the same source file runs on three unrelated heaps: <strong>V8</strong> (Chrome, Node, Edge, Electron, Deno), <strong>SpiderMonkey</strong> (Firefox), and <strong>JavaScriptCore/JSC</strong> (Safari). "JavaScript memory model" is shorthand for one engine's memory model; this chapter is V8's.</p>
+<p>The engines differ at the value level, not just the GC level. JSC and SpiderMonkey use <strong>NaN-boxing</strong>: one 64-bit word per value; doubles stored as themselves, pointers folded into quiet-NaN bit patterns (exponent all ones) that real doubles almost never collide with — chapter 06's tag-bit idea, executed in floating-point space. The price: every double must be checked for being pointer-shaped and "quieted," and the payload caps at 48 bits. V8 chose the opposite: <strong>pointer tagging</strong> — heap slots hold tagged words, general-heap doubles are real objects (HeapNumbers), and only double <em>arrays</em> get unboxed (section 4). Same language, different heaps, different constants.</p>
+<p>V8's four answers, previewed: a value is a tagged word (Smi or pointer); nobody owns anything (no <code>free</code>, no <code>delete</code>); reachability frees — a generational, compacting tracing collector; and safety is complete at the language level (no pointer arithmetic, no type casts), enforced <em>by the engine's own map checks</em> — which is why the map word, next, is the most important 8 bytes on the V8 heap.</p>
+<h2 id="2-tagged-words-smis-the-map-word-and-what-an-object-costs">2. Tagged words: Smis, the map word, and what an object costs</h2>
+<p>Derive the Smi before admiring it. Counters, array indices, lengths, loop variables: small integers are the most common values in real programs. If every <code>i</code> in <code>for (let i = 0; ...)</code> allocated an object, each iteration would pay a bump allocation plus a header plus later collection (ch12 priced Java's cheapest <code>new</code> at ~10 ns; chapter 14 showed CPython paying 28 bytes per <code>int</code>). So small integers must be <em>immediates</em> — values packed into the slot itself, never heap objects. But one slot must also be able to hold a pointer. That is a two-case sum type, and chapter 06 already taught its encoding: tag bits. V8 reserves the <strong>low bit</strong>: 0 = Smi, 1 = heap object.</p>
+<pre><code class="language-text">A tagged slot holding any JS value, 64-bit V8 — two shipped configurations:
+
+  pointer compression ON (Chrome since 80)      compression OFF (official Node builds)
+  +------------- 32 b -----+                    +-------------- 64 b ---------------+
+  |  31-bit int  &lt;&lt; 1  | 0 |  Smi               | 32-bit int |  32 zero bits  | 0   | Smi
+  |  cage offset       | 1 |  pointer           | full 64-bit address          | 1   | ptr
+  +------------------------+                   +------------------------------------+
+
+  A Smi is "value shifted left, tag 0": arithmetic survives. x&lt;&lt;1 + y&lt;&lt;1 == (x+y)&lt;&lt;1,
+  so Smi add never untags. A pointer is "address | 1": objects are 8-byte aligned, so
+  the low 3 bits are provably 0 and setting bit 0 is lossless — untag = mask low bit.</code></pre>
+<p>Two consequences worth money. First, the Smi <em>range</em> depends on the build: 31-bit payload in Chrome (max <code>2^30 − 1</code> = 1,073,741,823), 32-bit payload in Node's uncompressed word (max <code>2^31 − 1</code> = 2,147,483,647; observed: <code>%DebugPrint(2147483647)</code> prints <code>Smi</code>, one more boxes a HeapNumber) — the same source line, two heaps. Second, an unboxed double cannot be a tagged word, so a number that is not a Smi is a <strong>HeapNumber</strong> — a real object, map word + 8-byte payload. <code>2**31</code> costs an allocation; in Chrome, so does <code>2**30</code>.</p>
+<p>Every heap object — HeapNumber, string, JSObject, the Maps themselves — starts with the <strong>map word</strong>: a tagged pointer to a <strong>Map</strong>, V8's hidden class. Compare the three headers you now know:</p>
+<ul>
+<li><strong>PyObject</strong> (ch14): 16 bytes — refcount + type pointer. The refcount exists because CPython frees deterministically on zero.</li>
+<li><strong>JVM object</strong> (ch12): 12 bytes — mark word (identity hash, 4-bit GC age, lock bits) + compressed class pointer. The lock bits exist because threads synchronize on objects; the age field drives tenuring.</li>
+<li><strong>V8 JSObject</strong>: map word + properties pointer + elements pointer — <strong>24 bytes</strong> in Node's uncompressed build, <strong>12</strong> in Chrome's compressed one — and <em>nothing else</em>. No refcount: V8 traces, so no counter is maintained. No lock bits: an <em>isolate</em> (V8's VM instance) runs one JS thread; nothing synchronizes on a plain object. No age bits: the semispaces themselves are the age counter (section 5 — V8 needs no JVM-style 4-bit field, and 15 vs 2 collections is a real design fork, quiz 8). Even identity hashes are outsourced: an object with no out-of-line properties stores its hash in the otherwise-empty <em>properties</em> slot (V8's <code>raw_properties_or_hash</code>). And during a scavenge the map word is overwritten in place with a <strong>forwarding pointer</strong> — the map word moonlights as the "I already moved, here's where" note of Cheney's algorithm (ch12 section 4).</li>
+</ul>
+<pre><code class="language-text">  +----------------+------------------+------------------+---------------------+
+  | map word (8 B) | properties (8 B) | elements (8 B)   | in-object fields .. |
+  +----------------+------------------+------------------+---------------------+
+   ^ hidden class      ^ named props        ^ indexed props    ^ this.x, this.y
+     (a Map object);      backing store /      (FixedArray /       live HERE, not in
+     becomes GC           identity hash        FixedDoubleArray    a string-keyed
+     forwarding ptr                             / dictionary)       dictionary</code></pre>
+<p>Named properties live in <em>in-object slots</em> up to a pre-allocated count, then spill to the properties array. Observed on Node 24 / V8 13.6 (uncompressed): <code>{}</code> is <strong>56 bytes</strong> (24 header + 4 spare in-object slots × 8), <code>{x: 1, y: 2}</code> is <strong>40</strong> (24 + 2 slots), a <code>JSArray</code> is <strong>32</strong> (header + length), a HeapNumber <strong>16</strong>. In Chrome's compressed build the same objects are 28, 20, 16, and 12 bytes. "How big is a JS object" is a question about the <em>build</em>, not the language.</p>
+<h2 id="3-hidden-classes-from-string-hashing-to-a-guarded-load">3. Hidden classes: from string hashing to a guarded load</h2>
+<p>The spec makes every object a dictionary keyed by strings. Naive <code>o.x</code> would hash the string <code>"x"</code>, probe a table, compare strings — every single time. That is chapter 05's hash-lookup cost paid on the most common operation in the language. V8's fix is the <strong>Map</strong>: an object's shape — <em>which</em> properties, in <em>which</em> slots, with <em>which</em> representation — captured in one shared, immutable descriptor list. Two objects with the same map have the same layout, so <code>o.x</code> compiles to: check map, load slot 0.</p>
+<p>Shapes are built, not declared. Adding a property to an object transitions it from its current map to a new map along an edge labeled with the property name — and edges are <strong>shared</strong>: a second object taking the same transition lands on the <em>same</em> map. The result is a <strong>transition tree</strong> per root shape, not a map per object:</p>
+<pre><code class="language-text">  the canonical path (add x, then y, then z) — one map per shape, shared by
+  every object that walks it in this order:
+
+  M0 {} --+"x"--&gt; M1 {x:0} --+"y"--&gt; M2 {x:0,y:1} --+"z"--&gt; M5 {x:0,y:1,z:2}
+
+  a different insertion order (y, then x) forks at the root and never reconverges:
+
+  M0 {} --+"y"--&gt; M3 {y:0} --+"x"--&gt; M4 {y:0,x:1} --+"z"--&gt; M6 {y:0,x:1,z:2}
+
+  shared prefixes share maps; diverged paths never rejoin. M5 and M6 hold the
+  SAME three properties with DIFFERENT slot numbers — two hidden classes for
+  one property set, forever.</code></pre>
+<pre><code class="language-js">function Point(x, y) { this.x = x; this.y = y; }  // one constructor = one path
+const a = new Point(1, 2), b = new Point(3, 4);   // same map: sites stay monomorphic
+const c = {};  c.y = 2; c.x = 1;                  // forked map: sites turn polymorphic</code></pre>
+<p>Verified in the lab below with <code>%HaveSameMap</code>: <code>a,b</code> → <code>true</code>; <code>a,c</code> → <code>false</code> — and they <em>stay</em> different after both gain <code>z</code>, because <code>M2 --+z--&gt; M5</code> and <code>M4 --+z--&gt; M6</code> are different edges. Same properties, same count, different shape: <strong>two objects with different insertion histories are different hidden classes</strong>, and a load site compiled for <code>M2</code> must reject <code>M4</code> (slot 0 means <code>x</code> in one and <code>y</code> in the other).</p>
+<p>The speedup is the <strong>inline cache (IC)</strong>. At each property-access site, V8 caches (map → offset) pairs: first execution records the map and the resolved offset; later executions just <em>compare the map and load the offset</em>. The ladder:</p>
+<ul>
+<li><strong>monomorphic</strong> — 1 map: a compare plus a load; TurboFan inlines it and the offset becomes a constant in machine code.</li>
+<li><strong>polymorphic</strong> — 2–4 maps: a short compare chain. Still cheap.</li>
+<li><strong>megamorphic</strong> — 5+ maps: the site gives up and consults a global <em>stub cache</em> hashed by (map, name) — a hash lookup plus a call, and TurboFan can no longer constant-fold the offset. That is the miss cost: several-fold to an order of magnitude per access — and it does not heal itself.</li>
+</ul>
+<p>Now derive the folklore instead of asserting it. <strong>"Always create objects the same way"</strong> — same assignment order walks every instance down one path to one map, so use sites stay monomorphic; add properties conditionally (<code>if (opts.z) this.z = ...</code>) and you fork the tree per call pattern. <strong>"Never <code>delete</code>"</strong> — a slot cannot simply be dropped (offsets would shift), so V8 <em>normalizes</em> the object to dictionary mode ("slow properties"): every access through the string hash table you were avoiding (verified in the lab: <code>%HasFastProperties(o)</code> flips <code>true → false</code> after one <code>delete</code>). Assign <code>null</code>/<code>undefined</code> instead. <strong>"JSON with optional fields is a shape bomb"</strong> — <code>JSON.parse</code> materializes whatever keys each payload carries, so one hot accessor sees dozens of maps and goes megamorphic; normalize after parsing (assign every field, always).</p>
+<p>One more derivation hides in constructors: V8 cannot know how many in-object slots a constructor's instances will eventually need, so the first instances get <strong>slack</strong> — extra empty slots — and after roughly the first 8 constructions (slack tracking) the map shrinks to the observed shape. Observed: <code>new Pt(1,2)</code> = <strong>104 bytes</strong> (10 in-object slots) on first construction, <strong>40 bytes</strong> (2 slots) after 9 — the early instances keep the fat layout for life.</p>
+<h2 id="4-elements-kinds-the-other-half-of-every-object">4. Elements kinds: the other half of every object</h2>
+<p>Named properties were only half the object — the elements pointer (the third header word) holds the <em>indexed</em> properties: <code>a[0]</code>, <code>a[1]</code>, …. Arrays are so hot that V8 tracks their element type in the map itself, as an <strong>elements kind</strong>, and the kinds form a one-way ladder:</p>
+<pre><code class="language-text">  PACKED_SMI_ELEMENTS  --&gt;  PACKED_DOUBLE_ELEMENTS  --&gt;  PACKED_ELEMENTS
+  (tagged Smis only)        (raw 8-byte doubles,         (any value: tagged
+                            UNBOXED — FixedDoubleArray)   pointers — FixedArray)
+
+  any hole (a[10] on a 3-element array) forks to the HOLEY_* sibling of the current
+  kind; a huge gap (index &gt; length + ~1024, approximate) jumps straight to
+  DICTIONARY_ELEMENTS: a hash table of {index -&gt; value}, for sparse arrays.</code></pre>
+<p>Every write that does not fit the current kind transitions the array <em>down</em> the ladder, and the ladder only goes down. The payoff for staying high: a <code>PACKED_DOUBLE</code> array stores raw IEEE-754 doubles — <strong>no HeapNumber, no map word, no 16 bytes per number</strong> — the same raw Float64 bytes as a C <code>double[]</code> (chapter 06's boxing lesson, dissolved). The cost of falling: one object stored into a double array transitions it to <code>PACKED_ELEMENTS</code> and <em>boxes every existing double into a fresh HeapNumber</em> — a single write can allocate a million objects.</p>
+<pre><code class="language-js">const xs = [1, 2, 3];      // PACKED_SMI_ELEMENTS — FixedArray of tagged Smis
+xs.push(4.5);              // -&gt; PACKED_DOUBLE — FixedDoubleArray; 1, 2, 3 are now
+                           //    raw 1.0, 2.0, 3.0 (8 bytes each)
+xs.push("4");              // -&gt; PACKED — FixedArray of pointers; 4.5 is re-boxed
+                           //    into a HeapNumber (map word + double)
+xs[100000] = 1;            // gap &gt;&gt; 1024 -&gt; DICTIONARY_ELEMENTS: NumberDictionary,
+                           //    and indexed reads become hash lookups</code></pre>
+<p>Now derive the second piece of folklore: <strong>"don't mix types in an array"</strong>. It is not style — the first <code>push</code> of a non-number demotes the array to tagged pointers and re-boxes every double; the first string index far from the end demotes it to a dictionary. Type-stable arrays run at memcpy speed; mixed arrays run at allocation and hash speed. (Strings and objects share <code>PACKED_ELEMENTS</code>, so mixing those two is free — the cliff is between numbers and everything else, and between Smi and double.)</p>
+<p>Typed arrays (section 5) are the escape hatch: a <code>Float64Array</code> <em>cannot</em> transition — its element type is fixed by construction, which is exactly the guarantee the ladder is trying to reconstruct.</p>
+<h2 id="5-the-spaces-semispaces-the-scavenger-and-bytes-outside-the-heap">5. The spaces: semispaces, the scavenger, and bytes outside the heap</h2>
+<p>Same bet as chapter 12 — most objects die young — but different geometry. <strong>New space</strong> is two <em>equal</em> semispaces (1:1, not the JVM's 8:1:1 eden:survivor split): allocation bump-points through the active one; when it fills, the <strong>scavenger</strong> runs Cheney's algorithm — trace roots, copy live objects breadth-first into the idle semispace (the to-space <em>is</em> the work queue), leave forwarding pointers in their map words, swap the labels, abandon the rest wholesale. Cost tracks survivors, not garbage; compaction is free; fragmentation cannot exist in new space.</p>
+<pre><code class="language-text">   new space = two equal semispaces (flip every scavenge)
+   +---------------------------+   +---------------------------+
+   | ACTIVE: bump-pointer      |   | IDLE: empty               |
+   | #### live #### garbage ## |   |                           |
+   |                ^ top      |   |                           |
+   +---------------------------+   +---------------------------+
+        scavenge: roots + remembered set -&gt; copy live to the idle space
+        (forwarding pointers in map words), swap, abandon the rest.
+
+        an object's 1st survival  -&gt; copied to the other semispace
+        its        2nd survival   -&gt; promoted to OLD SPACE, not copied again
+        -&gt; an object is young for exactly 2 scavenges, no header bits needed:
+           WHICH semispace an object sits in IS the age. (JVM: 4-bit field, 15.)</code></pre>
+<p>Surviving <em>two</em> scavenges promotes to old space — after its first scavenge the object already sits in the semispace that will be <code>from</code> next time, so the second sends it up instead of across. The JVM burns 4 header bits to make age tunable to 15; V8 spends zero and fixes it at 2 — one reason its header can be map-word-only.</p>
+<p>The scavenger must find every old→new pointer without scanning old space (the whole point of "minor"). Same answer as ch12's card tables, different encoding: every reference store into an old object runs a <strong>write barrier</strong> that records the exact slot in the <strong>store buffer</strong>, later refined into per-page <strong>remembered sets</strong>; the scavenger then visits just those slots. V8 records slots, not 512-byte cards — and the same barrier machinery doubles for concurrent marking's tricolor invariant (ch11's Go barrier is the cousin). The pause: scavenges are stop-the-world but tiny — observed on Node 24: <strong>0.06–0.55 ms</strong> each, parallel with helper threads.</p>
+<p><strong>Old space</strong> is mark-compact, time-sliced. When allocation pushes old space past its limit, a <strong>major GC</strong> starts <strong>incremental marking</strong>: marking interleaves with JS in small steps while concurrent marker threads crawl the object graph off-thread; a brief final pause finishes and <strong>evacuates</strong> fragmented pages (compaction by moving whole pages), and <strong>sweeping</strong> runs concurrently afterwards. The trigger is a <strong>heap growing factor</strong> heuristic: after each major GC, V8 sets the next limit from the new live size (survival) and observed GC throughput — grow the heap more when collection is cheap relative to allocation, less when it hurts — bounded in Node by <code>--max-old-space-size</code> (the overall cap is <code>v8.getHeapStatistics().heap_size_limit</code>; observed 2213 MB on one 64-bit box). A real major GC, from the trace: <code>Mark-Compact 178.8 (269.3) -&gt; 148.2 (276.9) MB ... 43.87 / 0.01 ms (+ 138.4 ms in 661 steps ... biggest step 29.3 ms ...)</code> — 661 time-sliced steps, ~138 ms of marking spread out, one final ~44 ms pause. Young GC is ~ms; old GC is incremental.</p>
+<p>The remaining spaces: <strong>large object space</strong> for objects over roughly 128 KiB (<code>kMaxRegularHeapObjectSize</code> — approximate), whole-page and never moved — copying multi-MB objects would blow the pause budget, so like G1's humongous allocations (ch12), big temporaries are old-gen pressure in disguise; <strong>code space</strong>, executable and separately write-protected (W^X); and read-only space for the immortals (<code>undefined</code>, the empty FixedArray).</p>
+<p><strong>ArrayBuffers live outside all of it.</strong> A <code>new ArrayBuffer(50 * 1048576)</code> creates a <em>small</em> GC-managed wrapper plus a backing store from the embedder's allocator — <code>malloc</code>'d system memory (ch05/ch19 territory), invisible to the tracer: the GC scans the wrapper, never the bytes. V8's <strong>external memory accounting</strong> makes 200 MB of buffers pressure GC triggers even though <code>heapUsed</code> doesn't move — verified on Node 24: 4 × 50 MB buffers took <code>external</code> from <strong>1.9 MB to 201.9 MB</strong> while <code>heapUsed</code> sat at ~4 MB. The bytes free when the wrapper dies <em>and a GC notices</em> — the same caveat as Java's direct buffers (ch12). Typed arrays (<code>Float64Array</code> etc.) are thin <em>views</em> — length, byteOffset, base pointer — borrowing the backing store without copying: chapter 13's spans and chapter 14's buffer protocol, invented independently a third time. This is JS's zero-copy bridge: transfer an ArrayBuffer to a worker (ownership moves, no memcpy), share a <code>WebAssembly.Memory</code>, or point four views at one buffer — and, structurally, it is JavaScript's one fixed-record type: chapter 17's COBOL, smuggled in as an API.</p>
+<h2 id="6-closures-and-retention-why-the-listener-keeps-the-object-alive">6. Closures and retention: why the listener keeps the object alive</h2>
+<p>Chapter 04's stack frame dies at <code>return</code>. So a local variable captured by a closure cannot live in the frame — it must move to a heap object whose address is stable: V8 allocates a <strong>Context</strong> (verified in the lab: a closure's <code>%DebugPrint</code> shows <code>context: ... &lt;FunctionContext[3]&gt;</code>) — a small FixedArray-shaped object holding one slot per captured variable plus a link to the enclosing context. Every closure that captures a variable carries a pointer to that Context, and the context chain <em>is</em> the scope chain.</p>
+<p>The leak follows mechanically. A Context is one object holding <em>all</em> of a scope's captured variables — V8 does not track which variables <em>this particular</em> closure actually uses, so <strong>one live closure retains every sibling captured variable</strong>, the whole chain of outer contexts, and everything they reference:</p>
+<pre><code class="language-js">function attach() {
+  const rows = new Array(1_000_000).fill(0);   // ~4-8 MB
+  const config = loadConfigForThisPage();      // also captured: also retained
+  document.getElementById("dump")
+    .addEventListener("click", () =&gt; render(rows, config));
+}</code></pre>
+<p>The event loop is not a memory system, but <em>retention through it is a memory topic</em>. The platform keeps registries — an <code>EventTarget</code>'s listener list, the timer table behind <code>setInterval</code>, pending promise jobs, <code>window</code> itself — and those registries are GC roots. The reference chain reads like an indictment:</p>
+<pre><code class="language-text">  window -&gt; document -&gt; &lt;button&gt; -&gt; listener list -&gt; arrow function
+         -&gt; Context{rows, config} -&gt; the 4-8 MB array</code></pre>
+<p>Remove the button from the DOM and it does <em>not</em> die: the listener registration keeps the detached node alive — DevTools heap snapshots literally list it as "Detached," the classic diagnosis. A forgotten <code>setInterval</code> is the same shape through the timer table. The collector is <em>right</em> every time — chapter 12's lesson verbatim: reference leaks, not GC bugs. Every fix is an edge deletion: <code>removeEventListener</code> (requires a named handler — anonymous closures cannot be removed), <code>clearInterval</code>, <code>{once: true}</code>, or restructuring so the registry never points at the big data. The full walkthrough — snapshot, Retainers, fix, re-snapshot — is the lab below.</p>
+<p>One retainer hides in plain sight: <code>console.log(bigThing)</code> keeps <code>bigThing</code> alive for as long as the DevTools console holds the entry. Half of all "leaks" that vanish when you close DevTools were never leaks — snapshot with the console cleared.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>Two Smi ranges, two shipped V8s.</strong> Chrome ships pointer compression (since Chrome 80): 4-byte tagged slots, 31-bit Smis (max 1,073,741,823), 4-byte map words, <code>{}</code> = 28 bytes. Official Node builds ship compression <em>off</em>: 8-byte tagged words, Smis with a 32-bit payload in the top half (max 2,147,483,647 — <code>%DebugPrint(2147483647)</code> prints <code>Smi</code>; <code>2147483648</code> prints a HeapNumber), 8-byte map words, <code>{}</code> = 56 bytes. "How big is a JS object" depends on which product you're running.</li>
+<li><strong>Shallow vs Retained size is a dominator computation.</strong> Shallow: the object's own bytes. Retained: shallow plus everything that would be freed if this object died — the objects it <em>dominates</em>. The trap: one extra incoming reference from anywhere can collapse a 40 MB retained size to 40 KB, so "retained" is a fact about the whole graph at snapshot time, not about the object.</li>
+<li><strong>Slack tracking: the first ~8 instances of a class are fatter.</strong> Observed: <code>new Pt(1,2)</code> — instance size 104 bytes (10 in-object slots); after 9 constructions, 40 bytes (2 slots). V8 over-allocates constructor maps, shrinks after the trial period, and never resizes the early instances.</li>
+<li><strong>Maps deprecate.</strong> A field's representation generalizes Smi → double → tagged on the first offending write; the old map is marked deprecated and live instances migrate lazily on their next access. Maps also chain <em>backwards</em> (each map stores its back pointer) and feed <code>Object.keys</code>/<code>for-in</code> enumeration order — fast paths only exist while shapes stay stable.</li>
+<li><strong>The IC ladder's cliff is at 5.</strong> 1 map: monomorphic (guard + load, offset is a constant in machine code). 2–4: polymorphic compare chain. 5+: megamorphic — global stub cache keyed by (map, name), a call instead of a load, and TurboFan loses offset inlining. Sites do not un-megamorphize; only deopt/reopt cycles reset them.</li>
+<li><strong>Strings are a type system: SeqOneByte/TwoByte, ConsString, SlicedString, ThinString.</strong> Concatenation builds a ConsString (a rope) in O(1) — but only when both sides are ≥ 13 chars, else it copies. <code>s.length</code> is O(1) on every type because each carries its length; a ConsString's is the cached sum. Flattening (regex, indexing) rewrites the rope in place. <code>s.substring(0, 5)</code> of a 100 MB string makes a SlicedString (for results ≥ 13 chars) — 24 bytes, no copy, <strong>and it keeps the whole 100 MB parent alive</strong>. Internalization leaves a ThinString forwarding to the canonical copy behind.</li>
+<li><strong>Young-generation arithmetic is one division.</strong> Scavenge frequency = allocation rate ÷ active semispace. Default max semispace is 16 MiB on large 64-bit heaps (V8 as of the Node 20 era; scales down on small ones) — tune with <code>--max-semi-space-size</code> (MiB). Bigger semispaces: fewer, slightly longer scavenges and longer average youth (promotion is scavenge-count-based).</li>
+<li><strong><code>console.log</code> is a root.</strong> The DevTools console retains every logged object until cleared — clear it before trusting a heap snapshot.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>All Node output below is real, from Node 24 / V8 13.6, 64-bit, uncompressed build — output trimmed to the teaching lines.</p>
+<pre><code class="language-bash"># 1. Elements kinds and the ladder — the map IS the shape:
+$ node --allow-natives-syntax -e '
+const a = [1, 2, 3];   %DebugPrint(a);
+a.push(4.5);           %DebugPrint(a);
+a.push("x");           %DebugPrint(a);'
+DebugPrint: 0xfbda70e69c9: [JSArray]
+ - map: 0x0e7d2fb5b0f9 &lt;Map[32](PACKED_SMI_ELEMENTS)&gt; [FastProperties]
+ - elements: 0x364dee8eab61 &lt;FixedArray[3]&gt; [PACKED_SMI_ELEMENTS (COW)]
+ - length: 3
+DebugPrint: 0xfbda70e69c9: [JSArray]
+ - map: 0x364dee8c3fd1 &lt;Map[32](PACKED_DOUBLE_ELEMENTS)&gt; [FastProperties]
+ - elements: 0x0fbda70e6aa9 &lt;FixedDoubleArray[22]&gt; [PACKED_DOUBLE_ELEMENTS]
+ - length: 4
+DebugPrint: 0xfbda70e69c9: [JSArray]
+ - map: 0x... &lt;Map[32](PACKED_ELEMENTS)&gt; ... &lt;FixedArray[4]&gt;</code></pre>
+<p>Watch the <em>same array</em> swap its map and its backing store twice — <code>FixedDoubleArray</code> holds raw doubles; <code>COW</code> (copy-on-write) marks the literal's shared elements.</p>
+<pre><code class="language-bash"># 2. Hidden classes: insertion order decides map identity
+$ node --allow-natives-syntax -e '
+const a = {}; a.x = 1; a.y = 2;
+const b = {}; b.x = 1; b.y = 2;
+const c = {}; c.y = 2; c.x = 1;
+console.log(%HaveSameMap(a,b), %HaveSameMap(a,c));
+b.z = 3; a.z = 3;
+console.log(%HaveSameMap(a,b), %HaveSameMap(a,c));'
+true false
+true false
+
+# 3. delete -&gt; dictionary mode (the "slow properties" cliff)
+$ node --allow-natives-syntax -e '
+const o = {a:1,b:2,c:3};
+console.log(%HasFastProperties(o)); delete o.b;
+console.log(%HasFastProperties(o));'
+true
+false</code></pre>
+<pre><code class="language-bash"># 4. The scavenger and the major GC, in the trace
+$ node --trace-gc -e '
+let junk = [];
+for (let i = 0; i &lt; 3e6; i++) { junk.push({i}); if (junk.length &gt; 50) junk = []; }'
+[5652:0x7192000] 19 ms: Scavenge 4.8 (5.8) -&gt; 3.9 (6.8) MB, 0.55 / 0.00 ms ... allocation failure;
+[5652:0x7192000] 22 ms: Scavenge 4.8 (6.8) -&gt; 3.8 (6.8) MB, 0.08 / 0.00 ms ... allocation failure;
+
+$ node --trace-gc -e '
+const keep = [];
+for (let i = 0; i &lt; 2e6; i++) keep.push({ i, tag: "item" + (i % 7) });'
+[5669:0x7d01000] 537 ms: Mark-Compact 178.8 (269.3) -&gt; 148.2 (276.9) MB, 43.87 / 0.01 ms
+  (+ 138.4 ms in 661 steps since start of marking, biggest step 29.3 ms,
+  walltime since start of marking 187 ms) ... finalize incremental marking via task;</code></pre>
+<p>Read them: scavenges are sub-millisecond and fire on "allocation failure" — the bump pointer hit the semispace end; the Mark-Compact line shows the time-slicing (661 steps, ~138 ms over 187 ms walltime) and the final pause.</p>
+<pre><code class="language-bash"># 5. Off-heap memory: ArrayBuffers never touch heapUsed
+$ node -e '
+const before = process.memoryUsage();
+const bufs = [...Array(4)].map(() =&gt; new ArrayBuffer(50 * 1048576));
+const after = process.memoryUsage();
+for (const k of ["rss","heapUsed","external"])
+  console.log(k, (before[k]/1048576).toFixed(1), "-&gt;", (after[k]/1048576).toFixed(1), "MB");'
+rss       44.7 -&gt; 45.6 MB     # pages fault in lazily as they're touched
+heapUsed  4.6 -&gt; 4.1 MB       # the GC heap did not move
+external  1.9 -&gt; 201.9 MB     # the backing stores, accounted separately
+
+# 6. (optional) force a GC and see the caps:
+$ node --expose-gc -e '
+  global.gc();
+  const s = require("v8").getHeapStatistics();
+  console.log("total_heap_size", (s.total_heap_size/1048576).toFixed(1), "MB",
+              "| heap_size_limit", (s.heap_size_limit/1048576).toFixed(0), "MB");'
+total_heap_size 6.8 MB | heap_size_limit 2213 MB</code></pre>
+<p>(<code>performance.measureMemory()</code> was the per-measurement variant of this; it is not exposed in current Node builds — check yours before promising it in a runbook.)</p>
+<p><strong>In Chrome DevTools — the leak-diagnosis walkthrough.</strong> Load this page and click the button five times:</p>
+<pre><code class="language-html">&lt;button id="grow"&gt;attach&lt;/button&gt;
+&lt;script&gt;
+  function attach() {
+    const rows = new Array(1_000_000).fill(0);      // captured by the listener below
+    document.getElementById("grow")
+      .addEventListener("click", () =&gt; console.log(rows.length));
+  }
+  document.getElementById("grow").addEventListener("click", attach);
+&lt;/script&gt;</code></pre>
+<ol>
+<li>DevTools → <strong>Memory</strong> panel → select <strong>Heap snapshot</strong> → click the trash icon (force GC) → <strong>Take snapshot</strong>.</li>
+<li>Know the two columns first: <strong>Shallow size</strong> is the object's own bytes; <strong>Retained size</strong> is shallow plus everything that would be freed if this object died — the objects it <em>dominates</em>. Now filter the constructor list to <code>Array</code> and sort by Retained Size: five <code>Array</code> entries of ~4 MB each — click <code>grow</code> five more times, re-snapshot, and the count tracks your clicks: <em>retained</em>, not garbage.</li>
+<li>Select one. The <strong>Retainers</strong> panel (bottom) prints the chain: <code>rows</code> in <code>Context</code> ← the arrow <code>JSFunction</code> ← <code>listener</code> field of <code>HTMLButtonElement</code> ← … ← <code>window</code>. That chain <em>is</em> the leak — every hop is a reference you can delete.</li>
+<li>For allocation <em>sites</em>, record with <strong>Allocation sampling</strong> instead, then click the button: entries in blue are still live, gray were collected — the blue stacks point at the code doing the retaining.</li>
+<li>Fix it (one named listener, or <code>{once: true}</code>, or remove the old one before attaching), force GC, re-snapshot: the arrays are gone. For detached-DOM leaks, the same snapshot searched for "Detached" names the nodes still pinned by closures.</li>
+</ol>
+<p>The classic three-snapshot variant: baseline snapshot → reproduce → snapshot → GC → snapshot; anything that grew between snapshots 2 and 3 is retained by something you did — and its Retainers panel names that something.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Performance reviews and interviews become derivations, not vibes</strong>: same-shape construction keeps ICs monomorphic (section 3's tree, not a style rule); <code>delete</code> and far-index writes have a measured cliff (dictionary mode); one mixed-type <code>push</code> can allocate a million HeapNumbers (section 4). Derive the Smi from allocation cost, hidden classes from "the spec says dictionaries," the 1:1 semispaces from "no age field in the header" — and contrast each with the JVM's choice (ch12).</li>
+<li><strong>Leak triage is reading a Retainers chain</strong>: snapshot → sort by Retained Size → walk the chain to the first root you control (listener, timer, console) → delete that edge → re-snapshot. Detached DOM nodes and <code>setInterval</code> closures are found the same way in Node (<code>--inspect</code> + Chrome) and in the browser.</li>
+<li><strong>Node capacity arithmetic</strong>: scavenges per second = allocation rate ÷ active semispace; majors per hour = live-set growth against <code>heap_size_limit</code> (<code>--max-old-space-size</code>). RSS climbing while <code>heapUsed</code> is flat means <em>external</em> memory — ArrayBuffers, not JS objects — and no GC tuning will fix it.</li>
+<li><strong>OOM forensics</strong>: Node's <code>JavaScript heap out of memory</code> (after a final full-GC attempt) is a <em>live-set</em> problem — retainer chains; RSS killed by the OS with a healthy-looking heap is a backing-store problem — external accounting.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Ch 05</strong> — the semispace is the bump allocator; scavenging is the batch "free"; ArrayBuffer backing stores are plain <code>malloc</code> (ch19 deepens).</li>
+<li><strong>Ch 06</strong> — tag bits (Smi/NaN-boxing), boxing (HeapNumber = PyFloat analog, unboxed double arrays = the fix), headers and padding arithmetic.</li>
+<li><strong>Ch 11</strong> — Go: no generations, no compaction, concurrent tricolor; V8 pays barriers for <em>both</em> generational and concurrent-marking invariants, and compacts.</li>
+<li><strong>Ch 12</strong> — Cheney copy, write barriers/remembered sets vs card tables, 8:1:1 + age-15 vs 1:1 + age-2, humongous vs large-object space, direct-buffer/ArrayBuffer freeing semantics.</li>
+<li><strong>Ch 13, 14</strong> — typed arrays are the third independent invention of spans/the buffer protocol: small GC-managed views over non-GC bytes.</li>
+<li><strong>Ch 16</strong> — ARC would retain the exact same listener chains — and add cycles; the closure leak is an ownership-model-independent fact about registries.</li>
+<li><strong>Ch 17</strong> — typed arrays as fixed records; the ladder in section 4 is what JS pays for records being optional.</li>
+<li><strong>Ch 21</strong> — V8 exploits are map forgeries: type confusion = making a check see the wrong hidden class; the map word is the security boundary.</li>
+<li><strong>Ch 22 + queued security module</strong> — JSC under Jetsam (iOS) vs V8 under the zygote (Android); V8 sandboxing work puts a cage around exactly the pointers section 2 described.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>V8's object header is a bare map word — no refcount, no lock bits, no GC age field. Derive each absence from V8's design, and name what each of PyObject (ch14) and the JVM mark word (ch12) needs that V8 does not.</li>
+</ol>
+<ol>
+<li>Derive the Smi: why must small integers not be heap objects, why is the tag the low bit, and why does Smi addition not need to untag its operands?</li>
+</ol>
+<ol>
+<li>Predict the output of <code>%HaveSameMap</code> for each line, and justify from the transition tree:</li>
+</ol>
+<pre><code class="language-js">   function P(x, y) { this.x = x; this.y = y; }
+   const a = new P(1, 2), b = new P(3, 4);
+   const c = new P(4, 5); c.z = 6;
+   const d = new P(7, 8); d.z = 9;
+   console.log(%HaveSameMap(a, b));   // ?
+   console.log(%HaveSameMap(c, d));   // ?
+   console.log(%HaveSameMap(a, c));   // ?</code></pre>
+<ol>
+<li>Predict the elements kind and where the number 1,073,741,824 (<code>2^30</code>) is physically stored, for <code>[1073741823, 1073741824]</code> on (a) Chrome x64 with pointer compression, (b) Node's official x64 build — same array literal, two answers. Also: what happens to the array's kind in each case?</li>
+</ol>
+<ol>
+<li>A SPA's memory grows every time the user navigates; DevTools heap snapshot (console cleared) shows dozens of entries reading "Detached" — <code>HTMLDivElement</code>, each retained through a <code>Context</code> by a <code>JSFunction</code> on some button's listener list, the button itself reachable from <code>document</code>. Explain the full chain, why navigating away does not free it, and the two-line fix.</li>
+</ol>
+<ol>
+<li>A hot loop reads <code>r[i].x</code> over a million rows and was fast in the benchmark (rows built by one constructor). In production it is ~10x slower; the rows come from <code>JSON.parse</code> of records where <code>x</code> is sometimes missing, sometimes a string. Name the IC state, what it costs, why the benchmark missed it, and the fix.</li>
+</ol>
+<ol>
+<li>A Node service's RSS climbs for hours and the kernel kills it, but a <code>--inspect</code> heap snapshot shows a tiny, healthy <code>heapUsed</code>. The code caches decoded images as <code>ArrayBuffer</code>s in a <code>Map</code>. Diagnose the mechanism, explain why no <code>--max-old-space-size</code> value saves it, and name the number in <code>process.memoryUsage()</code> that was telling the truth.</li>
+</ol>
+<ol>
+<li>Cross-chapter (ch12): the JVM's young gen is eden + two survivors at 8:1:1 with a 4-bit header age field (tenure at 15); V8's new space is two equal semispaces with no age field, promoting at 2 scavenges. Derive why V8 can omit both the eden and the age bits, and one trade it accepts for that simplicity.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>No refcount</strong> — V8 frees by tracing reachability, so no per-object counter exists (CPython needs one because freeing is deterministic refcount-0 events). <strong>No lock bits</strong> — an isolate runs one JS thread and nothing synchronizes on a plain object; the JVM's mark word doubles as the monitor for <code>synchronized</code>, which Java permits on every object. <strong>No age field</strong> — the semispace flip <em>is</em> the age: first survival copies across, second promotes (answer 8); HotSpot counts 15 collections in 4 mark-word bits to make tenuring tunable. What all three keep: the type descriptor pointer — V8's map word, which also moonlights as the GC forwarding pointer during evacuation, with the identity hash outsourced to the empty properties slot.</li>
+</ol>
+<ol>
+<li><strong>Allocation economics</strong>: counters and indices dominate real programs; if each were a heap object, every <code>i++</code> would pay a bump allocation + header + collection (~10 ns and 8–16 bytes, ch12/ch06) — so small integers are immediates packed in the value slot itself. <strong>Tag in bit 0</strong>: one slot must hold either an int or a pointer, and the low bit discriminates cheaply — heap objects are ≥8-byte aligned, so their low 3 bits are provably 0 and <code>address | 1</code> is a lossless reversible encoding (untag = mask). <strong>Tag-preserving arithmetic</strong>: the Smi is <code>value &lt;&lt; 1</code> (compressed build), so <code>(x &lt;&lt; 1) + (y &lt;&lt; 1) == (x + y) &lt;&lt; 1</code> — addition and subtraction work on the tagged words directly, and the tag check is one <code>test</code> of bit 0.</li>
+</ol>
+<ol>
+<li><strong>true, true, false.</strong> <code>a</code> and <code>b</code> walk the identical path from the constructor's initial map: <code>+x</code> then <code>+y</code> — same transitions, same map. <code>c</code> and <code>d</code> also walk the <em>same</em> path — initial map, <code>+x</code>, <code>+y</code>, then the same <code>+z</code> transition edge from the same <code>{x,y}</code> map — so they land on the same map <em>despite</em> being a different shape from <code>a</code>. <code>a</code> vs <code>c</code>: <code>{x,y}</code> and <code>{x,y,z}</code> are different maps (c has one more descriptor), so false — a load site compiled for <code>a</code>'s map cannot serve <code>c</code>, and a site seeing both is polymorphic, not monomorphic.</li>
+</ol>
+<ol>
+<li><strong>(a) Chrome: <code>PACKED_DOUBLE_ELEMENTS</code> — a <code>FixedDoubleArray</code> of raw 8-byte doubles, and 2^30 is stored <em>unboxed</em> as an IEEE-754 double.</strong> With pointer compression, the Smi payload is 31 bits (max 2^30 − 1 = 1,073,741,823), so 1,073,741,824 is a HeapNumber — and a literal mixing a Smi and a HeapNumber resolves to double elements, which re-stores 1,073,741,823 as a raw double too. <strong>(b) Node: <code>PACKED_SMI_ELEMENTS</code></strong> — the uncompressed tagged word carries a 32-bit Smi payload (max 2^31 − 1), so both values are Smis and no number is a heap object at all. The lesson: the Smi boundary is a <em>build</em> fact — one source line, two heaps.</li>
+</ol>
+<ol>
+<li><strong>The chain</strong>: <code>window → document → HTMLButtonElement → listener list → JSFunction (handler) → Context{...} → detached &lt;div&gt; and everything it references.** "Removed from the DOM" is not "unreachable": the handler closure captured the node (or a component holding it), and the handler was never unregistered — the platform's registries are roots (section 6). The GC is correct; the graph is wrong. **Fix**: keep a named handler reference and </code>removeEventListener<code> on teardown (or </code>{once: true}<code> / an </code>AbortController<code>) — deleting the </code>button → closure` edge drops the context, the node, and the captured data in one collection.</li>
+</ol>
+<ol>
+<li><strong>Megamorphic.</strong> The benchmark built rows with one constructor: one map, a monomorphic site — guard + fixed-offset load, offset constant-folded by TurboFan. Production rows come from <code>JSON.parse</code>, which materializes exactly the keys each payload carries (<code>x</code> missing or a string, plus other optional fields): dozens of maps flow through <code>r[i].x</code>, the cache overflows at 5, and every access is a stub-cache hash lookup plus a call — several-fold to an order of magnitude slower. <strong>Fix</strong>: normalize after parsing — map each row through one constructor assigning every field in the same order (with <code>Number(r.x ?? 0)</code>-style coercion), so the million rows share one map again.</li>
+</ol>
+<ol>
+<li><strong>External, not heap, memory.</strong> Each cached <code>ArrayBuffer</code> is a small GC-managed wrapper plus a <code>malloc</code>'d backing store <em>outside</em> the V8 heap (section 5). The <code>Map</code> retains the wrappers, so the stores stay alive — but they never appear in <code>heapUsed</code>, and the heap snapshot looks healthy while RSS climbs. <code>--max-old-space-size</code> caps the traced heap only; the kernel OOM-kill is the only limit that ever fires. <strong>The truthful number</strong>: <code>process.memoryUsage().external</code> (it grew 1.9 → 201.9 MB in the lab). Fix: bound the <code>Map</code> (LRU) or release buffers explicitly — the wrapper's death frees the store only when a GC also runs.</li>
+</ol>
+<ol>
+<li><strong>V8 fuses the roles.</strong> The JVM splits "where allocation happens" (eden, 8/10 of young) from "where survivors wait" (S0/S1) and counts age 0–15 in header bits. V8's two <em>equal</em> semispaces make allocation area and survivor area the same two spaces: allocation bump-points in the active one, the scavenge copies survivors into the idle one and flips — so an object's <em>location</em> encodes its age, and the second scavenge promotes it. No eden, because survivors share the next allocation space; no age field, because "which semispace" is a one-bit age. <strong>The trade</strong>: tenuring is fixed at 2 (not tunable like <code>MaxTenuringThreshold</code>), survivors compete with fresh allocation for the same space, and the remembered-set write barrier is still needed exactly as the JVM needs card tables.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch14.html"><span class="cn-label">previous</span><span class="cn-title">Ch 14</span></a>
+<a class="next" href="ch16.html"><span class="cn-label">next</span><span class="cn-title">Ch 16</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/15-javascript-v8.md">chapters/15-javascript-v8.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

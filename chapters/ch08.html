@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 08 — C: the explicit model — deep-roots</title>
+<meta name="description" content="Chapter 08 of the memory-models module: Chapter 08 — C: the explicit model">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 08 — C: the explicit model — deep-roots">
+<meta property="og:description" content="Chapter 08 of the memory-models module: Chapter 08 — C: the explicit model">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 08 — C: the explicit model — deep-roots">
+<meta name="twitter:description" content="Chapter 08 of the memory-models module: Chapter 08 — C: the explicit model">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part II · the languages</div>
+<h1 class="post-title">Chapter 08 — C: the explicit model</h1>
+<div class="post-meta">chapter 08 &middot; ~16 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> C has no protective memory model — it has a memory <em>contract</em>: a value is raw bytes at an address, you own every byte, you free every heap byte yourself, and the language promises nothing in exchange. Pointers are typed addresses; <code>sizeof</code> and alignment rules let you compute any layout on paper; <code>malloc</code> hides a small receipt next to your data; and "undefined behavior" is not a crash — it is a license for the optimizer to assume you never make mistakes. Everything other languages wrap around memory (headers, tags, GC, bounds checks) is machinery C leaves out on purpose.</blockquote>
+<h2 id="the-contract-four-blunt-answers">The contract: four blunt answers</h2>
+<p>Part II of this module asks every language the same four questions. C's answers are the shortest in the book:</p>
+<div class="table-wrap"><table><thead><tr><th>Question</th><th>C's answer</th></tr></thead><tbody><tr><td>What is a value?</td><td>Raw bytes at an address. The type is a compile-time interpretation; nothing at runtime records it.</td></tr><tr><td>Who owns it?</td><td>You. Ownership is a convention between programmers, invisible to the compiler.</td></tr><tr><td>Who frees it?</td><td>You. Stack objects pop with the frame (Chapter 04); statics live until exit; heap blocks wait for <code>free()</code>.</td></tr><tr><td>What safety is guaranteed?</td><td>None. The standard promises nothing; safety is the programmer's job.</td></tr></tbody></table></div>
+<p>Chapter 06 showed a Python <code>int</code> as a 28-byte box; a C <code>int</code> is 4 bytes, nothing else — every byte of that cost is opt-in here.</p>
+<p>A pointer is a <strong>typed address</strong>: 8 raw bytes on x86-64/ARM64 (Chapter 07) holding a virtual address (Chapter 03), plus a type that says how to interpret the bytes there — and how big one "step" is:</p>
+<pre><code class="language-c">int a[4] = {10, 20, 30, 40};
+int *p = a;            // "a" decays to &amp;a[0]: p = address + the type int
+p + 1;                 // the ADDRESS advances sizeof(int) == 4 bytes, not 1
+*(p + 2);              // 30
+&amp;a[3] - &amp;a[0];         // 3 — pointer difference counts ELEMENTS, never bytes</code></pre>
+<p>Pointer arithmetic is scaled by <code>sizeof(*p)</code>: <code>char *p; p+1</code> moves 1 byte, <code>struct rec *q; q+1</code> moves the whole struct. That is why indexing works for any type: <code>a[i]</code> is <em>defined by the standard</em> as <code>*((a)+(i))</code> — address plus i elements.</p>
+<p><strong>Array decay.</strong> In almost every expression, an array's name becomes a pointer to its first element. Exactly three contexts refuse to decay (C11 6.3.2.1): operand of <code>sizeof</code>, operand of unary <code>&amp;</code>, and a string literal initializing a <code>char</code> array:</p>
+<pre><code class="language-c">int a[4];              // an ARRAY: 16 contiguous bytes in main's frame
+sizeof(a);             // 16 — the whole object (4 * sizeof(int), x86-64)
+sizeof(a) / sizeof(a[0]);   // 4 — the "count elements" idiom
+
+void f(int b[100]);    // the [100] is DOCUMENTATION ONLY: b is int *
+sizeof(b);             // 8 inside f — a pointer, not an array</code></pre>
+<p>The size is amputated at the call boundary, by rule — which is why every C API that takes a buffer also takes a length (<code>read</code>, <code>memcpy</code>, <code>strncpy</code>).</p>
+<h2 id="one-program-six-neighborhoods">One program, six neighborhoods</h2>
+<p>Chapter 03 built the virtual address space; here it is from inside a running C program. Six neighborhoods, each with its own lifetime, permissions, and growth direction:</p>
+<pre><code>   a running C program, x86-64 Linux, non-PIE (ASLR shifts heap/stack/libs every run)
+
+0x0000000000400000  +---------------------+
+                    | ELF headers   r--   |
+0x0000000000401000  | .text         r-x   |   the code: read + execute
+0x0000000000402000  | .rodata       r--   |   string literals, const tables
+0x0000000000403000  | .data.rel.ro  r--   |   RELRO hardening (Chapter 21)
+0x0000000000404000  | .data         rw-   |   initialized globals and statics
+0x0000000000405000  | .bss          rw-   |   zeroed globals/statics: 0 file bytes
+                    +---------------------+
+                    | heap          rw-   |   grows UP via brk (Chapter 05)
+                    |  malloc &lt; 128 KiB   |   glibc 2.35 default M_MMAP_THRESHOLD
+                    |          ...        |
+                    +---------------------+
+0x00007f..........  | shared libraries    |   libc and friends: the mmap region
+                    | large mallocs       |   &gt;= 128 KiB: fresh mmap, page-aligned
+                    |          ...        |
+0x00007ffd........  | stack         rw-   |   grows DOWN: frames (Chapter 04)
+0x00007ffffffff000  +---------------------+   argv/envp at the very top
+0x0000000000000000  | the NULL page       |   unmapped on purpose (Chapter 03)</code></pre>
+<p>Where each declaration lands:</p>
+<pre><code class="language-c">const char *msg = "hi";          /* "hi\0" = 3 bytes in .rodata; msg itself wherever declared */
+static const int tbl[] = {1, 2}; /* .rodata (gcc 13/clang put const globals there;
+                                    the C standard guarantees no location) */
+int counter = 1;                 /* .data — a nonzero initializer costs file bytes */
+static int visits;               /* .bss — 0 file bytes; the loader maps zeroed pages */
+void f(void) {
+    static int calls;            /* .bss too: local SCOPE, program-long LIFETIME */
+    char buf[8];                 /* stack: f's frame; vanishes at return */
+    char *p = malloc(100);       /* the 100 bytes: heap; the pointer p: stack */
+}</code></pre>
+<p>Three details worth burning in:</p>
+<ul>
+<li><code>.bss</code> costs zero file bytes: memsz = N, filesz = 0 in the ELF header; the loader maps anonymous zero pages (Chapter 03). <code>static int big[1&lt;&lt;20]</code> grows your address space 4 MiB and your binary not at all. gcc 13 even moves an explicit <code>= 0</code> into <code>.bss</code> — a zero is a zero.</li>
+<li><code>.rodata</code> is mapped read-only, so writing a string literal faults. <code>char buf[] = "hi"</code> <em>copies</em> the bytes into the stack frame and is writable.</li>
+<li>The 128 KiB cliff comes from the allocator (Chapter 05): blocks under 128 KiB are carved from the <code>brk</code> region above <code>.bss</code>; at or above it, glibc 2.35 uses <code>mmap</code>, and <code>free()</code> calls <code>munmap</code> — the pages leave your RSS immediately.</li>
+</ul>
+<h2 id="malloc-s-hidden-receipt">malloc's hidden receipt</h2>
+<p>Chapter 05 built a free-list allocator from scratch; Chapter 19 tours the real ones. The fact to internalize: <strong>malloc's bookkeeping lives next to your data, not in a side table.</strong> The signature forces it:</p>
+<pre><code class="language-c">void free(void *p);      // takes the pointer VALUE and nothing else</code></pre>
+<p><code>free()</code> receives an address and no size. There is no global index to look it up in. The only place the block's size can live is memory the allocator controls — the bytes next to the block. glibc 2.35 on x86-64 puts the size word 8 bytes below your pointer:</p>
+<pre><code>   glibc 2.35 chunk, x86-64 (sizes in bytes)
+
+  lower addresses
+  +0x00  +----------------------------+  &lt;- chunk start (16-aligned)
+         | prev_size        (8)       |     meaningful only if PREVIOUS chunk is free;
+         |                            |     otherwise it is the previous chunk's tail
+  +0x08  +----------------------------+
+         | size             (8)       |     &lt;- free() reads THIS word, at p - 8
+         |   low 3 bits = flags P/M/A |     sizes are multiples of 16: bits are free
+  +0x10  +----------------------------+  &lt;- p: the value malloc returned (16-aligned)
+         | user data ...              |     malloc(0) still gets 24 usable bytes here
+         | next chunk's prev_size (8) |     &lt;- overlaps your LAST 8 usable bytes
+         +----------------------------+  &lt;- next chunk's size word
+  higher addresses                       usable bytes = chunk size - 8</code></pre>
+<p>The failure modes, in order of how often they ruin a week:</p>
+<pre><code class="language-c">char *p = malloc(64);   // chunk 80 B (64 + 8 header, rounded to 16); usable 72
+p[72] = 'x';            // 1 byte past usable: the NEXT chunk's size word.
+                        // Corruption with a delay: nothing dies until that chunk
+                        // is freed or split (Chapters 05, 19, 21).
+free(p);                // reads p-8, checks alignment and neighbors, pushes the
+                        // chunk to tcache/bins. Your DATA is untouched, not zeroed.
+free(p);                // glibc 2.35: abort "free(): double free detected in tcache 2"
+free(NULL);             // specified no-op since C89: the one pointer you may free blind</code></pre>
+<ul>
+<li><code>free(NULL)</code> is safe because the standard says so — cleanup paths need no <code>if</code>.</li>
+<li>Double free is catastrophic: the block enters the free structure <em>twice</em>, and if the tcache key check (glibc 2.29+) misses it, two later <code>malloc</code>s return the same address and two "owners" write over each other, far from the cause. Chapter 21 turns exactly this into an exploit.</li>
+<li><code>free()</code> never zeros your data: freed memory usually still contains your bytes until someone else gets the chunk — which is why use-after-free leaks secrets, not just crashes.</li>
+</ul>
+<h2 id="layout-arithmetic-alignment-and-padding">Layout arithmetic: alignment and padding</h2>
+<p>Chapter 01 derived alignment from the memory system; Chapter 06 padded objects in Java and C++. C is where you do the arithmetic yourself — and the compiler <em>never reorders your fields</em> (declaration order is semantic; contrast Go's compiler, Chapter 11). Three rules compute any struct on x86-64 Linux:</p>
+<ol>
+<li>Each member lands at the next offset that is a multiple of its alignment (<code>char</code> 1, <code>short</code> 2, <code>int</code> 4, <code>long</code>/pointer 8, <code>long double</code> 16).</li>
+<li>The struct's alignment is the strictest member's.</li>
+<li>Total size rounds up to a multiple of the struct's alignment — so array element [1] is still aligned.</li>
+</ol>
+<pre><code class="language-c">struct rec {        /* layout A: the order you thought of the fields in */
+    char  kind;     /* offset 0x00 */
+    int   len;      /* offset 0x04 — 3 pad bytes precede it (int needs 4) */
+    char *data;     /* offset 0x08 — already 8-aligned: no gap */
+    char  flag;     /* offset 0x10 */
+};                  /* sizeof == 24: 3 pad + 7 tail pad; alignof == 8 */</code></pre>
+<pre><code>   layout A (declaration order)         layout B (sorted by size, descending)
+   +0x00 | kind  |1B                     +0x00 | data  |8B
+   +0x01 | pad   |3B                     +0x08 | len   |4B
+   +0x04 | len   |4B                     +0x0c | kind  |1B
+   +0x08 | data  |8B                     +0x0d | flag  |1B
+   +0x10 | flag  |1B                     +0x0e | pad   |2B
+   +0x11 | pad   |7B                     +0x10 (end)       sizeof == 16
+   +0x18 (end)               sizeof == 24</code></pre>
+<p>Layout B is the same four fields — <code>char *data; int len; char kind; char flag;</code> — with <code>sizeof == 16</code>. Identical semantics, 24 versus 16 bytes: a third less memory and a third fewer bytes per cache line in an array of a million (Chapter 02). Nothing was "optimized" — two declarations moved. <code>offsetof</code> and <code>_Alignas</code> pin layouts when wire formats demand it; <code>__attribute__((packed))</code> removes padding at the price of unaligned access — slow on x86-64, trapping on some ARM profiles.</p>
+<h2 id="the-optimizer-s-license-undefined-behavior-and-aliasing">The optimizer's license: undefined behavior and aliasing</h2>
+<p>C's safety answer was "nothing is guaranteed." The fine print: with undefined behavior, the standard imposes <em>no requirements on the result</em> — and compilers read that as permission to assume the UB never happens. At -O0 your bug crashes; at -O2 the absence of your bug becomes an optimization fact. The classic:</p>
+<pre><code class="language-c">/* "detect overflow by watching for wraparound" — a famous broken idiom */
+int add_overflows(int a, int b) {
+    int sum = a + b;      /* signed overflow is UB (C11 6.5/5) */
+    if (sum &lt; a)          /* "if it wrapped, sum drops below a" */
+        return 1;
+    return 0;
+}</code></pre>
+<p>Since signed overflow is UB, the optimizer reasons: assume <code>a + b</code> never wraps; then <code>a + b &lt; a</code> simplifies to <code>b &lt; 0</code>. The addition and comparison both vanish. gcc 13, x86-64, -O2, emits exactly this:</p>
+<pre><code>        add_overflows:
+                xorl  %eax, %eax
+                testl %esi, %esi       ; inspects b ONLY — the add is gone
+                setl  %al
+                ret</code></pre>
+<p><code>add_overflows(INT_MAX - 1, 2)</code> returns 0. Your check was deleted, legally:</p>
+<pre><code class="language-c">int add_overflows_fixed(int a, int b) {
+    return b &gt; INT_MAX - a;            /* arithmetic that cannot overflow */
+}
+/* or, gcc/clang: a checked operation with no UB at all */
+int sum;
+if (__builtin_add_overflow(a, b, &amp;sum)) return 1;</code></pre>
+<p><strong>Strict aliasing</strong> is the same license aimed at types. C11 6.5/7 lists the types that may access an object's bytes: its own type, qualified/signed/unsigned variants, and <code>char</code>. Anything else is UB:</p>
+<pre><code class="language-c">float f = 1.0f;
+uint32_t bits = *(uint32_t *)&amp;f;   /* UB: compiler may assume these objects are
+                                      unrelated and REORDER the store to f past
+                                      this load */</code></pre>
+<p>The two defined ways to pun:</p>
+<pre><code class="language-c">union { float f; uint32_t u; } pun = { .f = 1.0f };
+uint32_t a = pun.u;                /* C99 TC3+: write one member, read another —
+                                      allowed; the VALUE is implementation-defined
+                                      (the IEEE-754 bits everywhere you've heard of) */
+
+uint32_t b;
+memcpy(&amp;b, &amp;f, sizeof b);          /* always defined: memcpy copies as bytes, and
+                                      gcc/clang compile it to one 4-byte mov */</code></pre>
+<p>There is no performance argument for the cast. The folklore: Linux builds with <code>-fno-strict-aliasing</code> (in KBUILD_CFLAGS for decades) because kernel macros pun types as a way of life and auditing every one was judged riskier than opting out; PostgreSQL does the same. The flag does not make punning legal — it only stops the optimizer from exploiting the illegality.</p>
+<h2 id="the-ragged-edges-vlas-alloca-and-the-c11-repairs">The ragged edges: VLAs, alloca, and the C11 repairs</h2>
+<p>Chapter 04 gave every function a fixed frame built by the prologue and destroyed by the epilogue. C99's variable-length array punches a hole in that:</p>
+<pre><code class="language-c">void f(size_t n) {
+    int buf[n];     /* VLA: size known only at run time */
+    ...
+}                   /* reclaimed when the frame pops — see below */</code></pre>
+<p>gcc on x86-64 computes <code>n * 4</code>, rounds to 16, and subtracts from <code>rsp</code> — the frame becomes variable-sized. Three problems:</p>
+<ol>
+<li><strong>Failure is silent.</strong> A huge <code>n</code> moves <code>rsp</code> past the stack guard page (Chapter 03): no <code>NULL</code> to check, no error code. The fault lands somewhere unrelated, or worse, in another mapping. Pure UB.</li>
+<li><strong>Worst-case depth becomes uncomputable.</strong> Frame-size audits go blind; the kernel's budget check is <code>CONFIG_FRAME_WARN</code>, 2048 bytes by default on 64-bit.</li>
+<li>Recursion multiplies both.</li>
+</ol>
+<p>The Linux kernel finished purging VLAs in v4.20 (late 2018, Kees Cook's series) and builds with <code>-Wvla</code> so they cannot return — near-zero measured cost, total auditability win. C11 made VLAs optional (<code>__STDC_NO_VLA__ == 1</code> means absent; MSVC never had them).</p>
+<p><code>alloca()</code> is the same idea without the array syntax: extend the current frame, return a pointer into it. Never standardized (a BSD/SVID tradition every major libc implements), freed not by any call but by the function's <em>return</em> — Chapter 07's epilogue (<code>leave</code>, or <code>mov rsp, rbp; pop rbp</code>; ARM64's restoring <code>ldp</code>) resets <code>rsp</code> in one instruction and every <code>alloca</code> evaporates. In a loop it accumulates until return, and there is no <code>free()</code> you could call. <code>alloca(0)</code> is UB.</p>
+<p>The C11 repairs for the legitimate uses:</p>
+<pre><code class="language-c">/* 1. aligned_alloc: your alignment, freed by plain free() */
+void *line = aligned_alloc(64, 4096);  /* 64 = cache line (Chapter 02). C11 says size
+                                          "should" be a multiple of alignment (DR 460
+                                          ambiguity); glibc 2.35 tolerates any size,
+                                          some BSD libcs return NULL. Round up
+                                          yourself, or use posix_memalign(). */
+
+/* 2. flexible array member: header + payload in ONE allocation */
+struct msg {              /* C11 */
+    uint64_t tag;         /* offset 0,  8 bytes */
+    uint32_t len;         /* offset 8,  4 bytes */
+                           /* 4 bytes pad: struct alignment is 8 */
+    unsigned char data[]; /* offset 16, 0 declared bytes: the FAM */
+};                        /* sizeof == 16, offsetof(data) == 16 */
+
+struct msg *m = malloc(sizeof *m + n);   /* one malloc, one free(m) */</code></pre>
+<p>The pre-C99 idiom it replaces:</p>
+<pre><code class="language-c">struct msg_old {
+    uint64_t tag;
+    uint32_t len;
+    unsigned char data[1];   /* the 1-byte hack: sizeof lies (13 -&gt; padded to 16),
+                               every allocation site hand-does the -1 */
+};
+struct msg_old *m = malloc(sizeof *m + n - 1);   /* forget the -1: off-by-one into
+                                                    the next chunk's header */</code></pre>
+<p>The hack's whole cost is that arithmetic: <code>sizeof</code> no longer reports the header size and the <code>-1</code> is a per-site ritual. The FAM says: zero declared size, <code>offsetof</code> is the truth, one <code>malloc</code>, one <code>free</code>, no arithmetic to get wrong.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>malloc(0)</code> is legal.</strong> The standard allows NULL or a unique freeable pointer; glibc 2.35 x86-64 returns non-NULL — a 32-byte minimum chunk with 24 usable bytes (<code>malloc_usable_size(malloc(0)) == 24</code>). So <code>if (!p) abort()</code> is not an error check when <code>n</code> can be 0.</li>
+<li><strong><code>MALLOC_PERTURB_</code></strong> (glibc): fresh allocations are filled with <code>~value</code>, freed blocks with <code>value</code> (the 0xa5/0x5a pair, glibc 2.35 malloc(3)). It exists to break the dev/prod illusion: heap memory fresh from the kernel is zeroed (Chapter 03), so uninitialized-read bugs hide on a fresh heap and detonate on a recycled one.</li>
+<li><strong>tcache exists.</strong> Since glibc 2.27 every thread has a private cache: 64 size bins, up to 7 chunks each, covering chunk sizes up to 1040 bytes (glibc 2.35). <code>free()</code> of a small block pushes it onto the per-thread list — no lock — and a matching <code>malloc()</code> pops it. Cheaper free/malloc pairs, and the double-free abort ("free(): double free detected in tcache 2"). Chapter 19 tours it; Chapter 21 poisons it.</li>
+<li><strong>The memcpy/memmove overlap rule.</strong> <code>memcpy</code> with overlapping source and destination is UB; <code>memmove</code> behaves as if copied via a temporary buffer. Both exist because <code>memcpy</code> may assume disjointness and copy with wide vector loads/stores in whichever direction is fastest (Chapter 02) — dropping the overlap <em>check</em> is the entire difference. Provable disjointness: <code>memcpy</code>. Otherwise: <code>memmove</code>.</li>
+<li><strong><code>restrict</code> is a promise, not a hint.</strong> <code>void copy(char *restrict dst, const char *restrict src, size_t n)</code> promises the pointers do not overlap for the whole call; the compiler then vectorizes with no runtime check. Break the promise: UB — the same license as strict aliasing, one clause over.</li>
+<li><strong>NULL, 0, and C23's <code>nullptr</code>.</strong> In glibc's <code>stddef.h</code>, C-mode <code>NULL</code> is <code>((void*)0)</code> — pointer-sized, 8 bytes. The variadic trap: <code>printf("%p", 0)</code> passes a 4-byte <code>int</code> where the varargs ABI expects 8 bytes of pointer — UB that happens to work on x86-64 and nowhere portable. Insiders write <code>(void*)0</code>; C23's <code>nullptr</code> (type <code>nullptr_t</code>) ends the macro's type quirks.</li>
+<li><strong>String literals are shared.</strong> gcc/clang put literals in mergeable <code>.rodata</code> sections and the linker folds identical strings into one object — two <code>char *p = "hi";</code> in different translation units can point at the same 3 bytes. Writing one is UB; on Linux it segfaults because the page is <code>r--</code> (Chapter 03's PTE bits). On systems with writable code segments (or gcc's long-dead <code>-fwritable-strings</code>) it "worked," which is why the bug is still written.</li>
+<li><strong>The 128 KiB cliff is dynamic.</strong> glibc 2.35 serves requests under 128 KiB from the <code>brk</code> heap; 128 KiB and above get a fresh page-aligned <code>mmap</code> that <code>free()</code> munmaps immediately. The threshold can grow to 32 MiB on 64-bit after large frees, so "freeing the big buffer shrinks RSS" is true only above the <em>current</em> threshold.</li>
+<li><strong><code>offsetof</code> and <code>container_of</code> are a NULL-dereference that never runs.</strong> The macro <code>((size_t)&amp;((struct rec *)0)-&gt;flag)</code> computes a member's offset from a "struct at address 0" — pure compile-time arithmetic, nothing dereferenced. Formally questionable, universally implemented, and the trick behind Linux's <code>container_of</code>.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>The lab: make the six neighborhoods personal. The program prints where its own objects live, then dumps its own mappings — it opens <code>/proc/self/maps</code> <em>itself</em> (<code>cat /proc/self/maps</code> in a shell shows <em>cat's</em> map: "self" resolves per opener):</p>
+<pre><code class="language-c">/* map.c — x86-64 Linux */
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+static const char *lit  = "a shared literal";  /* the bytes: .rodata */
+static const int   tbl[3] = {1, 2, 3};         /* .rodata */
+static int answer  = 42;                       /* .data */
+static int zeros;                             /* .bss */
+
+int main(void) {
+    int stack_var = 0;                 /* main's frame */
+    char *small = malloc(64);          /* heap via brk */
+    char *big   = malloc(1u &lt;&lt; 20);    /* 1 MiB &gt;= 128 KiB: via mmap */
+
+    printf("literal    %p\n", (void *)lit);
+    printf("const tbl  %p\n", (void *)tbl);
+    printf("init'd 42  %p\n", (void *)&amp;answer);
+    printf("zeroed     %p\n", (void *)&amp;zeros);
+    printf("stack      %p\n", (void *)&amp;stack_var);
+    printf("heap 64 B  %p\n", (void *)small);
+    printf("mmap 1MiB  %p\n", (void *)big);
+
+    FILE *f = fopen("/proc/self/maps", "r");
+    char line[256];
+    while (fgets(line, sizeof line, f)) fputs(line, stdout);
+}</code></pre>
+<pre><code>$ gcc -no-pie -O0 -g -o map map.c &amp;&amp; ./map  # -no-pie: textbook addresses;
+literal    0x402010                          # default PIE gives 0x55.. + ASLR
+const tbl  0x402020
+init'd 42  0x404028
+zeroed     0x404038
+stack      0x7ffc7a2b1c94
+heap 64 B  0x4062a0
+mmap 1MiB  0x7f539c000010
+00400000-00401000 r--p 00000000  /tmp/map
+00401000-00402000 r-xp 00001000  /tmp/map   &lt;- .text: the code
+00402000-00403000 r--p 00002000  /tmp/map   &lt;- .rodata: literal, tbl
+00403000-00404000 r--p 00003000  /tmp/map   &lt;- .data.rel.ro
+00404000-00405000 rw-p 00004000  /tmp/map   &lt;- .data: answer (0x404028)
+00405000-00406000 rw-p 00000000  00:00 0    &lt;- .bss: zeros, no file backing
+00406000-00427000 rw-p 00000000  00:00 0 [heap]  &lt;- small (0x4062a0)
+...
+7f539c000000-7f539e010000 rw-p  00:00 0     &lt;- big: the 1 MiB mmap
+7ffc7a29c000-7ffc7a2bd000 rw-p [stack]</code></pre>
+<p>What to notice: every printed address falls inside the matching line — find each one. The permission column explains the segfault <em>before</em> the write: <code>.rodata</code> is <code>r--</code>. The <code>.bss</code> line has no file backing. Run it twice: stack and mmap addresses move (ASLR, Chapter 03); the 0x40… ones do not (non-PIE). <code>nm -n map</code> adds the symbol view: letter codes <code>R</code>/<code>D</code>/<code>B</code> for rodata/data/bss.</p>
+<p>Now break it, with two tools:</p>
+<pre><code class="language-c">/* asan.c */
+#include &lt;stdlib.h&gt;
+int main(void) {
+    char *p = malloc(16);
+    p[20] = 'x';     /* 4 bytes past the end */
+    return 0;
+}</code></pre>
+<pre><code>$ gcc -fsanitize=address -g -O1 -o asan asan.c &amp;&amp; ./asan
+=================================================================
+==2718==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x6020000000d4
+WRITE of size 1 at 0x6020000000d4 thread T0
+    #0 0x... in main /tmp/asan.c:4
+0x6020000000d4 is located 4 bytes after 16-byte region [0x6020000000c0,0x6020000000d0)
+allocated by thread T0 here:
+    #0 0x... in malloc
+    #1 0x... in main /tmp/asan.c:3
+SUMMARY: AddressSanitizer: heap-buffer-overflow /tmp/asan.c:4</code></pre>
+<p>The report gives what you need: <em>where</em> ("4 bytes after a 16-byte region") and <em>who allocated it</em> (the exact line). ASan wraps malloc with poisoned redzones (at least 16 bytes on each side) plus a shadow map — 1 shadow byte per 8 memory bytes, encoding how many leading bytes are addressable. Freed blocks are poisoned and quarantined too, so use-after-free trips the same machinery. Cost: roughly 2x runtime, 2–3x memory — a debug-build tool (Chapter 21 covers the production relatives).</p>
+<pre><code>$ valgrind --leak-check=full ./map    # no recompile; ~20-50x slowdown
+==31337== HEAP SUMMARY:
+==31337==     in use at exit: 1,048,600 bytes in 2 blocks
+==31337==   definitely lost: 1,048,600 bytes in 2 blocks</code></pre>
+<p>valgrind runs the binary in an instrumented VM, watching every load and store; no rebuild needed, and unlike ASan it also flags <em>reads of uninitialized</em> memory.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Crash triage by address.</strong> Fault at 0x0/0x8/0x10: NULL pointer plus a small field offset — the offset names the member. Address in an <code>r--</code> mapping: a literal is being written. Address near the stack pointer: frame overflow, VLA, or recursion. Match the faulting address against <code>/proc/&lt;pid&gt;/maps</code> before guessing.</li>
+<li><strong>Free performance from layout.</strong> Sort fields by descending size (24 → 16 bytes above: a third less memory, a third fewer cache lines in arrays). Use <code>aligned_alloc(64, …)</code> for per-thread buffers to dodge false sharing (Chapters 02, 20). Reach for <code>restrict</code> only in measured hot loops.</li>
+<li><strong>Review code with the failure catalog.</strong> Return of a local's address, writing through a pointer to a literal, <code>sizeof(param)</code> that is secretly 8, the double free in the error path — you can now <em>derive</em> why each is broken, not memorize a lint rule.</li>
+<li><strong>Interview answers from first principles.</strong> "Why doesn't <code>free</code> take a size?" (metadata at p−8). "What does <code>malloc(0)</code> return?" (implementation-defined; glibc: 24 usable bytes). "How big is this struct?" (three rules, on the whiteboard).</li>
+<li><strong>Read other languages as layers.</strong> The JVM heap, CPython arenas, V8 spaces (Chapters 12–15) are giant C programs managing slabs of bytes — slabs they got from this chapter's <code>malloc</code> (Chapter 19 shows the same bins under every runtime).</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 01</strong> — alignment is the memory system's unit shape; padding is where that shape meets declaration order.</li>
+<li><strong>Chapter 02</strong> — cache lines justify field reordering, <code>aligned_alloc(64, …)</code>, and the vectorized <code>memcpy</code> the overlap rule permits.</li>
+<li><strong>Chapter 03</strong> — page permissions turn <code>.rodata</code> writes into SIGSEGV; ASLR moves every lab address; mmap'd big allocations and their instant munmap.</li>
+<li><strong>Chapters 04, 05, 07</strong> — frames explain free locals, <code>alloca</code>'s vanishing act, and silent VLA failure; the free-list machinery leaves its receipt at p−8; the prologue/epilogue build and destroy frames, and <code>lea</code> implements scaled pointer arithmetic.</li>
+<li><strong>Chapter 06</strong> — the counter-image: every header, tag, and box other languages add, C omits.</li>
+<li><strong>Chapters 09, 10, 11</strong> — C++ layers RAII on this exact model; Rust makes ownership compiler-enforced; Go keeps the layout game but reorders your fields.</li>
+<li><strong>Chapters 19, 20, 21</strong> — the bins under <code>malloc</code>; <code>restrict</code> at the hardware memory-model level; the exploit families this chapter's failures become.</li>
+<li><strong>ROADMAP Module 02</strong> — memory security: the attack surface <em>is</em> this chapter's gaps (tcache poisoning, off-by-one into chunk headers). <strong>Module 04</strong> — decompilation is reading this chapter's layouts in reverse. <strong>Module 10</strong> — compilers: where UB-as-license is implemented.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><code>free()</code> takes only a pointer — no size, no handle. Explain why that signature <em>forces</em> allocator metadata to live adjacent to every heap block, and what that implies about a one-byte overflow past the end of an allocation.</li>
+</ol>
+<ol>
+<li>What is array decay? Name the three expression contexts in which an array name does <em>not</em> decay, and explain why nearly every C API that accepts a buffer must also accept a length.</li>
+</ol>
+<ol>
+<li>Predict <code>sizeof</code> and every field offset, on x86-64 Linux, for both structs:</li>
+</ol>
+<pre><code class="language-c">   struct s1 { char a; char *b; char c; };
+   struct s2 { char *b; char a; char c; };</code></pre>
+<ol>
+<li>Predict the output and where each object's bytes live (x86-64 Linux):</li>
+</ol>
+<pre><code class="language-c">   char str[] = "hello";
+   char *p    = "hello";
+   printf("%zu %zu\n", sizeof(str), sizeof(p));
+   str[0] = 'H';   /* A */
+   p[0]   = 'H';   /* B */</code></pre>
+<p>What happens at A and at B, and why?</p>
+<ol>
+<li>Diagnose the bug: why is this broken, what exactly happens to the returned pointer, and what are two correct fixes?</li>
+</ol>
+<pre><code class="language-c">   char *make(void) {
+       char buf[32];
+       snprintf(buf, sizeof buf, "%d", 42);
+       return buf;
+   }</code></pre>
+<ol>
+<li>Diagnose: at <code>-O2</code> (gcc 13, x86-64) this function's guard is <em>deleted</em> — the compiler treats it as equivalent to <code>return b &lt; 0 ? -1 : a + b;</code>. Which rule of the standard licenses that, and what is a correct overflow guard for two <code>size_t</code> values?</li>
+</ol>
+<pre><code class="language-c">   int check(int a, int b) {
+       int s = a + b;
+       if (s &lt; a) return -1;
+       return s;
+   }</code></pre>
+<ol>
+<li>A program runs flawlessly in development but corrupts data in production. The bug is a use-after-free: dev runs mostly touch <em>fresh</em> heap pages while production recycles <em>used</em> chunks. Name two tools or knobs that reproduce the corruption deterministically in dev, and what each does to freed memory.</li>
+</ol>
+<ol>
+<li>Cross-chapter: <code>alloca()</code> "never fails and never leaks," yet many style guides ban it. Tie its reclamation to the exact function epilogue from Chapters 04 and 07, explain why a huge <code>alloca</code> (or VLA) size produces no error at all, and name the kernel version and year in which Linux finished removing VLAs.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The signature makes memory itself the parameter block.</strong> With only a pointer value, <code>free()</code> must recover size, boundaries, and status without any lookup table — none exists. The only storage the allocator controls is the memory around the block, so the size word sits at <code>p − 8</code> (glibc 2.35, x86-64) and free-list links live inside free chunks' user areas. A one-byte overflow past the usable area lands in the <em>next</em> chunk's <code>size</code> field: nothing fails immediately; the corruption detonates when that chunk is later freed, split, or consolidated — the mechanism Chapters 05, 19, and 21 exploit.</li>
+</ol>
+<ol>
+<li><strong>Decay</strong> is the implicit conversion of an array name to a pointer to its first element. The exceptions: (1) operand of <code>sizeof</code> — the whole array is measured; (2) operand of unary <code>&amp;</code> — the result is a pointer <em>to the array</em>; (3) a string literal initializing a <code>char</code> array — the bytes are <em>copied</em> in. APIs need lengths because the callee receives 8 bytes of address with the size deleted at the call boundary, so the caller must ship the count (<code>read(fd, buf, count)</code>).</li>
+</ol>
+<ol>
+<li><strong><code>s1</code>: a@0, pad 7, b@8, c@16, pad 7 — <code>sizeof</code> 24.</strong> <code>b</code> needs 8-byte alignment, so 7 bytes pad after the 1-byte <code>a</code>; <code>c</code> lands at 16; the total rounds up to the struct's alignment (8), adding 7 tail bytes. <strong><code>s2</code>: b@0, a@8, c@9, pad 6 — <code>sizeof</code> 16.</strong> Descending size order collects the two chars into one gap. Same fields, same alignment, 8 bytes less — the whole game is where the padding pools.</li>
+</ol>
+<ol>
+<li><strong><code>6 8</code>.</strong> <code>str</code> is a 6-byte array (5 chars + NUL) in main's stack frame, initialized by <em>copying</em> the literal; <code>sizeof</code> sees the whole array. <code>p</code> is an 8-byte pointer; the 6 bytes it aims at live in <code>.rodata</code>. At <strong>A</strong> the write hits main's writable stack frame — fine. At <strong>B</strong> the write targets a read-only mapping — SIGSEGV, because the page is <code>r--</code> (Chapter 03). Formally B is UB; on Linux the fault is the outcome. Extra credit: identical literals can merge into one <code>.rodata</code> object, so a "successful" B would corrupt every user of that string.</li>
+</ol>
+<ol>
+<li><strong>Dangling pointer into a dead frame.</strong> <code>buf</code> lives in <code>make</code>'s stack frame; the epilogue restores <code>rsp</code>/<code>rbp</code> (Chapter 07) and the 32 bytes become memory below the stack pointer, reusable by the next call — often <code>printf</code> itself. The address is valid mapped memory whose contents can change at any moment: UB that "works in demos." Fixes: (1) <code>malloc</code>/<code>strdup</code> and hand ownership to the caller; (2) invert the contract — the caller supplies the buffer and size, keeping the memory in a frame that outlives the callee.</li>
+</ol>
+<ol>
+<li><strong>Signed overflow is UB (C11 6.5/5), and UB licenses assumptions.</strong> The optimizer may assume <code>a + b</code> never wraps; then <code>a + b &lt; a</code> simplifies to <code>b &lt; 0</code>, the check reduces to a sign test, and the addition runs unchecked — <code>check(INT_MAX-1, 2)</code> returns a wrapped value with no −1. For sizes the correct guard cannot overflow: <code>if (b &gt; SIZE_MAX - a) fail;</code>, or <code>__builtin_add_overflow(a, b, &amp;s)</code> — arrange arithmetic whose operands cannot wrap in the first place.</li>
+</ol>
+<ol>
+<li><strong>(a) <code>MALLOC_PERTURB_=165</code></strong> (glibc): freed blocks are filled with 0xa5 and fresh allocations with its complement 0x5a — the stale read now hits recognizable poison, and the uninitialized read hits garbage instead of lucky zeros. <strong>(b) AddressSanitizer</strong> (<code>-fsanitize=address</code>): <code>free()</code> moves the block into a poisoned quarantine (shadow bytes mark it dead), so the next access reports <code>heap-use-after-free</code> with both the free and allocation stacks. <strong>(c) valgrind</strong> also catches it as an invalid read, no rebuild required. Any two of the three earn the point; the shared principle is that only the <em>allocator</em> can make freed memory detectably dead.</li>
+</ol>
+<ol>
+<li><strong>The epilogue is the deallocator.</strong> x86-64: <code>leave</code> or <code>mov rsp, rbp; pop rbp</code>; ARM64: the restoring <code>ldp</code>. One register write resets the stack pointer and every <code>alloca</code>/VLA in the frame evaporates — no free list, no metadata, no <code>free()</code> that could release it early ("never leaks" = "waits for return"). A huge <code>alloca</code>/VLA simply subtracts a huge value from <code>rsp</code>: the stack pointer can jump past the guard page (Chapter 03), so later accesses fault at unrelated addresses — no NULL, no error code, pure UB. The Linux kernel completed its VLA purge in <strong>v4.20, late 2018</strong>, and builds with <code>-Wvla</code> to keep them out (<code>CONFIG_FRAME_WARN</code>, 2048 B default on 64-bit, needs statically auditable frames).</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch07.html"><span class="cn-label">previous</span><span class="cn-title">Ch 07</span></a>
+<a class="next" href="ch09.html"><span class="cn-label">next</span><span class="cn-title">Ch 09</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/08-c.md">chapters/08-c.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

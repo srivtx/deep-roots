@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 17 — COBOL: the memory model with no heap — deep-roots</title>
+<meta name="description" content="Chapter 17 of the memory-models module: Chapter 17 — COBOL: the memory model with no heap">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 17 — COBOL: the memory model with no heap — deep-roots">
+<meta property="og:description" content="Chapter 17 of the memory-models module: Chapter 17 — COBOL: the memory model with no heap">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 17 — COBOL: the memory model with no heap — deep-roots">
+<meta name="twitter:description" content="Chapter 17 of the memory-models module: Chapter 17 — COBOL: the memory model with no heap">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part II · the languages</div>
+<h1 class="post-title">Chapter 17 — COBOL: the memory model with no heap</h1>
+<div class="post-meta">chapter 17 &middot; ~16 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> COBOL took the opposite bet from every language in chapters 08–16: nothing is allocated at run time. Every variable's address, size, and byte layout is fixed at compile and load — storage is a <strong>completed contract</strong> before the first instruction runs. No per-call frame, no heap, no garbage collector. The Data Division <em>is</em> a memory map: <code>PICTURE</code> describes exact bytes, 01-level records concatenate them with no padding, and one layout doubles as file record, screen field, and punch card image. It buys total determinism and exact decimal arithmetic — the trade sixty years of settlement runs kept accepting.</blockquote>
+<h2 id="the-bet-every-byte-is-decided-before-the-program-runs">The bet: every byte is decided before the program runs</h2>
+<p>COBOL's four answers are the most extreme in Part II:</p>
+<div class="table-wrap"><table><thead><tr><th>Question</th><th>COBOL's answer (COBOL 85)</th></tr></thead><tbody><tr><td>What is a value?</td><td>A fixed byte field; size, offset, layout declared in the Data Division.</td></tr><tr><td>Who owns it?</td><td>The program: WORKING-STORAGE, allocated once at load.</td></tr><tr><td>Who frees it?</td><td>Nobody: nothing is allocated after load (pre-2002).</td></tr><tr><td>What safety?</td><td>Layout safety by construction; no pointers.</td></tr></tbody></table></div>
+<p>The bet is <strong>static storage</strong>: the program is mapped at load, WORKING-STORAGE is carved at compile-time offsets, and the program thereafter only reads and writes those bytes. A call costs a branch, not a frame with fresh locals — the classic mainframe cost is saving 16 registers into a pre-allocated 72-byte save area. The buy:</p>
+<ul>
+<li><strong>Determinism.</strong> No allocation order, no GC pause, no compaction, no address ever changes: the millionth record costs what the first did.</li>
+<li><strong>Zero allocation cost.</strong> No allocator in the loop, nothing to fragment — chapter 05's catalog of costs never applies.</li>
+<li><strong>Layout == file record == screen field == punch card.</strong> The Data Division descends from 80-column cards, and the compiler makes memory match the <em>media</em>: <code>FD</code> record, CICS screen field, and WORKING-STORAGE group can share one PICTURE — copying between them is a raw byte move, no serialization.</li>
+</ul>
+<p>There is no dynamic allocation at all until COBOL 2002's <code>ALLOCATE</code> verb, met below.</p>
+<h2 id="three-storages-one-of-them-yours-working-storage-local-storage-linkage">Three storages, one of them yours: WORKING-STORAGE, LOCAL-STORAGE, LINKAGE</h2>
+<p>The difference between the three storage sections is <strong>who owns the bytes</strong>:</p>
+<ul>
+<li><strong>WORKING-STORAGE</strong> — allocated once at load, alive until the run-unit ends. A subprogram called 10,000 times sees the <em>same</em> bytes: values persist between calls, <code>VALUE</code> clauses run once, at load. <code>CANCEL</code> releases a called program's storage; the next <code>CALL</code> re-initializes it.</li>
+<li><strong>LOCAL-STORAGE</strong> (COBOL 85) — fresh bytes per invocation, freed on return: a frame's locals from ch04, <code>VALUE</code> re-applied each call.</li>
+<li><strong>LINKAGE</strong> — the caller's storage. The callee allocates nothing; LINKAGE items describe bytes the caller owns, bound by <code>PROCEDURE DIVISION USING</code> at <code>CALL ... BY REFERENCE</code>. The callee describes; it never owns.</li>
+</ul>
+<pre><code class="language-cobol">       IDENTIFICATION DIVISION.
+       PROGRAM-ID. ADD-TAX.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-RATE      PIC S9(3)V9(4) COMP-3 VALUE 0.0825.  *&gt; 4 bytes, once, forever
+       LINKAGE SECTION.
+       01  LK-AMOUNT    PIC S9(9)V99    COMP-3.              *&gt; 0 bytes allocated here
+       PROCEDURE DIVISION USING LK-AMOUNT.                   *&gt; bound to caller's bytes
+           COMPUTE LK-AMOUNT ROUNDED = LK-AMOUNT * (1 + WS-RATE)
+           GOBACK.
+       END PROGRAM ADD-TAX.</code></pre>
+<p>The caller says <code>CALL "ADD-TAX" USING BY REFERENCE WS-TOTAL</code> — the default protocol — passing the <em>address</em> of <code>WS-TOTAL</code> in a register: the C pointer idea (ch08), but the pointee's shape is declared in the Data Division. Who owns what:</p>
+<pre><code>   one run-unit (a batch step)                 ADD-TAX subprogram's view:
+ ┌──────────────────────────────────────┐
+ │ MAIN                                 │      WORKING-STORAGE  WS-RATE  4 bytes
+ │  WORKING-STORAGE                     │      └ callee-owned; one allocation at
+ │   WS-TOTAL  PIC S9(9)V99 COMP-3      │        load; same bytes every CALL
+ │   CALL "ADD-TAX" USING WS-TOTAL      │
+ │    │                                 │      LOCAL-STORAGE   (COBOL 85)
+ └────┼─────────────────────────────────┘      └ fresh per CALL (a frame's locals)
+      │  BY REFERENCE = pass the address
+      ▼                                       LINKAGE  LK-AMOUNT  0 bytes
+   WS-TOTAL's bytes ───────────────────────►  └ alias for MAIN's WS-TOTAL; the
+                                                  callee owns nothing</code></pre>
+<p>The classic trap falls straight out of the diagram: WORKING-STORAGE persists across calls <em>by design</em>, so an accumulator that is never reset double-counts on the second <code>CALL</code> — put that state in LOCAL-STORAGE.</p>
+<h2 id="picture-is-a-type-system-at-byte-granularity">PICTURE is a type system at byte granularity</h2>
+<p><code>PICTURE</code> is a storage-size specification, not a format string: every symbol claims bytes or nibbles, and <code>USAGE</code> picks the encoding.</p>
+<div class="table-wrap"><table><thead><tr><th>USAGE</th><th>Encoding</th><th>Size rule</th></tr></thead><tbody><tr><td><code>DISPLAY</code> (default)</td><td>1 byte per character; EBCDIC on z/OS, ASCII on GnuCOBOL</td><td><code>PIC 9(4)</code> = 4 B</td></tr><tr><td><code>COMP</code>/<code>COMP-4</code>/<code>BINARY</code></td><td>fixed binary, word-aligned per <code>SYNCHRONIZED</code></td><td>1–4 digits: 2 B; 5–9: 4; 10–18: 8</td></tr><tr><td><code>COMP-3</code>/<code>PACKED-DECIMAL</code></td><td>2 digits per byte + sign nibble</td><td><code>floor(digits/2) + 1</code> B</td></tr><tr><td><code>COMP-1</code>, <code>COMP-2</code></td><td>floats; hex float on old S/390, IEEE-754 on z/Architecture and GnuCOBOL</td><td>4, 8 B</td></tr></tbody></table></div>
+<p>The banking workhorse is COMP-3. <code>PIC S9(7) COMP-3</code> holding +0123456 packs 7 digit nibbles and 1 sign nibble into 4 bytes:</p>
+<pre><code>   PIC S9(7) COMP-3 = value +0123456, sign nibble S
+
+   byte 0        byte 1        byte 2        byte 3
+   +---------+   +---------+   +---------+   +---------+
+   | 0 | 1   |   | 2 | 3   |   | 4 | 5   |   | 6 | C   |
+   +---------+   +---------+   +---------+   +---------+
+     hi  lo        hi  lo        hi  lo        hi  lo
+    digit digit digit digit digit digit digit   sign
+
+   hex: 01 23 45 6C          size = floor(7 / 2) + 1 = 4 bytes
+   sign nibble: C = positive, D = negative, F = unsigned
+   (same nibble values on z/OS and GnuCOBOL 3.x)</code></pre>
+<p>A negative value flips the last nibble to <code>D</code>: -1234567 is <code>12 34 56 7D</code>. An odd digit count pads with a leading zero nibble, so unsigned 987654 in <code>PIC 9(6)</code> packs to <code>09 87 65 4F</code>. Group items are <em>plain concatenation</em> of their children — the group's size is the exact sum:</p>
+<pre><code>01  WS-CUST-REC.                                    total 36 bytes
+    05  C-ID        PIC 9(7)      COMP-3.
+    05  C-NAME      PIC X(24).
+    05  C-BALANCE   PIC S9(11)V99 COMP-3.           V costs 0 bytes (implied point)
+    05  C-STATUS    PIC X.
+        88  STATUS-ACTIVE  VALUE "A".               costs 0 bytes (see below)
+
+ offset  size  item        PICTURE            the bytes on z/OS (EBCDIC)
+ ------  ----  ----------  -----------------  --------------------------------
+      0     4  C-ID       9(7) COMP-3        01 23 45 6F   unsigned -&gt; F nibble
+      4    24  C-NAME     X(24)              D4 E4 E4 ...  ("MUN"...)
+     28     7  C-BALANCE  S9(11)V99 COMP-3   00 00 00 12 34 56 7C   +12345.67
+     35     1  C-STATUS   X                  C1            EBCDIC "A"
+ ------  ----
+      0    36  group      byte-for-byte sum; no padding; offsets frozen at compile</code></pre>
+<p>Two numbers anchor the type system. COBOL 85 caps an item at <strong>18 digits</strong> (IBM Enterprise COBOL 6.x raises this to 31 with <code>ARITH(EXTEND)</code>), and the digits exist for banking: the S/360 (1964) shipped a packed-decimal instruction set — ZAP, AP, SP, MP, DP — so <code>PIC S9(11)V99 COMP-3</code> counts cents in exact base-10 and money never passes through binary. Ch01/02 showed why: IEEE-754 cannot represent 0.01 exactly, and a 32-bit binary cents counter overflows past $21.47 million, while 13 COMP-3 digits count to $99,999,999,999.99 exactly. Hence decimal COBOL — and <code>float</code> nearly absent from ledgers.</p>
+<h2 id="the-01-record-concatenation-as-contract-redefines-as-sanctioned-punning">The 01 record: concatenation as contract, REDEFINES as sanctioned punning</h2>
+<p>Chapter 06 showed C structs padding fields to alignment. A COBOL 01 record is stronger: <strong>no padding, ever</strong> — offset = running sum of the elementary sizes, because the compiler's job is to make memory match the record on tape; slack bytes would be a bug, not an optimization. The exception: <code>SYNCHRONIZED</code> COMP items force word alignment and <em>insert slack bytes</em> — which is why SYNC never appears in a file record layout, where the padding would shift every later field. Folklore: "SYNC in WORKING-STORAGE, never in the FILE SECTION."</p>
+<p><strong>REDEFINES</strong> is COBOL's union — one offset, several interpretations:</p>
+<pre><code class="language-cobol">01  WS-MSG-AREA.
+    05  MSG-LENGTH     PIC 9(4)  COMP.             *&gt; offset 0, 2 bytes
+    05  MSG-PAYLOAD    PIC X(76).                  *&gt; offset 2, 76 bytes
+    05  MSG-ACCT-VIEW  REDEFINES  MSG-PAYLOAD.     *&gt; same offset 2, same 76 bytes
+        10  ACCT-NUM     PIC X(12).
+        10  ACCT-BAL     PIC S9(11)V99  COMP-3.    *&gt; 7 bytes
+        10  ACCT-FILLER  PIC X(57).                *&gt; 12 + 7 + 57 = 76</code></pre>
+<p>Write the payload as characters, read it back as an account record — <em>safe</em> punning, the thing C's strict-aliasing rules (ch08) make undefined. The C compiler doesn't know two pointers alias, so it may cache a load across the store; the COBOL compiler <em>knows</em> — both views are statically declared in one Data Division and provably share bytes, so it is forbidden to assume they don't. In COBOL, aliasing is <em>declared</em>, and the layout is the contract: the strict-aliasing war never starts. (IBM Enterprise COBOL relaxes the no-larger rule at 01 level for alternate record layouts.)</p>
+<p><strong>OCCURS</strong> declares a fixed array with fixed bounds, and the price is paid at load: <code>PIC X(40) OCCURS 10000</code> costs 400,000 bytes whether you use 3 items or 10,000 — tables are budgets, which is why old programs have tables sized to the business day. With bounds checking off by default (IBM Enterprise COBOL 6.x default <code>NOSRRANGE</code>), subscript 10,001 writes into the next field: the ch21 lesson reaches COBOL too.</p>
+<p><strong>OCCURS DEPENDING ON (ODO)</strong> is the variable-length-record trick — a table whose current element count is itself a data item:</p>
+<pre><code class="language-cobol">01  WS-ORDER-REC.
+    05  ORD-ID         PIC 9(7)  COMP-3.           *&gt; offset 0
+    05  ORD-DATE       PIC X(8).                   *&gt; offset 4
+    05  ORD-ITEM-COUNT PIC 9(3)  COMP.             *&gt; offset 12; control field must
+                                                    *&gt;   PRECEDE the table
+    05  ORD-ITEMS      OCCURS 500 TIMES
+                      DEPENDING ON ORD-ITEM-COUNT.
+        10  ITEM-SKU   PIC X(8).                   *&gt; 11 bytes per element
+        10  ITEM-QTY   PIC S9(5) COMP-3.
+    05  ORD-TOTAL      PIC S9(11)V99  COMP-3.      *&gt; offset 14 + 11 x count: SHIFTS</code></pre>
+<p>Everything after the table sits at a <em>run-time variable offset</em> — <code>ORD-TOTAL</code> moves 11 bytes per counted item. Hence the famous restrictions: the control field must precede the table and be set before the variable part is touched; <code>REDEFINES</code> is forbidden on and after the variable part (offsets aren't constants); and a variable-length file must <em>carry the length</em> — a z/OS V-format record stores a 4-byte Record Descriptor Word (2-byte binary length + 2 reserved) ahead of the data, and the <code>FD</code> declares <code>RECORD VARYING FROM 14 TO 5521</code>. Miss the count and you read a shifted record — the S0C7 in the quiz.</p>
+<p><strong>88-level condition names</strong> are the zero-byte boolean. <code>88 STATUS-ACTIVE VALUE "A"</code> stores nothing — it is a compile-time <em>view</em> of <code>C-STATUS</code>'s value: <code>IF STATUS-ACTIVE</code> compiles to a 1-byte compare against <code>C1</code> (EBCDIC "A"), and <code>SET STATUS-ACTIVE TO TRUE</code> writes that byte. Python's <code>True</code> is a 28-byte heap object (ch14); COBOL never allocates a boolean.</p>
+<h2 id="the-procedure-division-has-no-frames">The PROCEDURE DIVISION has no frames</h2>
+<p>Classic control flow is <code>PERFORM</code>: run this paragraph (or this one <code>THRU</code> that one) and come back. Paragraphs and sections are labels in one flat body of code, and they <strong>share storage</strong> — no frame per PERFORM, no lexical scope, no locals: any state a paragraph needs is WORKING-STORAGE, visible to every other paragraph. The machine cost is a branch and a saved return address; the model cost is that reentrancy is impossible <em>by construction</em>, and COBOL 85 enforces it: <strong>a program may not call itself, directly or indirectly</strong>. A recursive activation would alias its own WORKING-STORAGE, and the compiler has no machinery to grow a fresh copy per level — there is no frame machinery to grow (ch04 built it; COBOL 85 never did).</p>
+<p>COBOL 2002 added the opt-in: <code>PROGRAM-ID. QUOTA IS RECURSIVE.</code> LOCAL-STORAGE then allocates per invocation on a real runtime stack — the ch04 frame, bought deliberately — while WORKING-STORAGE stays shared: invariants in WS, per-level state in LS. GnuCOBOL 3.x accepts the attribute; mainframe shops historically restructured recursion into iteration with an explicit table in WORKING-STORAGE ("the table is your stack"). The same release admitted the heap: COBOL 2002's <code>ALLOCATE</code> returns a pointer you can aim at a LINKAGE item via <code>SET ADDRESS OF</code> — opt-in dynamic storage, 43 years after the first COBOL.</p>
+<h2 id="below-the-line-below-the-bar-the-machine-that-hosts-the-bet">Below the line, below the bar: the machine that hosts the bet</h2>
+<p>Two z/OS storage boundaries have names old enough to vote, and both are address-width stories.</p>
+<p><strong>The 16 MB line.</strong> MVS/370 descended from the S/360, whose addresses were 24 bits even though registers were 32 — 2^24 = 16,777,216 bytes was the entire addressable world, and programs grew comfortable storing flags in the high byte of "addresses." When S/370-XA extended addressing to 31 bits in 1983 (2 GB), the top bit became the AMODE switch, and everything still running 24-bit — old programs, old control blocks, channel programs — had to keep its data <em>below the line</em>: a fossil of 1964 hardware economics.</p>
+<p><strong>The bar.</strong> The 31-bit ceiling itself, 2 GB, persists as "the bar," because z/OS COBOL still overwhelmingly runs in 31-bit AMODE even on 64-bit z/Architecture machines (z900, 2000). <strong>AMODE</strong> is how wide the running code addresses (24, 31, 64); <strong>RMODE</strong> is where the module may <em>load</em> (below the line, or anywhere below the bar). IBM Enterprise COBOL dropped 24-bit support at V5: a modern 6.x compile is typically AMODE(31), RMODE(31) — free to load above the line, confined below the bar.</p>
+<p>Above the program sits the <strong>Language Environment (LE)</strong>, the shared runtime for COBOL, PL/I, and C on z/OS since the early 1990s. LE owns the <em>real</em> stack (LOCAL-STORAGE frames, CALL BY VALUE temporaries) and the LE heap, served by <code>CEEGTST</code>/<code>CEEFRST</code> — what a COBOL 2002 <code>ALLOCATE</code> talks to. Below LE sits the OS allocator: <code>GETMAIN</code>, whose <code>LOC=BELOW</code>/<code>LOC=ANY</code> picks which side of the line and bar storage comes from — the same layering as ch05's <code>malloc</code> → <code>brk</code>/<code>mmap</code>, the machinery of ch19, which the classic COBOL program never touches.</p>
+<p><strong>Why the model survived 60 years of banking.</strong> Determinism: a settlement run cannot tolerate a collector pausing mid-batch, and static storage has no collector to pause. Auditability: every byte has a stable identity, address, and PICTURE, so a dump from 1974 and one from today read identically — traces are reproducible because state never moves. Fixity of records: billions of fixed-layout files circulate through the world's clearing systems (NACHA ACH files are still 94-byte records); the <em>data outlives the language</em>. "COBOL programs leak nothing because they allocate nothing" — the ch05–ch16 catalog of leaks, pauses, and dangling references is opted out of, paid for in fixed budgets.</p>
+<p><strong>Reading a storage dump</strong> is the elder skill. On abend you get a dump (SYSUDUMP, or LE's CEEDUMP via the <code>CEE3DMP</code> service); the compiler listing, built with <code>LIST</code>, carries the storage map with every item's offset, size, and PICTURE. Walk the dump's hex side with your offsets — EBCDIC digits are <code>F0</code>–<code>F9</code>, so <code>F1 F2 F3 C4</code> reads as 123 with a positive sign; COMP-3 decodes nibble by nibble, sign last. It works <em>because</em> nothing ever moved: the offset true at compile time is true in the dump.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>COMP-3 sign nibble conventions: C positive, D negative, F unsigned</strong> — same values on z/OS and GnuCOBOL. Dump readers decode packed fields from the right, sign nibble last; a byte that isn't decimal at all raises S0C7.</li>
+<li><strong>The 16 MB line and the bar are an AMODE story, not a size story.</strong> AMODE = how wide your code addresses; RMODE = where the module may load. The line survived 1983 because the high byte of 32-bit registers had been flag storage for 20 years.</li>
+<li><strong>PERFORM THRU discipline is forced by the storage model.</strong> Control can fall into any paragraph — no frames, no lexical scope — so a performed range always ends at a bare <code>EXIT</code> paragraph (<code>PERFORM CALC-TAX THRU CALC-TAX-EXIT</code>): the only structure the model gives you.</li>
+<li><strong>MOVE CORRESPONDING is a layout operation, not a data-driven copy.</strong> The compiler resolves the name matches between two groups at compile time and emits a fixed sequence of elementary moves; FILLER, 88-levels, and REDEFINES children never correspond — runtime cost is exactly those moves.</li>
+<li><strong>"COBOL programs leak nothing because they allocate nothing."</strong> Pre-2002 there is no leak, no double-free, no use-after-free — the ch21 heap-attack surface is absent, and the price is that OCCURS bounds are the whole memory budget.</li>
+<li><strong>CICS transaction isolation is WORKING-STORAGE copy semantics.</strong> CICS keeps quasi-reentrant programs resident and hands each concurrent <em>task</em> its own copy of WORKING-STORAGE — the copy is the isolation — while values persist between invocations unless you <code>INITIALIZE</code>: the classic dirty-WS bug.</li>
+<li><strong>The 18-digit limit is versioned:</strong> a COBOL 85 hard cap; IBM Enterprise COBOL 6.x allows 31 with <code>ARITH(EXTEND)</code> — data moved between the two discovers the cap by truncation.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Install GnuCOBOL (<code>sudo apt install gnucobol</code>, or <code>brew install gnucobol</code>; 3.1.2 or later — check <code>cobc --version</code>). Save as <code>sizes.cob</code>; <code>-free</code> matters because fixed-format source wants columns 8–72:</p>
+<pre><code class="language-cobol">       IDENTIFICATION DIVISION.
+       PROGRAM-ID. SIZES.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-CUST-REC.
+           05  C-ID        PIC 9(7)      COMP-3.
+           05  C-NAME      PIC X(24).
+           05  C-BALANCE   PIC S9(11)V99 COMP-3.   *&gt; 13 digits, V costs 0 bytes
+           05  C-STATUS    PIC X.
+               88  STATUS-ACTIVE  VALUE "A".       *&gt; 0 bytes: a view of C-STATUS
+           05  C-VISITS    PIC S9(4)    COMP.
+           05  C-RATE      COMP-1.
+       PROCEDURE DIVISION.
+           MOVE 123456 TO C-ID
+           DISPLAY "C-ID        " FUNCTION LENGTH(C-ID)
+           DISPLAY "C-NAME      " FUNCTION LENGTH(C-NAME)
+           DISPLAY "C-BALANCE   " FUNCTION LENGTH(C-BALANCE)
+           DISPLAY "C-STATUS    " FUNCTION LENGTH(C-STATUS)
+           DISPLAY "C-VISITS    " FUNCTION LENGTH(C-VISITS)
+           DISPLAY "C-RATE      " FUNCTION LENGTH(C-RATE)
+           DISPLAY "WS-CUST-REC " LENGTH OF WS-CUST-REC
+           GOBACK.</code></pre>
+<pre><code>$ cobc -x -free sizes.cob &amp;&amp; ./sizes
+C-ID        04
+C-NAME      24
+C-BALANCE   07
+C-STATUS    01
+C-VISITS    02
+C-RATE      04
+WS-CUST-REC 42</code></pre>
+<p>The group is 42 = 4 + 24 + 7 + 1 + 2 + 4, the exact sum — no padding, unlike the C struct of ch06. <code>LENGTH OF</code> is the COBOL 85 special register, <code>FUNCTION LENGTH</code> the 1989 intrinsic; both are compile-time constants. Try <code>LENGTH OF STATUS-ACTIVE</code> and the compiler refuses: an 88-level has no storage — that is the feature. Now prove COMP-3's bytes with <code>pack.cob</code>:</p>
+<pre><code class="language-cobol">       IDENTIFICATION DIVISION.
+       PROGRAM-ID. PACKER.
+       ENVIRONMENT DIVISION.
+       INPUT-OUTPUT SECTION.
+       FILE-CONTROL.
+           SELECT PACKED-FILE ASSIGN TO "packed.bin"
+               ORGANIZATION IS SEQUENTIAL.
+       DATA DIVISION.
+       FILE SECTION.
+       FD  PACKED-FILE.
+       01  PACKED-REC.
+           05  PR-POS   PIC S9(7) COMP-3.
+           05  PR-NEG   PIC S9(7) COMP-3.
+           05  PR-UNS   PIC 9(6)  COMP-3.
+       PROCEDURE DIVISION.
+           OPEN OUTPUT PACKED-FILE
+           MOVE  123456  TO PR-POS
+           MOVE -1234567 TO PR-NEG
+           MOVE  987654  TO PR-UNS
+           WRITE PACKED-REC
+           CLOSE PACKED-FILE
+           GOBACK.</code></pre>
+<pre><code>$ cobc -x -free pack.cob &amp;&amp; ./pack
+$ od -A d -t x1 packed.bin
+0000000 01 23 45 6c 12 34 56 7d 09 87 65 4f
+0000012</code></pre>
+<p>Read it against the nibble diagram: +123456 → <code>01 23 45 6c</code> (sign C), -1234567 → <code>12 34 56 7d</code> (D), unsigned 987654 → <code>09 87 65 4f</code> (pad nibble, F). Twelve bytes, no length prefix, no alignment, no metadata — the record <em>is</em> the file, the chapter in one hexdump. (GnuCOBOL 3.x writes standard C/D/F sign nibbles; <code>-fsign</code> only affects zoned DISPLAY signs.) For the real thing, IBM Z Open Editor (VS Code) with Zowe CLI submits the same source to IBM Enterprise COBOL 6.x on z/OS and shows a genuine storage map.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Diagnose the classic abends.</strong> S0C7 (data exception) = decimal field holding non-decimal bytes — a shifted layout or stale ODO count; S0C6 (specification) = binary field off its word boundary; S878 = GETMAIN failed: below the line or below the bar?</li>
+<li><strong>Compute storage on paper.</strong> Total a program's WORKING-STORAGE and predict a batch job's footprint from the Data Division — no other language here gives you that.</li>
+<li><strong>Interview answers that land.</strong> "Why do banks still run COBOL?" is not nostalgia: determinism, exact decimal, fixed records (the data outlives the language). "How many bytes is <code>PIC S9(7) COMP-3</code>?" (four) is a real screen.</li>
+<li><strong>Read the world's financial files.</strong> NACHA records, fixed-width clearing formats, ISO 8583-style fields: modern systems emitting them are writing COBOL layouts; PICTURE-thinking (offset, length, encoding, sign) is the decoder ring.</li>
+<li><strong>Explain the war story:</strong> a job grows a table from 50,000 to 400,000 elements and starts failing with storage abends — not a leak, but the <em>declared budget</em> crossing what remained below the bar. The fix is Data Division arithmetic, not a profiler.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>ch01/02</strong> — why 0.01 is inexact in IEEE-754 and exact in packed decimal.</li>
+<li><strong>ch04</strong> — the frame COBOL 85 lacks; LOCAL-STORAGE and <code>IS RECURSIVE</code> are opting back in.</li>
+<li><strong>ch05</strong> — the heap COBOL skips; <code>ALLOCATE</code>/LE heap/<code>GETMAIN</code> reintroduce it.</li>
+<li><strong>ch06</strong> — struct padding vs 01-record concatenation.</li>
+<li><strong>ch08</strong> — REDEFINES as <em>declared</em> aliasing vs C's unknown aliasing.</li>
+<li><strong>ch12–16</strong> — GC, RC, ARC manage what COBOL never allocated.</li>
+<li><strong>ch18</strong> — Fortran COMMON and EQUIVALENCE: the other static-layout tradition.</li>
+<li><strong>ch19</strong> — LE heap and GETMAIN as a real allocator stack.</li>
+<li><strong>ch21</strong> — no use-after-free surface; unchecked subscripts still corrupt.</li>
+<li><strong>ROADMAP</strong> — the queued mainframe module builds on this chapter.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>COBOL 85 forbids a program from calling itself, directly or indirectly. Give the storage-model reason, and state what COBOL 2002 <code>IS RECURSIVE</code> changes.</li>
+<li>Two C pointers to the same memory can be a strict-aliasing catastrophe (ch08); two COBOL names for the same bytes (<code>REDEFINES</code>) never are. Why — what does each compiler know at compile time?</li>
+<li><code>PIC S9(7) COMP-3</code> contains -1234567. How many bytes does the field occupy, and what are they in hex?</li>
+<li><code>01 R. 05 A PIC X(3). 05 B PIC 9(4) COMP-3. 05 C PIC S9(4) COMP. 05 D COMP-1.</code> What is <code>LENGTH OF R</code>, at what offsets do B, C, and D start, and where would a C compiler (ch06) place a 2-byte field like C after the 3-byte A?</li>
+<li><code>IF STATUS-ACTIVE</code> runs where <code>88 STATUS-ACTIVE VALUE "A"</code> hangs under a <code>PIC X</code> field. How many bytes does the condition name allocate, what does the test compile to, and what does the equivalent cost in Python (ch14)?</li>
+<li>A batch job reads variable-length order records into the ODO record from this chapter, never sets <code>ORD-ITEM-COUNT</code> before referencing <code>ORD-TOTAL</code>, and abends S0C7 on record 4. Why? Give two fixes.</li>
+<li>A subprogram increments a WORKING-STORAGE counter and is <code>CALL</code>ed twice in one run-unit; the total comes out doubled, with no bug visible in the called program. What did the programmer assume, and what are the three standard repairs?</li>
+<li>Name each allocator in the chain from a COBOL 2002 <code>ALLOCATE</code> on z/OS under Language Environment down to storage, and the parallel chain for <code>malloc</code> on Linux (ch05).</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Static storage can't be re-entered.</strong> WORKING-STORAGE exists once, at fixed offsets; a recursive activation would read and write the <em>same</em> bytes as its caller, and COBOL 85 has no frame machinery to grow a fresh copy (ch04 is what it lacks). <code>IS RECURSIVE</code> (COBOL 2002) allocates LOCAL-STORAGE per invocation on a runtime stack: private locals per level, WORKING-STORAGE shared.</li>
+<li><strong>Declared vs unknown aliasing.</strong> C can't prove two pointers don't alias, so violations are undefined and the optimizer may cache loads across stores; a <code>REDEFINES</code> pair is declared in one Data Division, so the compiler <em>knows</em> the names share bytes and may not cache one view across a write to the other. The layout is the contract.</li>
+<li><strong>4 bytes: <code>12 34 56 7D</code>.</strong> Seven digits + one sign nibble = 8 nibbles = 4 bytes (<code>floor(7/2) + 1</code>). Digits pack left to right (1,2 / 3,4 / 5,6); the low nibble of the last byte is the sign — D negative (C positive, F unsigned).</li>
+<li><strong>12 bytes; B at 3, C at 6, D at 8.</strong> A is 3 bytes; <code>PIC 9(4) COMP-3</code> is 4 digits + sign nibble = 5 nibbles, padded to 3 bytes; <code>S9(4) COMP</code> is a 2-byte halfword; COMP-1 is 4. Offsets are the running sum — no padding. C aligns a 2-byte field to a 2-byte boundary: after a 3-byte array it pads 1 byte and places it at offset 4 (ch06); COBOL places C at 6.</li>
+<li><strong>Zero bytes; a 1-byte compare; 28 bytes.</strong> The 88-level is a compile-time view of the parent field: the test compiles to one compare of <code>C-STATUS</code> against <code>"A"</code> (<code>C1</code> EBCDIC, <code>41</code> ASCII); <code>SET ... TO TRUE</code> writes that byte. Python's <code>True</code> is a 28-byte heap object (ch14); the condition allocates nothing because the field already exists.</li>
+<li><strong>A shifted record is read.</strong> <code>ORD-TOTAL</code>'s offset is <code>14 + 11 × ORD-ITEM-COUNT</code>; a stale count (500 from the previous record, or the initialized max) makes the reference land past the short record, in WORKING-STORAGE bytes that decode as packed data with non-decimal nibbles — S0C7. Fixes: set the control field from the record's carried length (the V-format RDW or your own) before touching the variable part, or declare the <code>FD</code> <code>RECORD VARYING ... DEPENDING ON</code> so the system sets the length.</li>
+<li><strong>He assumed locals; he got a static.</strong> WORKING-STORAGE is allocated once per load and persists across every <code>CALL</code> in the run-unit — <code>VALUE</code> ran only at load, so the counter kept call one's value. Repairs: move the per-call state to LOCAL-STORAGE (fresh copy, <code>VALUE</code> re-applied each call); reset at entry (<code>INITIALIZE</code> or <code>MOVE 0</code>); or <code>CANCEL</code> so the next <code>CALL</code> re-runs <code>VALUE</code>.</li>
+<li><strong>Three layers each.</strong> COBOL: <code>ALLOCATE</code> → LE heap service (<code>CEEGTST</code>, honoring the BELOW/ANY options) → <code>GETMAIN</code> (LOC=BELOW/LOC=ANY against line and bar) → storage. Linux: <code>malloc</code> → the C library allocator (bins, arenas — ch05) → <code>brk</code>/<code>mmap</code> → the page allocator. Same shape, 40 years apart — chapter 19's machinery.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch16.html"><span class="cn-label">previous</span><span class="cn-title">Ch 16</span></a>
+<a class="next" href="ch18.html"><span class="cn-label">next</span><span class="cn-title">Ch 18</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/17-cobol.md">chapters/17-cobol.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

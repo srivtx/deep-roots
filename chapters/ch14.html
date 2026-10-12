@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 14 — Python: everything is a PyObject — deep-roots</title>
+<meta name="description" content="Chapter 14 of the memory-models module: Chapter 14 — Python: everything is a PyObject">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 14 — Python: everything is a PyObject — deep-roots">
+<meta property="og:description" content="Chapter 14 of the memory-models module: Chapter 14 — Python: everything is a PyObject">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 14 — Python: everything is a PyObject — deep-roots">
+<meta name="twitter:description" content="Chapter 14 of the memory-models module: Chapter 14 — Python: everything is a PyObject">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part II · the languages</div>
+<h1 class="post-title">Chapter 14 — Python: everything is a PyObject</h1>
+<div class="post-meta">chapter 14 &middot; ~18 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Python's answer to "what is a value?" is uniform: <em>everything</em> — the integer <code>1</code>, the string <code>"a"</code>, your function, your class, <code>None</code> — is a heap-allocated object with the same 16-byte header: a reference count plus a type pointer. Chapter 06 called this boxing; Python does it to every value, which is why <code>1</code> costs 28 bytes and why NumPy exists. Freeing is <strong>reference counting</strong>: the moment the count hits zero, the object dies — deterministic, no pauses — but every assignment writes a counter, and counters can never reach zero inside a reference cycle, so a small <strong>tracing GC</strong> (three generations, thresholds 700/10/10) backs the counter up. Small objects come from <strong>pymalloc</strong>: 256 KiB arenas of 4 KiB pools of fixed-size blocks — a slab allocator (chapter 19's family). Numbers below: CPython 3.11, 64-bit, reference build, unless marked.</blockquote>
+<h2 id="1-one-header-for-every-value">1. One header for every value</h2>
+<p>Chapter 06 laid out the options: inline primitives (C), boxed heap objects (JVM), tagged unions. Python picks boxing <em>unconditionally</em>. A Python <code>int</code> is a <code>PyLongObject</code>:</p>
+<pre><code class="language-text">   PyLongObject for the value 1        (CPython 3.11, 64-bit)
+   offset  size  field
+        0     8   ob_refcnt      -- how many references point at me
+        8     8   ob_type        -- pointer to the int type object (itself a PyObject)
+       16     8   lv_tag         -- sign + digit count (30-bit digits follow)
+       24     4   ob_digit[0]    -- little-endian base-2^30 digits
+                                 total: 28 bytes  -&gt;  sys.getsizeof(1) == 28</code></pre>
+<p>That 16-byte prefix — <code>ob_refcnt</code> + <code>ob_type</code> — is the universal <strong>PyObject header</strong>, paid by every object: digits, character buffers, a function's code pointer and globals, a class's method table. <code>ob_type</code> points at <em>another</em> heap object, which is why <code>type(1)</code> returns something you can subclass and attach attributes to — types are values too. <code>None</code>, <code>True</code>, the empty tuple, your lambda: same 16 bytes, same heap.</p>
+<p>Measure it (CPython 3.11, 64-bit; <code>getsizeof</code> includes the 16-byte collector header for GC-tracked objects):</p>
+<pre><code class="language-python">import sys
+sys.getsizeof(0)         # 24  (16 header + 8 tag + 0 digits)
+sys.getsizeof(1)         # 28  (+ one 4-byte digit)
+sys.getsizeof(2**63-1)   # 36  (3 digits)
+sys.getsizeof(10**100)   # 72  (12 digits)
+sys.getsizeof("")        # 49  (48-byte str header + NUL)
+sys.getsizeof("a")       # 50
+sys.getsizeof([])        # 56  (40-byte list struct + 16 GC)
+sys.getsizeof(())        # 40  (24-byte tuple VAR header + 16 GC)
+sys.getsizeof({})        # 64  (48-byte dict struct + 16 GC)</code></pre>
+<p>No value costs less than 16 bytes, and none of these numbers includes what the object <em>points to</em> — a million-element list is a 56-byte struct plus 8 bytes per slot plus a million boxed payloads. (CPython 3.12 shrank the empty string to 41 by deleting a legacy field and gave <code>0</code> the 28-byte shape — version drift to remember when quoting folklore.)</p>
+<p>Because <code>1</code> is expensive, the hot values are manufactured <strong>once</strong>: all ints in <strong>-5..256 are cached singletons</strong> created at startup — loop counters and small results are pointer copies, zero allocations. <code>None</code>, <code>True</code>, <code>False</code>, and the 256 one-character latin-1 strings get the same treatment. Side effects: <code>id(100) == id(100)</code> everywhere, and <code>x is 257</code> depends on compilation context (section 4).</p>
+<h2 id="2-deterministic-death-paid-one-counter-at-a-time">2. Deterministic death, paid one counter at a time</h2>
+<p>"Who frees?" is arithmetic: each object carries its own tally of users, and the tally hitting zero <em>is</em> the free. The win: <strong>reclamation is immediate and deterministic</strong>. <code>del x</code> on the last reference: counter hits zero, finalizer runs, memory returns to the allocator <em>during the statement</em>. No ch12-style pause, no ch15 scavenger, no "later" — and the freed block is reusable in the very next statement (the lab's <code>object()</code> reuse demo exploits exactly this).</p>
+<p>The cost, derived: <strong>every reference operation is a counter write</strong>.</p>
+<pre><code class="language-python">x = y            # store 8-byte pointer, then INC y.ob_refcnt (read-modify-write)
+return result    # caller stores the pointer (INC); callee's slot dies (DEC)
+box[0] = item    # INC item, DEC the previous occupant
+x = None         # DEC old x: possibly a cascade of frees and finalizers</code></pre>
+<p>A pointer store in C or Java writes the pointer and stops. Python also touches the pointed-to object's header — a second cache line, a read-modify-write — on every assignment, argument pass, return, and container store or eviction. The count is per-object, not per-reference: a million aliases still cost one 8-byte field (the economy of Swift's ARC, chapter 16).</p>
+<p>What makes it tolerable is the <strong>GIL</strong>. With one thread executing bytecode at a time, <code>ob_refcnt += 1</code> is a plain non-atomic increment — no lock prefix, no CAS retry. Atomicity is a <em>consequence of the interpreter's design</em>, not of the refcounting.</p>
+<p>The honest paragraph about 3.13+: <strong>PEP 703</strong> (free-threaded CPython, experimental <code>python3.13t</code>) removes the GIL, and the free atomicity evaporates. Naive atomic refcounts would make every assignment a contended cache-line ping (chapter 20's false sharing, at scale). Instead the 8-byte <code>ob_refcnt</code> splits into a 32-bit shared count plus a 16-bit thread-<em>local</em> count (<strong>biased reference counting</strong>): a thread bumps its private counter — same cache line, no contention — and flushes to the shared word only when ownership migrates. Hot objects like functions and code get <strong>deferred refcounting</strong> (some references aren't counted at all). And pymalloc, which relies on the GIL for its own structures, is replaced by mimalloc in these builds. Check <code>sys._is_gil_enabled()</code> on 3.13+ before reasoning about it.</p>
+<h2 id="3-the-cycle-a-counter-cannot-see">3. The cycle a counter cannot see</h2>
+<p>Refcounting's blind spot is structural: counts reach zero only if nothing points at the object, and cycles point at each other forever.</p>
+<pre><code class="language-python">import gc
+gc.disable()                       # keep the collector out of the way
+
+def make_cycle():
+    a = []                         # a: refcnt 2 (name 'a' + b's element)
+    b = [a]                        # b: refcnt 1
+    a.append(b)                    # b: refcnt 2 -- a's list points back at b
+
+make_cycle()                       # locals die: a and b each sit at refcnt 1...
+print(gc.collect())                # ...held by *each other*.  -&gt; 2</code></pre>
+<p>Neither count can ever fall to zero. This also settles <code>del</code>: <code>del a</code> removes <em>one name binding</em> — one decrement — and nothing else; <code>del</code> is an assignment of nothing. Chapter 08's <code>free</code> has no Python spelling for cycles.</p>
+<p>The <strong><code>gc</code> module</strong> is the tracing backup, and it is deliberately tiny. It tracks only <em>containers</em> — lists, dicts, tuples, sets, instances (an <code>int</code> can never join a cycle, so it is never scanned). Tracked objects sit in one of <strong>three generations</strong>; <code>gc.get_threshold()</code> returns the defaults, <strong>(700, 10, 10)</strong>: generation 0 collects when <em>(allocations − deallocations of tracked objects)</em> exceeds 700; generation 1 is collected every 10th gen-0 collection; generation 2 every 10th gen-1 — and since 3.11, gen 2 is additionally gated by a 25% rule: a full collection fires only when new long-lived objects exceed a quarter of all long-lived objects.</p>
+<p>The algorithm is two passes of subtraction:</p>
+<ol>
+<li>For every object in the generation, copy <code>ob_refcnt</code> into a scratch field <code>gc_refs</code>.</li>
+<li>Walk every reference <em>between two objects of that generation</em>, subtracting 1 from the target's <code>gc_refs</code>. A positive remainder means someone <strong>outside</strong> the generation points here (stacks, globals, other generations): a root.</li>
+<li>Trace and mark from the roots. Unmarked objects with <code>gc_refs == 0</code> have counts composed <em>entirely of each other</em> — unreachable despite counts of 1 or more. Collect them (weakref callbacks and <code>__del__</code> get a chance first; PEP 442 made cycles with <code>__del__</code> collectable — pre-3.4 folklore says otherwise).</li>
+</ol>
+<p>Survivors are promoted, betting like ch12's age bet that survivors survive again, so old data is re-traced exponentially rarely.</p>
+<h2 id="4-pymalloc-256-kib-arenas-4-kib-pools-16-to-512-byte-blocks">4. pymalloc: 256 KiB arenas, 4 KiB pools, 16-to-512-byte blocks</h2>
+<p>Chapter 05 priced <code>malloc</code> at tens of nanoseconds: bins, locks, coalescing. Python allocates constantly — every boxing, every list, every frame — so CPython interposes <strong>pymalloc</strong>, a slab-style allocator tuned for thousands of small, short-lived, fixed-size blocks:</p>
+<pre><code class="language-text"> arena (default 256 KiB, CPython 3.11 64-bit; 1 MiB if built USE_LARGE_ARENAS)
+ +----------------------------------------------------------------------+
+ | arena bookkeeping | pool 0 | pool 1 | pool 2 | ................| pool 63|
+ +----------------------------------------------------------------------+
+    each pool = 4 KiB = one OS page, serving exactly ONE size class:
+
+    +--------------------------------------------------------------+
+    | pool header (~48 B: class index, free list, refcount)        |
+    +--------------------------------------------------------------+
+    | block | block | block | ... (256 per 16-B pool)              |
+    +--------------------------------------------------------------+
+      size classes step by the alignment quantum: 16 bytes on 64-bit
+      CPython 3.11+ (32 classes, 16..512 B); 8 bytes on older/32-bit
+      builds (64 classes, 8..512 B) -- the number most articles quote.</code></pre>
+<p>A 25-byte request → class 32 → carved from a 32-byte-class pool; freed blocks thread onto that pool's free list. Requests <strong>over 512 bytes (<code>SMALL_REQUEST_THRESHOLD</code>) bypass pymalloc</strong> and go to the system allocator — chapters 05 and 19 — as do big buffers like list pointer arrays, and in free-threaded builds, everything.</p>
+<p>Two properties explain everyday mysteries. <strong>Identity artifacts</strong>: <code>is</code> compares pointers, and pymalloc is a <em>recycling machine</em> — the block freed a microsecond ago is the block handed out next.</p>
+<pre><code class="language-python">x = object(); i = id(x); del x      # counter hits 0; block returns to free list
+y = object(); id(y) == i            # usually True: the block was re-issued</code></pre>
+<p>Add the -5..256 cache, one-character strings, and the compiler's constant deduplication (one <code>257</code> object per code object, so <code>a = 257; b = 257</code> on one line gives <code>is</code> → <code>True</code>, compiled separately gives <code>False</code>), and you have the classic "510-ish" experiments where identity near the cache boundary flips with context. Identity is a fact about <em>allocation history</em>, not value. CPython 3.12 even warns on <code>is</code> with a literal — the compiler flagging that you're testing dedup, not equality. Use <code>is</code> for <code>None</code> and sentinels; <code>==</code> for values.</p>
+<p><strong>The RSS that never shrinks.</strong> An arena — 64 pools — is returned to the OS (munmap) only when <em>every pool in it is empty</em>. A workload touching many size classes leaves each arena with a few live blocks, pinning megabytes of mostly-empty pools: <code>gc.collect()</code> can report 0 unreachable while RSS stays flat — the objects <em>died</em>, their arenas didn't (chapter 05's malloc retention covers the &gt;512-byte fraction). Fragmentation without compaction is the price of a non-moving design: chapter 12's JVM evacuates to give pages back; Python can never move a live object, because <code>id()</code> promises stability and C extensions hold raw pointers.</p>
+<h2 id="5-strings-lists-and-the-dict-that-runs-the-language">5. Strings, lists, and the dict that runs the language</h2>
+<p><strong>Strings</strong> get three layers of special treatment. Layout: the empty string is 49 bytes — a 48-byte <code>PyASCIIObject</code> header (16-byte PyObject + length + cached hash + state bitfields + a legacy pointer) plus the NUL. Characters come in four <em>kinds</em>: 1 byte/char if every code point is ASCII, else 1, 2, or 4 bytes/char (UCS1/2/4) sized by the string's <strong>maximum</strong> code point — one emoji makes the whole string pay 4 bytes per character. Non-ASCII compact strings pay 16 more header bytes (a cached-utf8 pair), so <code>"é"</code> is 66 on 3.11; 3.12 deleted the legacy pointer (PEP 623) and the empty string dropped to 41. Second, <strong>interning</strong>: constants that look like identifiers are deduplicated into a global table at compile time — they are about to become dict keys, and key comparison collapses to a pointer compare when keys are shared. <code>sys.intern()</code> does it explicitly for runtime-built strings; 3.12 widened auto-interning to identifier-like literals up to 4096 bytes. Third, <strong>immortal objects</strong> (PEP 683, 3.12): small ints, <code>None</code>, interned strings moved to static memory with a refcount frozen at a special all-ones value that INCREF/DECREF ignore. Why: every thread touches <code>None</code> and the small ints; if each touch writes the same 8 bytes, the cache line ping-pongs between cores (chapter 20's false sharing, with every thread, on every use). Freezing removes unbounded write traffic and moves them out of the heap — <code>gc.set_debug(gc.DEBUG_STATS)</code> on 3.12+ lists them as a "permanent generation."</p>
+<p><strong>Lists</strong> are a 40-byte struct (header, <code>ob_size</code>, <code>ob_item</code>, <code>allocated</code>) plus a separate, over-allocated pointer array. Appending grows capacity by the formula in <code>listobject.c</code> — <code>new_allocated = (n + n&gt;&gt;3 + 6) &amp; ~3</code> — the capacity sequence <strong>0, 4, 8, 16, 25, 35, 46, 58, 72, 88</strong>, i.e. ~<strong>12.5% (1/8) slack</strong> amortizing append to O(1) with rare copying. Two consequences insiders use: <code>list(L)</code> / <code>L[:]</code> allocate the pointer array to <em>exactly</em> <code>len(L)</code> — copying compacts away the slack — while <code>list.sort()</code> sorts in place with at most an n/2-pointer temp array (<code>sorted()</code> pays a whole new list).</p>
+<p><strong>Dicts are the language's spine</strong>: module globals, class namespaces, instance attributes, <code>kwargs</code> — the interpreter runs on dicts. Since 3.6 the layout is the <strong>compact dict</strong>: a 48-byte struct (header, <code>ma_used</code>, version tag, <code>ma_keys</code>, <code>ma_values</code> — 64 with the GC header) pointing at a keys table of two arrays:</p>
+<pre><code class="language-text">  keys table (8-slot example)              entries (insertion order!)
+  +-------------------------+        +--------------------------------------+
+  | indices: [3,-,-,0,-,-,-,1]  ----&gt; | 0: (hash, "name", value)  = 24 B    |
+  +-------------------------+   |    | 1: (hash, "age",  value)  = 24 B    |
+                                +----&gt; slot 3 holds entry 0, slot 7 entry 1 |
+  indices widen 1 -&gt; 2 -&gt; 4 -&gt; 8 bytes per slot as the table grows</code></pre>
+<p>Sparse <strong>indices</strong> (open addressing: probe <code>i = (5*i + 1 + perturb) &amp; mask</code>, with <code>perturb</code> a copy of the full hash shifted 5 bits per step so patterns break, plus a short same-cache-line linear run) point into dense <strong>entries</strong> of <code>(hash, key, value)</code> triples appended in insertion order — which is <em>why</em> dict order is guaranteed from 3.7: order is a side effect of the layout. The table resizes at 2/3 full (8 slots → 5 usable entries; the first insert jumps <code>getsizeof</code> from 64 to 224). Instances get <strong>split tables / key sharing</strong>: since 3.3, same-class instances share one keys table and keep only their values; 3.11+ goes lazier — values sit in a compact C array off a hidden slot, and a real <code>__dict__</code> materializes only when touched (reflection, <code>vars()</code>, pickling).</p>
+<h2 id="6-instances-leaks-and-the-zero-copy-escape-ladder">6. Instances, leaks, and the zero-copy escape ladder</h2>
+<p>A plain instance on 3.11 is 48 bytes (16 header + 8 managed-dict/values slot + 8 weakref list + 16 GC); its attributes live in the shared-key values array above. Materializing <code>__dict__</code> costs a real dict (measured 288 bytes at two keys on 3.12) — avoid it in hot paths. <code>__slots__</code> deletes the dict machinery: the class declares fixed names, CPython computes <strong>fixed offsets</strong> at class creation, and the instance becomes a C struct with a PyObject header — <code>p.x</code> is one pointer-add at a compile-time-constant offset, and new attributes raise <code>AttributeError</code> by design (multiple inheritance needs slotted bases to cooperate). Measured with <code>tracemalloc</code> on 3.12: 10,000 two-attribute instances cost 120 bytes each with a dict, 88 with <code>__slots__</code>, and the gap grows with attribute count — slots pay exactly 8 bytes per attribute, the dict path pays per-key bookkeeping.</p>
+<p>Attribute <em>lookup</em> chains through memory: <code>p.x</code> checks the type's MRO dicts for data descriptors, then the instance's dict/values, then the MRO again for everything else (methods bind on the fly). Every class in the MRO is a dict probe — deep hierarchies multiply the cost of an attribute in a hot loop.</p>
+<p><strong>Leaks in a refcounted world</strong> come in three species, none of them "the GC forgot":</p>
+<ul>
+<li><strong>Cycles with an external anchor</strong>: a parent↔child graph is one big cycle; leak one node to a global and the whole graph survives every collection. Back-references belong in <code>weakref</code>.</li>
+<li><strong>C extensions miscounting</strong>: a missing <code>Py_DECREF</code> (refcount never zero, invisible to <code>gc</code>, which can't see C-held references — a pure RSS leak) or one too many (premature free → use-after-free, chapter 21's world).</li>
+<li><strong>Closures capturing frames</strong>: a lambda, callback, or suspended generator holds its frame — chapter 04's locals block — and everything those locals reference (chapter 15 makes this the main event).</li>
+</ul>
+<p>The toolbox, in escalation order: <code>gc.get_referrers(obj)</code> (who points at me?), <code>gc.get_objects()</code> with per-type counts, <code>tracemalloc</code> for <em>where allocations happened</em> (it records the Python call stack of every live block), and <code>objgraph</code> (pip) for rendered back-reference graphs.</p>
+<p>The last piece is Python's escape ladder out of boxing, the counterpart of C#'s spans (chapter 13): the <strong>buffer protocol</strong> (PEP 3118). Objects owning raw memory — <code>bytes</code>, <code>bytearray</code>, <code>array</code>, NumPy arrays — export it with shape, type, and strides; a <strong><code>memoryview</code></strong> is a zero-copy <em>window</em> over it:</p>
+<pre><code class="language-python">buf = bytearray(b"deeproots" * 1000)     # exporter owns 9000 bytes
+view = memoryview(buf)[4:1004]           # no copy: 184-byte view object
+buf[4] = ord("R")                        # mutate the underlying buffer
+bytes(view[:6])                          # b'Rootsd' -- the window saw it
+sys.getsizeof(buf[4:1004])               # 1033: what the slice *copy* would cost</code></pre>
+<p>The 184-versus-1033 gap is NumPy's whole pitch: an ndarray is one buffer of unboxed values plus metadata — a million floats are 8 MB of raw memory with <em>one</em> PyObject, not a million 32-byte boxed floats; slicing and broadcasting are window arithmetic. (A view over <code>bytes</code> is read-only; a view keeps the exporter alive — a window is a reference.)</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>getsizeof</code> adds the 16-byte GC header for tracked objects</strong>: empty dict 64 = 48 + 16, empty list 56 = 40 + 16; <code>__sizeof__</code> omits it — the two differ by exactly the collector's bookkeeping.</li>
+<li><strong><code>a = b</code> is an 8-byte pointer store plus one counter increment</strong> — a thousand aliases still cost one 8-byte field. And <code>is</code> is a pointer compare, which is why identity is allocation history, not semantics.</li>
+<li><strong>List growth is 0, 4, 8, 16, 25, 35, 46, 58, 72, 88</strong> (the <code>listobject.c</code> comment): ~12.5% slack; <code>list(L)</code>/<code>L[:]</code> allocate exact — copying compacts the slack; <code>list.sort()</code> is in-place with ≤ n/2 pointers of temp, <code>sorted()</code> is not.</li>
+<li><strong>Tuples ≤ 20 elements are recycled through free lists</strong> (capacity 2000 per size in 3.11), so tuple <code>id()</code>s repeat aggressively; <code>() is ()</code> is <code>True</code> — one singleton, immortal in 3.12+.</li>
+<li><strong>On 64-bit CPython 3.11+, fresh small-object addresses are 16-byte aligned</strong>: <code>set(id(o) % 16 for o in [object() for _ in range(50)])</code> is <code>{0}</code> (older/32-bit: 8-byte quantum, 64 classes not 32).</li>
+<li><strong><code>gc.set_debug(gc.DEBUG_STATS)</code> prints a "permanent generation" line on 3.12+</strong> (a few hundred immortal objects): small ints, <code>None</code>, interned strings — refcounts frozen, never written, immune to cross-core cache-line traffic (chapter 20).</li>
+<li><strong>A suspended generator keeps its whole frame alive</strong> — locals and everything they reference (chapters 04/15). A lazy pipeline holding a 2 GB buffer at frame bottom is a leak by design; <code>gen.close()</code> drops it deterministically.</li>
+<li><strong>The gen-2 25% rule</strong> (3.11+): full collections fire only when long-lived pending exceeds a quarter of long-lived total — why <code>gc</code> cadence looks irregular in logs, and why <code>gc.disable()</code> on a mostly-acyclic workload is often-safe folklore.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<pre><code class="language-text">$ python3 -i          # interactive: every line is a separate code object
+&gt;&gt;&gt; x = 100
+&gt;&gt;&gt; y = 100
+&gt;&gt;&gt; x is y
+True                    # -5..256: the small-int cache
+&gt;&gt;&gt; a = 257
+&gt;&gt;&gt; b = 257
+&gt;&gt;&gt; a is b
+False                   # two compilations, two constant objects
+&gt;&gt;&gt; c = 257; d = 257
+&gt;&gt;&gt; c is d
+True                    # one code object: ONE 257 constant, deduplicated</code></pre>
+<p>The flip is allocator and compiler, not language. Block reuse and the alignment quantum:</p>
+<pre><code class="language-python">x = object(); i = id(x); del x
+y = object()
+print(id(y) == i)       # usually True -- pymalloc re-issued the freed block
+print(sorted(set(id(o) % 16 for o in [object() for _ in range(50)])))
+                        # [0] on 3.11+/64-bit: 16-byte alignment quantum</code></pre>
+<p>The cycle detector, with generations visible:</p>
+<pre><code class="language-python">import gc
+gc.disable()
+def make_cycle():
+    a = []; b = [a]; a.append(b)
+make_cycle()
+gc.enable()
+print(gc.collect())     # -&gt; 2   (the two list objects in the cycle)
+gc.set_debug(gc.DEBUG_STATS)
+gc.collect()
+# gc: collecting generation 2...
+# gc: objects in each generation: 214 4872 0
+# gc: objects in permanent generation: 375      &lt;- 3.12+ immortals
+# gc: done, 0 unreachable, 0 uncollectable, 0.0004s elapsed</code></pre>
+<p>Slots versus dict, measured rather than asserted:</p>
+<pre><code class="language-python">import tracemalloc
+class P:
+    def __init__(self, x, y): self.x, self.y = x, y
+class PS:
+    __slots__ = ("x", "y")
+    def __init__(self, x, y): self.x, self.y = x, y
+tracemalloc.start()
+xs = [P(i, i) for i in range(10_000)]
+print(tracemalloc.get_traced_memory()[0] / 10_000)   # ~120 B/instance (3.12)
+del xs; tracemalloc.reset_peak()
+ys = [PS(i, i) for i in range(10_000)]
+print(tracemalloc.get_traced_memory()[0] / 10_000)   # ~88 B/instance</code></pre>
+<p>And the production leak-hunt shape — top allocation site:</p>
+<pre><code class="language-python">import tracemalloc
+tracemalloc.start(10)
+data = [[j for j in range(50)] for _ in range(1000)]
+snap = tracemalloc.take_snapshot()
+for st in snap.statistics("lineno")[:3]:
+    print(st)
+# &lt;stdin&gt;:4: size=469 KiB, count=1987, average=242 B   &lt;- the comprehensions</code></pre>
+<p>Snapshot before and after a request in a long-running service; growing line numbers are the leak, call stacks attached.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>The RSS-never-drops incident report</strong>: memory freed ≠ memory returned. Cycles collected, objects dead, arenas pinned by a few live pools each — explain it with section 4 before anyone schedules nightly restarts.</li>
+<li><strong>Data-class design at scale</strong>: a million instances × 30 saved bytes is 30 MB; <code>__slots__</code> (or <code>dataclass(slots=True)</code>) when count is large and schema fixed. Measure with <code>tracemalloc</code>, not folklore — 3.11's lazy values made the dict path cheaper than old posts claim.</li>
+<li><strong>Never let <code>is</code> near values</strong> (NaN checks, integer tests in suites): identity returns cache and allocation artifacts. <code>==</code> for values, <code>is</code> for <code>None</code> and sentinels; the 3.12 <code>SyntaxWarning</code> is your linter.</li>
+<li><strong>C-extension review discipline</strong>: every borrowed <code>Py_INCREF</code> needs its <code>Py_DECREF</code>; count in review, because no collector will fix it — the leak is invisible to <code>gc</code> by construction.</li>
+<li><strong>Zero-copy pipelines</strong>: <code>readinto</code> a preallocated <code>bytearray</code>, window it with <code>memoryview</code>, hand it to NumPy without materializing slices — the 184-versus-1033 arithmetic at file scale; same discipline as C# spans (ch13).</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Ch 04</strong> — closures and suspended generators keep frames (and locals) alive: the stack is the leak vector.</li>
+<li><strong>Ch 05</strong> — pymalloc rides on malloc; &gt;512-byte objects use the raw allocator with all its bins and retention.</li>
+<li><strong>Ch 06</strong> — the PyObject header is boxing taken to totality; tag bits vs headers is the design space Python closed.</li>
+<li><strong>Ch 12</strong> — tracing vs counting, both ways: the JVM buys cheap pointer stores with pauses and compaction; Python buys determinism with counter writes and a non-moving, never-shrinking heap.</li>
+<li><strong>Ch 13</strong> — memoryview is Python's span: the escape ladder from boxed memory into raw buffers.</li>
+<li><strong>Ch 15</strong> — V8's hidden classes vs dictionary-mode objects mirror Python's dict-everything; closure capture returns as V8's leak story.</li>
+<li><strong>Ch 16</strong> — ARC is refcounting with the compiler inserting INC/DEC; Python pays them at runtime, per operation.</li>
+<li><strong>Ch 19</strong> — pymalloc is a slab allocator: arenas, pools, size classes — same design family as kernel slabs and tcmalloc thread caches.</li>
+<li><strong>Ch 20</strong> — GIL-as-atomicity and immortal objects are cache-line economics; biased refcounting is the no-GIL repair.</li>
+<li><strong>Ch 21</strong> — C-extension refcount bugs are the use-after-free surface; immortal singletons are fixed targets attackers love.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Derive the exact writes performed by <code>x = y</code> in Python versus the same statement in C. Then explain why the GIL makes the Python version cheap — and name the two mechanisms the free-threaded 3.13 build substitutes for that free atomicity.</li>
+</ol>
+<ol>
+<li>Predict <code>sys.getsizeof</code> on CPython 3.11, 64-bit, for <code>(None, None, None, None)</code> and for <code>"deeproots"</code>. Why does <code>None</code> being an immortal singleton not change the tuple's cost — what physically sits in the four slots?</li>
+</ol>
+<ol>
+<li>Predict the output, and explain each line with a <em>different</em> mechanism:</li>
+</ol>
+<pre><code class="language-python">   ns = {}
+   exec("x = 100", ns)
+   exec("y = 100", ns)
+   exec("a = 257", ns)
+   exec("b = 257", ns)
+   print(ns["x"] is ns["y"], ns["a"] is ns["b"])
+   exec("c = 257; d = 257", ns)
+   print(ns["c"] is ns["d"])</code></pre>
+<ol>
+<li>An empty dict is 64 bytes; after the <em>first</em> insert, <code>sys.getsizeof</code> reads 224 (CPython 3.11/3.12). Account for the 160-byte jump: what are the keys table's two arrays, why 8 index slots, and why exactly 5 entry slots for one key?</li>
+</ol>
+<ol>
+<li>A service streams a 2 GB file in 10 MB chunks, deleting each chunk list after processing. Afterwards <code>gc.collect()</code> reports 0 unreachable and every chunk name is <code>del</code>-ed — yet RSS plateaus at 900 MB. Give three distinct memory-model reasons the process does not shrink.</li>
+</ol>
+<ol>
+<li>This code keeps a 500 MB DataFrame alive long after <code>process()</code> returns. Why, precisely — and what does <code>del big_buffer</code> actually do?</li>
+</ol>
+<pre><code class="language-python">   REGISTRY = []
+   def on(event, fn):
+       REGISTRY.append(fn)
+   def setup(big_buffer):
+       on("tick", lambda: process(big_buffer))</code></pre>
+<ol>
+<li>A lazy pipeline (<code>read -&gt; filter -&gt; batch</code>) over a large file holds hundreds of MB though only one line is "active". Which chapter-04 structure pins the memory, what will chapter 15 generalize, and what is the deterministic fix?</li>
+</ol>
+<ol>
+<li>Cross-chapter arithmetic (ch 06, 12, this chapter): the same 30-byte record-processor needs ~3 GB on the JVM and ~10 GB in pure Python. Give three <em>derived</em> reasons from memory models — header arithmetic, field representation, allocator behavior — and state which one NumPy's design deletes.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>C: one 8-byte pointer store. Python: the pointer store, plus a read-modify-write of <code>y.ob_refcnt</code> (a second cache line), plus the DEC of whatever <code>x</code> previously held — possibly a cascade of frees.</strong> The GIL serializes bytecode execution, so the increment is a plain non-atomic write; atomicity is a consequence of serialization, not of the counter. The 3.13 free-threaded build substitutes <strong>biased reference counting</strong> (a 16-bit thread-local count flushed to a 32-bit shared counter only on ownership migration) and <strong>deferred refcounting</strong> for hot objects like functions and code; pymalloc is replaced by mimalloc.</li>
+</ol>
+<ol>
+<li><strong>Tuple: 24-byte VAR header + 4 × 8-byte pointers + 16 GC = 72 bytes. String: 48-byte header + 9 chars + NUL = 58.</strong> The four slots hold <em>pointers</em> — four copies of one address of the singleton <code>None</code>; immortality saves four payloads, not four slots. Same arithmetic as a Java array of references (ch 12): the container pays 8 bytes per element regardless of element cost.</li>
+</ol>
+<ol>
+<li><strong><code>True False</code>, then <code>True</code>.</strong> First: <code>100</code> is in the -5..256 cache — one object, both names point at it. Second: each <code>exec</code> compiles a separate code object, so the two <code>257</code> constants are distinct PyLongs (and the first stays alive through <code>a</code>). Third: one code object stores one <code>257</code> constant and the compiler's constant deduplication binds both names to it — compilation context, not the cache. Three mechanisms: interpreter cache, per-compilation constants, constant dedup.</li>
+</ol>
+<ol>
+<li><strong>Keys table = 8 index slots + 5 entry slots + keys-object bookkeeping.</strong> The compact dict separates a sparse <em>indices</em> array (open-addressing probes) from a dense <em>entries</em> array of <code>(hash, key, value)</code> triples appended in insertion order. Minimum table size is 8, and open addressing wants ≤ 2/3 occupancy: 8 × 2/3 = 5 usable entries — the 6th key would trigger a resize (indices widening to 2-byte slots). 160 ≈ 8 index bytes + 5 × 24-byte entries + the keys object's header. Insertion order is free: entries are appended.</li>
+</ol>
+<ol>
+<li><strong>(a) If any iteration raised, the exception's traceback holds the frame, and the frame holds its locals — chunks you believe <code>del</code>-ed. (b) <code>del</code> removes one name; other references (accumulators, caches, closures) keep refcounts positive. (c) Genuinely freed small objects return to pymalloc pools — an arena is munmap'd only when all 64 pools are empty, and mixed size classes fragment arenas; the &gt;512-byte fraction went to malloc, which retains per chapter 05.</strong> Dead objects and returned pages are different claims: Python is non-moving by design.</li>
+</ol>
+<ol>
+<li><strong>The lambda closes over <code>setup</code>'s frame, whose locals — including <code>big_buffer</code> — stay reachable through <code>REGISTRY</code>, a module global.</strong> <code>del big_buffer</code> removes one <em>name</em> (one DEC); the frame's reference keeps the DataFrame's count nonzero, so it never dies. Fix at the anchor: don't register closures over big state (or expire entries / explicit unregister). Find it with <code>gc.get_referrers(df)</code>: the frame → the function → the list.</li>
+</ol>
+<ol>
+<li><strong>Each suspended generator holds its frame — the chapter-04 locals block — with its buffers and iterators alive until exhaustion or close.</strong> Three stages pin three frames plus everything they reference; chapter 15 generalizes it to every closure capture. The fix: <code>gen.close()</code> on abandoned stages (raising <code>GeneratorExit</code> inside, releasing locals), or restructure so producers don't hold read buffers as long-lived coroutines.</li>
+</ol>
+<ol>
+<li><strong>(1) Header arithmetic: a 30-byte record is a <code>str</code> — 48-byte header + 30 chars + NUL ≈ 79 bytes (+ 16 when boxed in a container), where a JVM String pays ~24 plus a ~48-byte byte[]; both box, but Python's floor is higher. (2) Field representation: a JVM object holds primitives and 4-byte compressed references at compiler-computed offsets; N Python fields are N pointers to N separate heap objects (or dict rows at 24 bytes per entry plus indices) — the ch 06 header tax multiplied per field. (3) Allocator behavior: non-moving pymalloc retains fragmented arenas and lists carry 12.5% slack, while the JVM compacts and returns pages. NumPy deletes reason (2) — one PyObject over one unboxed buffer — and most of (1) with it.</strong></li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch13.html"><span class="cn-label">previous</span><span class="cn-title">Ch 13</span></a>
+<a class="next" href="ch15.html"><span class="cn-label">next</span><span class="cn-title">Ch 15</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/14-python.md">chapters/14-python.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

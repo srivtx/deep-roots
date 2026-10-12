@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 05 — The heap: the everything-else machine — deep-roots</title>
+<meta name="description" content="Chapter 05 of the memory-models module: Chapter 05 — The heap: the everything-else machine">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 05 — The heap: the everything-else machine — deep-roots">
+<meta property="og:description" content="Chapter 05 of the memory-models module: Chapter 05 — The heap: the everything-else machine">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 05 — The heap: the everything-else machine — deep-roots">
+<meta name="twitter:description" content="Chapter 05 of the memory-models module: Chapter 05 — The heap: the everything-else machine">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part I · the machine</div>
+<h1 class="post-title">Chapter 05 — The heap: the everything-else machine</h1>
+<div class="post-meta">chapter 05 &middot; ~11 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> The stack handles lifetimes that nest; everything else — objects that outlive their creating function, sizes unknown until runtime — needs a different machine: a pool of blocks that die in unknowable order. That pool is the heap, and its two hard problems are <em>which freed bytes satisfy the next request</em> (allocation policy) and <em>what happens when no contiguous bytes can</em> (fragmentation). Every language in Part II is a different answer to one question: who manages this machine? Chapter 19 goes inside the allocators; this chapter builds the problem they solve.</blockquote>
+<h2 id="the-heap-problem-stated-from-first-principles">The heap problem, stated from first principles</h2>
+<p>Write down what the stack could not do: a function creates a buffer that must survive its return (return the data, not the pointer to a dead frame — Chapter 04); a parser discovers at runtime that the message contains 13,000 items; a cache holds objects for hours with no call-graph relationship to each other. The common shape: <strong>allocation and deallocation are not nested, not predictable, and not compile-time-known.</strong></p>
+<p>So the heap is born as a contract, not a mechanism: <code>malloc(n)</code> returns a pointer to at least n usable bytes; <code>free(p)</code> releases a previous result; between them, nobody moves the block (stability — pointers must stay valid; this single promise is what makes compaction impossible later). The C standard says almost nothing else. As always with C (Chapter 08), the contract is minimal and the consequences are yours.</p>
+<h2 id="what-malloc-free-must-secretly-do">What malloc/free must secretly do</h2>
+<p>The interface hides three engineering duties:</p>
+<ol>
+<li><strong>Bookkeeping</strong>: <code>free(p)</code> receives a pointer <em>value</em> only — no size. The block's size (and neighbors' sizes) must be recoverable from memory adjacent to the block itself. In glibc, a header word sits 8 bytes <em>before</em> your data: this is why <code>malloc(1)</code> really consumes 32 bytes (Chapter 19 draws the whole chunk), and why one-byte overflows corrupt <em>the next block's header</em> — the bridge to Chapter 21's heap attacks.</li>
+<li><strong>Reuse policy</strong>: freed bytes accumulate; the next <code>malloc(n)</code> must find a fit. Free lists, size-class bins, best-fit/exact-fit — Chapter 19 is this topic in depth. The design goal is that typical malloc/free cost ~tens of nanoseconds, which is only achievable if the search is O(1) by construction (per-size-class lists), not a search at all.</li>
+<li><strong>OS interface</strong>: the heap itself is made of pages (Chapter 03). Two syscalls grow it: <code>brk</code>/<code>sbrk</code> extends the classic heap region upward (small blocks), and <code>mmap</code> carves fresh mappings for big blocks (glibc default threshold: 128 KB — dynamic, see Chapter 19). Watch it happen:</li>
+</ol>
+<pre><code class="language-c">#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+int main(void) {
+    char *a = malloc(1000);           // from the brk arena (no syscall)
+    char *b = malloc(50 * 1024 * 1024);  // 50 MB — mmap, its own map entry
+    printf("a=%p b=%p\n", a, b);
+    // /proc/self/maps: 'a' lives in [heap]; 'b' is a standalone rw-p region
+    return 0;
+}</code></pre>
+<p>Run under <code>strace ./a.out 2&gt;&amp;1 | grep -E 'brk|mmap'</code> and see exactly one big <code>mmap</code> — plus, if you like, the page faults at first touch (Chapter 03's lesson: the mmap is free; the memory is not).</p>
+<h2 id="the-three-costs-of-heap-allocation">The three costs of heap allocation</h2>
+<p>The price is not one number; it is three independent taxes, and knowing <em>which tax</em> you are paying is the whole diagnostic skill:</p>
+<ul>
+<li><strong>The allocation tax</strong>: metadata + policy work per call — cheap per se (tcache-era glibc: tens of ns), deadly at <em>rate</em>: an allocation loop at 100 MB/s dominates caches (Chapter 02) and, in GC languages, drives collector cadence (Chapters 12, 15, 22: "GC pressure" — allocation rate <em>is</em> the GC's workload).</li>
+<li><strong>The locality tax</strong>: heap blocks scatter across lines and DRAM rows (Chapters 01, 02). Node-based structures pay per hop. Allocators partially fight back — bump allocation packs neighbors, size classes cluster similar blocks — but heap <em>order is program order</em>, and program order is often adversarial.</li>
+<li><strong>The fragmentation tax</strong>: the slow killer, below.</li>
+</ul>
+<h2 id="fragmentation-the-slow-killer">Fragmentation, the slow killer</h2>
+<p><strong>External fragmentation</strong>: free memory exists in total, but not <em>contiguously</em> — 10 MB free in 64 KB holes cannot satisfy a 1 MB request. <strong>Internal fragmentation</strong>: the request was 25 bytes; the size class rounds to 32 (Chapter 19) — 7 bytes lost inside the block. Internal is a rounding tax you can measure; external is a topology disease you can only watch grow.</p>
+<p>The mechanism of external fragmentation is <em>lifetime interleaving</em>: allocate blocks A, B, C adjacent; free A and C; B (still live) fences the freed space into two holes. Long-running servers churn mixed sizes at mixed lifetimes for weeks, and the heap <em>ratchets</em>: holes too small for current traffic accumulate between survivors. RSS creeps up though every malloc/free pair is correct — the classic "we have no leaks but memory grows" ticket.</p>
+<p><strong>Why can't the allocator just compact?</strong> — the deepest fact on this page: compaction means <em>moving blocks</em>, which means <em>finding and updating every pointer to them</em>. Only possible if the system can enumerate all pointers. C and C++ cannot (pointers live untyped in registers, unions, files — Chapter 04's last quiz question). GC languages can, because the runtime <em>does</em> know where every reference lives — that is why Java's copying collectors and V8's scavenger (Chapters 12, 15) defragment as a side effect of collection, and malloc-worlds cannot. Fragmentation is not an implementation oversight; it is the price of raw pointers.</p>
+<p>The partial mitigations, all in Chapter 19: size classes (bound the hole sizes), arenas (shard the topology), and the application-level escape — <em>lifetime design</em>.</p>
+<h2 id="lifetime-classes-the-design-tool-this-chapter-earns-you">Lifetime classes: the design tool this chapter earns you</h2>
+<p>Diagnosis beats treatment: match each allocation's <em>real</em> lifetime class to the right machine, and most heap problems dissolve:</p>
+<div class="table-wrap"><table><thead><tr><th>Lifetime class</th><th>Example</th><th>Right tool</th><th>Why</th></tr></thead><tbody><tr><td>Nest with the call</td><td>temporaries</td><td>the stack (Ch 04)</td><td>free by construction</td></tr><tr><td>One batch/frame</td><td>parse tree, request-scoped</td><td><strong>arena/bump allocator</strong></td><td><code>arena_reset()</code> frees thousands in one instruction</td></tr><tr><td>Fixed pool</td><td>connections, particles</td><td><strong>object pool</strong></td><td>no churn, stable addresses</td></tr><tr><td>Unpredictable</td><td>caches, session state</td><td>general heap (+GC if the language has one)</td><td>the honest case</td></tr></tbody></table></div>
+<p>The arena row is the insider's favorite: allocate thousands of nodes with <code>arena_alloc (n)</code> (a pointer bump — Chapter 19 shows a 15-line implementation), then drop the <em>whole tree</em> with one <code>arena_free</code>. Compilers, game frame-heaps, request handlers, parsers: allocation rate collapses to ~zero, fragmentation becomes structurally impossible (the arena is contiguous), and the code gets <em>simpler</em> — no destructor plumbing (Rust and Zig turned this into a language feature — Chapters 10, 18).</p>
+<h2 id="the-multithreaded-heap">The multithreaded heap</h2>
+<p>One global free list = one lock = every allocating thread serialized (and false sharing on the list head — Chapter 02). Every modern allocator answers with <strong>per-thread caches</strong>: glibc's tcache, Java's TLABs (Chapter 12), Go's per-P mcache (Chapter 11), tcmalloc's thread caches (Chapter 19). The pattern is universal because the physics is: allocate locally, refill in batches from the shared pool, never contend on the hot path. Consequence worth knowing: per-thread caches mean <em>frees can pile up in a dying thread's cache</em> and memory appears "leaked" until the thread exits — a real production confusion (Chapter 19's diagnostics).</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>malloc_usable_size</code></strong> (glibc) prints the real block size — instant metadata-overhead intuition: <code>malloc(1)</code> → 24 usable / 32 consumed on x86-64 glibc 2.35.</li>
+<li><strong>free(NULL) is defined no-op</strong>; <code>free</code> of an interior pointer (<code>p+8</code>) or a stack address aborts with the glibc message every C veteran has met (<code>free(): invalid pointer</code>).</li>
+<li><strong>"RSS never drops" has three stacked reasons</strong>: freed blocks stay in allocator free-lists (not returned to the OS), arenas release to the OS only when <em>fully</em> empty (Chapter 19), and the OS page cache holds the rest (Chapter 03). <code>malloc_trim(0)</code> / <code>MALLOC_ARENA_MAX</code> are the glibc levers; pymalloc arenas behave the same (Chapter 14).</li>
+<li><strong>glibc opens up to <code>8 × ncores</code> arenas</strong> — a 64-core box can run 512 arenas and <em>look</em> like a 5x RSS leak. <code>MALLOC_ARENA_MAX=2</code> is the standard big-server fix.</li>
+<li><strong><code>MALLOC_PERTURB_=</code></strong> fills freed/fresh blocks with complementary byte patterns (0xa5/0x5a) — the cheapest use-after-free detector that exists, Chapter 08's lab uses it.</li>
+<li><strong>The two-syscall map</strong>: small = brk, large = mmap(128 KB threshold, <em>dynamic</em>: it adapts upward when mmap'd blocks get freed — Chapter 19's "why run 2 behaved differently" war story).</li>
+<li><strong>Zeroing is your job in C, the allocator's in GC-land</strong>: <code>calloc</code> can exploit the zero-page trick (Chapter 03: fresh anonymous pages are already zero — so a <em>big</em> calloc can be lazier than malloc+memset).</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>The syscall boundary, the metadata, and the "leak that isn't":</p>
+<pre><code class="language-console">$ strace -e trace=brk,mmap ./alloc_demo   # watch small vs large growth
+$ cat /proc/self/maps | grep heap          # the brk region, by name</code></pre>
+<pre><code class="language-c">#include &lt;malloc.h&gt;
+#include &lt;stdio.h&gt;
+int main(void) {
+    void *p = malloc(1);
+    printf("usable=%zu\n", malloc_usable_size(p));   // 24 (glibc 2.35, x86-64)
+    free(malloc(64)); free(malloc(64));              // tcache now holds both
+    // LIFO reuse: the next two malloc(64)s return the SAME addresses
+    void *a = malloc(64), *b = malloc(64);
+    printf("a=%p b=%p\n", a, b);
+    return 0;
+}</code></pre>
+<p>And the fragmentation ratchet in one program: allocate 10,000 × 1 KB; free every <em>other</em> one; then request 2 MB. Total free space ≈ 5 MB, but the 2 MB request goes to <code>mmap</code> (fresh pages) because the arena's holes can't hold it — RSS rose though "free" succeeded. Now you have reproduced, in twelve lines, the ticket that takes production teams a week.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Memory triage methodology</strong>: first ask <em>which tax</em> — leak (RSS grows with no plateau), fragmentation (RSS grows to a plateau and stalls), or retention (live references you forgot: caches, listeners — Chapter 15's closure traps). Each has a different tool: heap profiler vs allocator stats vs a heap dump.</li>
+<li><strong>Design with lifetime classes</strong>: arenas and pools at the boundaries where lifetimes are actually known — the biggest single memory win most programs have available (and a latency win: Chapter 02 loves contiguity).</li>
+<li><strong>Rate discipline in GC languages</strong>: allocation-rate graphs (Chapter 22's jank story) are this chapter's "allocation tax" wearing platform clothes — the fix is fewer, larger, longer-lived allocations, i.e., heap hygiene.</li>
+<li><strong>Reading Chapter 19 with purpose</strong>: bins, tcache, and arenas are now <em>answers to problems you have personally felt</em> — metadata recovery, O(1) reuse, and topology management.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 03</strong> — the heap's pages, brk/mmap, first-touch faults, OOM as the last resort.</li>
+<li><strong>Chapter 04</strong> — the division of labor: nesting lifetimes vs everything else.</li>
+<li><strong>Chapter 08 / 09</strong> — the C/C++ contracts and their failure modes; RAII as lifetime discipline.</li>
+<li><strong>Chapter 10</strong> — Rust's ownership: the compile-time answer to "who frees."</li>
+<li><strong>Chapter 11 / 12 / 13 / 14 / 15</strong> — every runtime's allocator: mcache, TLAB, CLR gen0, pymalloc, V8 new space — all Chapter 05 problems with Part II solutions.</li>
+<li><strong>Chapter 19</strong> — the allocators in depth: this chapter's three duties, done for real.</li>
+<li><strong>Chapter 21</strong> — the chunk header as attack surface; tcache poisoning.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Why must <code>free()</code> accept a bare pointer with no size, and what does that force the allocator to do?</li>
+<li><strong>Concept.</strong> Why can the JVM compact its heap while glibc cannot? Which promise made at the start of this chapter forbids it in C?</li>
+<li><strong>Predict the number.</strong> x86-64 glibc 2.35: total bytes consumed by <code>malloc(1) + malloc(24) + malloc(25)</code> (three separate calls)?</li>
+<li><strong>Predict the behavior.</strong> A program loops <code>p = malloc(1 MB); free(p);</code> 10,000 times. RSS over time: flat, or what? Now the same loop with <code>p = malloc(200 KB); free(p);</code> — same or different, and why?</li>
+<li><strong>Bug diagnosis.</strong> RSS climbs 3 GB over two weeks; the heap profiler shows no leak (all blocks freed); <code>malloc_stats</code> shows the arena growing. Diagnosis?</li>
+<li><strong>Bug diagnosis.</strong> A 64-core server's RSS is 5x the sum of live objects. <code>MALLOC_ARENA_MAX=2</code> fixes it. What was the mechanism?</li>
+<li><strong>Bug diagnosis.</strong> A parsing workload runs 8x slower than a hand-rolled parser with the same algorithm; both use ~equal instructions. The slow one mallocs one node per token. What two Chapter taxes are being paid?</li>
+<li><strong>Cross-chapter.</strong> The Go runtime starts goroutines with tiny stacks (Chapter 11 / 04) and still needs a heap: name the lifetime class stacks cannot serve, and the per-thread structure Go uses to serve it cheaply.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>Because the C interface (Chapter 08) was designed to pass the minimum information — a pointer identifies a block uniquely, and callers would have to track sizes otherwise (with bugs when they lie). It forces the allocator to store the block's size in <em>metadata adjacent to the block</em> (glibc: the word at p−8, plus neighbor sizes at p−8's flags) — recoverable from the pointer alone. That adjacency is also Chapter 21's attack surface: overflow the block, hit the metadata.</li>
+<li>The JVM's runtime can enumerate every live reference (GC roots, typed object graphs — Chapter 12), so it can move objects and <em>rewrite</em> the references. C promised block stability and cannot enumerate raw pointers (registers, unions, foreign code) — the allocator cannot know where to rewrite, so the best it can do is manage topology with size classes (Chapter 19).</li>
+<li>32 + 32 + 48 = 112 bytes. glibc's minimum chunk is 32 (24 usable) on x86-64 (request 1 and 24 both fit in 24 usable); 25 rounds up to the next 16-multiple chunk (40 usable, 48 total). One third of the memory is metadata/rounding — the internal-fragmentation tax in miniature.</li>
+<li>1 MB loops: RSS flat <em>after the first iterations</em> — 1 MB &gt; 128 KB mmap threshold, each cycle mmaps and munmaps fresh pages (note the <em>dynamic</em> threshold caveat in Chapter 19). 200 KB loops: the first free raises the threshold; subsequent cycles serve from the brk arena, so RSS settles at ~one block's worth and stays — but the arena <em>top</em> never shrinks until trim. The two loops differ exactly at the brk/mmap boundary.</li>
+<li>External fragmentation: mixed-size blocks at interleaved lifetimes ratchet holes between survivors; freed-but-unreturned arena pages keep RSS growing. Confirm with <code>malloc_stats</code>/<code>malloc_info</code> (bin-level hole inventory) and the fix is Chapter 19's arsenal: size-class awareness, arenas cap, or (real fix) an arena/pool for the churny lifetimes.</li>
+<li>glibc opens up to 8 × 64 = 512 arenas; each arena grabbed its own sbrk/mmap growth and caches freed chunks per-thread. The <em>sum of arenas' free lists</em> was ~5x live data. Capping arenas trades some contention (more lock traffic) for bounded topology — the standard big-server compromise.</li>
+<li>The allocation tax (per-node malloc = policy + metadata work at high rate) and the locality tax (nodes scattered across lines/rows — every traversal is a Chapter 02 miss). The hand-rolled parser almost certainly used one arena of contiguous nodes: one bump per token, cache-perfect traversal — the lifetime- class table in action.</li>
+<li>Lifetimes that outlive the goroutine's current call (or exceed its tiny stack in size): anything created in one function and used after it returns. Go serves it with the per-P mcache over the span/size-class heap — Chapter 11's version of this chapter's per-thread-cache pattern.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch04.html"><span class="cn-label">previous</span><span class="cn-title">Ch 04</span></a>
+<a class="next" href="ch06.html"><span class="cn-label">next</span><span class="cn-title">Ch 06</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/05-the-heap.md">chapters/05-the-heap.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

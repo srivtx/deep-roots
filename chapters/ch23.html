@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 23 — The unification: one table, every language, every payoff — deep-roots</title>
+<meta name="description" content="Chapter 23 of the memory-models module: Chapter 23 — The unification: one table, every language, every payoff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 23 — The unification: one table, every language, every payoff — deep-roots">
+<meta property="og:description" content="Chapter 23 of the memory-models module: Chapter 23 — The unification: one table, every language, every payoff">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 23 — The unification: one table, every language, every payoff — deep-roots">
+<meta name="twitter:description" content="Chapter 23 of the memory-models module: Chapter 23 — The unification: one table, every language, every payoff">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part IV · the payoffs</div>
+<h1 class="post-title">Chapter 23 — The unification: one table, every language, every payoff</h1>
+<div class="post-meta">chapter 23 &middot; ~12 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Twenty-two chapters ago, memory was a mystery; now it is a design space with named axes. Every language is a point in that space, chosen under constraints you can reconstruct. This chapter compresses the whole module into one comparison table, traces the connections forward into every queued module, and turns the knowledge into a working toolkit: the profilers, the flags, the practice path, and the questions that separate people who have this module from people who don't.</blockquote>
+<h2 id="the-four-questions-one-last-time">The four questions, one last time</h2>
+<p>Every language's memory model is its answers to four questions — you can now interview any language in four sentences:</p>
+<ol>
+<li><strong>What is a value?</strong> (unboxed bytes / boxed header+payload / tagged word — Chapter 06)</li>
+<li><strong>Who owns it?</strong> (the programmer / the scope / the last owner / the collector / nobody, it's static — Chapters 08-18)</li>
+<li><strong>Who frees it, and when?</strong> (explicitly / at scope exit / on drop / tracing / refcount / never — the whole Part II story)</li>
+<li><strong>What is promised about safety?</strong> (nothing / compile-time aliasing guarantees / runtime bounds checks / managed + unsafe edges — Chapters 08, 10, 21)</li>
+</ol>
+<h2 id="the-grand-table">The grand table</h2>
+<p>Read a row, then a column — the table is both a reference and a map of design trade-offs spanning sixty years:</p>
+<div class="table-wrap"><table><thead><tr><th>Language</th><th>Value repr.</th><th>Header</th><th>Ownership / reclamation</th><th>Per-int cost*</th><th>Safety floor</th><th>Where freed bytes go</th><th>Killer chapter detail</th></tr></thead><tbody><tr><td><strong>C</strong></td><td>unboxed</td><td>none</td><td>manual <code>free</code></td><td>4 B</td><td>none (UB)</td><td>allocator free-lists</td><td>metadata at p−8 (ch08, 19)</td></tr><tr><td><strong>C++</strong></td><td>unboxed + RAII</td><td>vptr only (virtuals)</td><td>scope/dtor; smart ptrs</td><td>4 B</td><td>none, patterns help</td><td>dtor → free-lists</td><td>make_shared one block (ch09)</td></tr><tr><td><strong>Rust</strong></td><td>unboxed, moves</td><td>none</td><td>ownership; drops at scope</td><td>4 B</td><td>compile-time (safe code)</td><td>drop glue → allocator</td><td>niche: <code>Option&lt;&amp;T&gt;</code>=8B (ch10)</td></tr><tr><td><strong>Go</strong></td><td>mostly value</td><td>none</td><td>GC (tricolor, concurrent)</td><td>4 B (int), iface boxes</td><td>GC + bounds checks</td><td>size-class spans</td><td>escape analysis (ch11)</td></tr><tr><td><strong>Java</strong></td><td>boxed</td><td>12 B (compressed)</td><td>GC, generational</td><td>16 B (Integer)</td><td>GC + checks + JIT</td><td>eden→survivors→old</td><td>compressed-oops 32GB cliff (ch12)</td></tr><tr><td><strong>C#</strong></td><td>values <em>or</em> boxed</td><td>8 B (boxed)</td><td>GC, gen + LOH</td><td>4 B struct / 24 B boxed</td><td>GC + checks</td><td>gen0 bump → gen2/LOH</td><td>LOH 85,000B, never compacts (ch13)</td></tr><tr><td><strong>Python</strong></td><td>boxed PyObject</td><td>16 B (refcnt+type)</td><td>refcount + cycle GC</td><td>28 B</td><td>never crash, always boxed</td><td>pymalloc pools/arenas</td><td>510-ish <code>is</code> artifacts (ch14)</td></tr><tr><td><strong>JS (V8)</strong></td><td>Smi / heap obj</td><td>8 B map word</td><td>GC scavenger+mark-compact</td><td>8 B (Smi word)</td><td>GC + checks</td><td>semispaces → old space</td><td>hidden-class transitions (ch15)</td></tr><tr><td><strong>Swift/ObjC</strong></td><td>value + ARC refs</td><td>isa (8 B, packed)</td><td>compiler-inserted refcounts</td><td>4 B Int / 16 B String SSO</td><td>ARC + bounds checks</td><td>refcount 0 → free</td><td>weak zeroing via side tables (ch16)</td></tr><tr><td><strong>COBOL</strong></td><td>fixed record bytes</td><td>none</td><td>static, never freed</td><td>PIC bytes</td><td>compile-time layout</td><td>nothing is ever freed</td><td>COMP-3 nibbles (ch17)</td></tr><tr><td><strong>Fortran (classic)</strong></td><td>static + COMMON</td><td>none</td><td>static</td><td>4 B</td><td>compile-time</td><td>nothing is ever freed</td><td>column-major (ch18)</td></tr><tr><td><strong>Lisp</strong></td><td>tagged cons</td><td>tag bits</td><td>GC (invented here)</td><td>2-word cons</td><td>GC</td><td>semispace copy (1959)</td><td>half-machine GC (ch18)</td></tr><tr><td><strong>Haskell</strong></td><td>boxed thunks</td><td>header</td><td>generational GC</td><td>~24 B/thunk</td><td>GC, purity</td><td>copying + compaction</td><td>space leaks (ch18)</td></tr><tr><td><strong>Erlang</strong></td><td>boxed per-process</td><td>header</td><td>per-process copying GC</td><td>boxed</td><td>share-nothing isolation</td><td>process death = free</td><td>&gt;64B binaries refcounted (ch18)</td></tr><tr><td><strong>Zig</strong></td><td>unboxed</td><td>none</td><td>manual via passed allocator</td><td>4 B</td><td>explicit + arenas</td><td>your allocator, greppable</td><td><code>defer arena.deinit()</code> (ch18)</td></tr></tbody></table></div>
+<p>\* 64-bit, order-of-magnitude, platform-per-chapter caveats apply — every chapter states its exact numbers.</p>
+<p>Three columns deserve a second read. <strong>Per-int cost</strong>: the 4→28-byte spread between C and Python is the entire "interpreted vs compiled" performance conversation in one number — it is representation (Chapter 06), not magic. <strong>Where freed bytes go</strong>: "never" (COBOL/Fortran) through "free-lists" (C world) to "copied and compacted" (GC world) — that axis <em>is</em> the fragmentation story of Chapter 05. <strong>Killer detail</strong>: each language's most distinctive memory fact, the one that identifies a practitioner who has actually been inside.</p>
+<h2 id="the-derivation-web-how-the-models-descend-from-the-machine">The derivation web: how the models descend from the machine</h2>
+<p>The module's spine, redrawn as one lineage:</p>
+<pre><code>silicon (ch01) → hierarchy (ch02) → virtual memory (ch03)
+        │                                    │
+   stack for nested lifetimes (ch04)    heap for everything else (ch05)
+        │                                    │
+        └────────── object layout (ch06) ────┘
+                         │
+                assembly ground truth (ch07)
+                         │
+   ┌──────────┬─────────┴──────┬──────────────┬─────────────┐
+   manual      RAII       ownership      GC-family     refcount-family
+   (C ch08)   (C++ ch09) (Rust ch10)  (Go/Java/C#/JS) (Python/Swift)
+   └──── static family: COBOL/Fortran — no heap at all (ch17, ch18)
+                         │
+       allocators under everything (ch19) → hardware memory model (ch20)
+                         │
+        failure = security surface (ch21) + platform economics (ch22)</code></pre>
+<p>Every arrow is a <em>forced</em> move, not a fashion: GC exists because tracing beats refcount cycles (Chapter 14); compaction exists only where pointers are enumerable (Chapters 05, 12); ownership exists because compile-time is the only time you get safety for free (Chapter 10); mobile killing exists because swap can't (Chapter 22). If you can redraw this figure from memory, the field is yours.</p>
+<h2 id="the-toolbox-see-every-model-with-its-own-eyes">The toolbox: see every model with its own eyes</h2>
+<p>The labs across the module, condensed into one cheat-sheet:</p>
+<div class="table-wrap"><table><thead><tr><th>Question</th><th>Tool</th><th>Chapter lab</th></tr></thead><tbody><tr><td>Where do my bytes live? (C)</td><td><code>/proc/self/maps</code>, <code>strace -e brk,mmap</code></td><td>03, 05, 08</td></tr><tr><td>Is it a leak, fragmentation, or retention?</td><td>RSS-vs-heap-profiler method; <code>malloc_stats</code>; <code>MALLOC_ARENA_MAX</code></td><td>05, 19</td></tr><tr><td>Catch UB before prod</td><td><code>-fsanitize=address,undefined</code> in CI</td><td>08, 21</td></tr><tr><td>Did the compiler escape-allocate it? (Go)</td><td><code>go build -gcflags='-m'</code></td><td>11</td></tr><tr><td>Why is GC running? (JVM)</td><td><code>-Xlog:gc*</code>, JOL, <code>jmap -histo</code></td><td>12</td></tr><tr><td>Object sizes? (CLR)</td><td><code>dotnet-counters</code>, <code>GC.GetGeneration</code></td><td>13</td></tr><tr><td>Who retains this? (Python)</td><td><code>tracemalloc</code>, <code>gc.get_referrers</code></td><td>14</td></tr><tr><td>Heap graph + retainers? (JS)</td><td>DevTools heap snapshot, Retainers panel</td><td>15</td></tr><tr><td>Retain cycles? (Swift)</td><td>Xcode Memory Graph debugger</td><td>16</td></tr><tr><td>Cache behavior, false sharing</td><td><code>perf stat</code>, <code>perf c2c</code>, <code>alignas(64)</code></td><td>02, 20</td></tr><tr><td>Concurrency memory bugs</td><td>ThreadSanitizer; litmus-test harnesses</td><td>20</td></tr><tr><td>Exploit-readiness of a binary</td><td><code>checksec</code>, gdb, ROP gadget scanners</td><td>21</td></tr><tr><td>Mobile footprint truth</td><td><code>dumpsys meminfo</code> (PSS) / MetricKit jetsam events</td><td>22</td></tr><tr><td>The frame in the flesh</td><td>gdb <code>disas</code>, <code>info frame</code>, <code>x/8gx $rsp</code></td><td>04, 07</td></tr></tbody></table></div>
+<p>The meta-lesson: <em>every</em> memory question has an instrument. Teams that debug by staring at code are choosing blindness in a field where the truth is one command away.</p>
+<h2 id="how-to-practice-the-path-that-makes-it-permanent">How to practice (the path that makes it permanent)</h2>
+<p>Reading fades; building stays. Ranked by leverage:</p>
+<ol>
+<li><strong>Write a bump allocator</strong> (15 lines — Chapter 19). Then a pool allocator. Then a size-class free-list. You will never again find allocators mysterious, and Chapters 11-15's runtime internals become <em>your</em> design decisions.</li>
+<li><strong>Write a toy tracing GC in C or Rust</strong>: 2 semispaces, 512 objects, one root array, Cheney's scan (Chapter 12's diagram is the whole algorithm). You have now built what JVM/V8/ART run daily — and Chapter 15's forwarding-pointer map word will click forever.</li>
+<li><strong>Refcount with a cycle detector</strong>: Python's algorithm, 100 lines (Chapter 14's <code>gc_refs</code> subtraction). Watch it find the cycle your manual refcounts leaked.</li>
+<li><strong>Break each thing once</strong>: overflow a canary, double-free into tcache, false- share a counter, race a data-race litmus, leak a closure over a DOM node — each in a sandbox, each <em>observed with its instrument</em> (Chapter 21's defensive labs). Security understanding at this level is just memory-model knowledge pointed the other way.</li>
+<li><strong>Read one real crash per week</strong> with gdb + the frame grammar (Chapters 04, 07). In a quarter you will be the person on the team who reads core dumps.</li>
+</ol>
+<h2 id="the-forward-connections-why-this-was-module-01">The forward connections: why this was module 01</h2>
+<p>Every queued module is this module wearing another costume:</p>
+<ul>
+<li><strong>Module 02 (memory security)</strong> — Chapter 21 is its first act: every exploit is a chapter 04-06 layout fact plus a chapter 19 metadata fact.</li>
+<li><strong>Module 03 (software bugs)</strong> — the memory bug families <em>are</em> Chapters 05, 08, 20's failure modes; the race family is Chapter 20.</li>
+<li><strong>Module 04 (decompilation &amp; RE)</strong> — Chapter 07's grammar, industrialized: prologues, vtables, sret, calling conventions <em>are</em> how binaries are read.</li>
+<li><strong>Module 05/06 (Android/iOS internals)</strong> — Chapter 22 in full: zygote COW, ART's collector, Jetsam's bands, the compressor.</li>
+<li><strong>Module 07 (desktop OS internals)</strong> — Chapter 03's page tables, Chapter 19's slab, three times over.</li>
+<li><strong>Module 08 (COBOL &amp; mainframe)</strong> — Chapter 17 deepened: storage dumps, CICS, AMODE, the fixed-record world.</li>
+<li><strong>Module 09 (concurrency &amp; distributed)</strong> — Chapter 20's happens-before scaled to networks; CRDTs are copy-on-write's distributed grandchild.</li>
+<li><strong>Module 10 (compilers)</strong> — the machine that <em>manufactures</em> Chapters 06-07's layouts: register allocation, escape analysis, barrier insertion.</li>
+<li><strong>Module 11 (databases)</strong> — Chapter 02's hierarchy at disk scale; Chapter 03's COW as MVCC; Chapter 05's page management as buffer pools.</li>
+<li><strong>Module 12 (GPU/AI)</strong> — Chapter 01-02's economics rebuilt in HBM and SMEM; coalescing is cache-line arithmetic for a different wire.</li>
+</ul>
+<p>That is the entire program thesis in one paragraph: <strong>memory is the root layer of computer science, and every field is a branch that forgot it has roots.</strong></p>
+<h2 id="what-insiders-know-the-module-sized-version">What insiders know (the module-sized version)</h2>
+<ul>
+<li><strong>The interview layer</strong>: "stack vs heap," "what does <code>&amp;x</code> compile to," "why is a Python int 28 bytes," "why does freeing not shrink RSS," "what does <code>volatile</code>/<code>atomic</code> actually order," "why can't malloc compact" — this module is the answer key, with numbers.</li>
+<li><strong>The debugging layer</strong>: crash triage (04/07/21), leak-vs-fragmentation-vs- retention (05/19/14/15), GC forensics (11/12/13/15/22), cache pathology (02), race detection (20) — the five recurring memory tickets in every production system.</li>
+<li><strong>The design layer</strong>: lifetime classes (05), representation choice (06), allocation-rate discipline (11/12/22), layout budgeting (02/06), safety economics (10/21) — the decisions senior engineers are actually paid to make.</li>
+<li><strong>The one-line summaries</strong> people remember chapters by: <em>locals are free because frames are batch; malloc costs metadata because free forgot the size; GC exists because cycles beat refcounts; compaction needs enumerable pointers; ownership is aliasing×mutation at compile time; the canary sits between your bug and the return address; mobile OSes kill because swap can't; COBOL never allocates so never leaks; everything above silicon is a cache.</em></li>
+</ul>
+<h2 id="quiz-the-final-eight-cross-module-synthesis">Quiz — the final eight (cross-module synthesis)</h2>
+<ol>
+<li>Order these by memory-safety strength for <em>engine-level</em> code, and justify: C, Rust (safe), Java, C++ with RAII + sanitizers in CI.</li>
+<li>A polyglot service leaks in production: Rust core, Python orchestration, JS frontend graphs, a C FFI codec. Describe your triage <em>sequence</em> across the modules' tools.</li>
+<li>Why does the same numeric workload cost ~7x more memory in Python than C? Answer with representation, not adjectives.</li>
+<li><code>fork()</code> is fast, zygote app-launch is fast, JVM <code>-Xmx</code> reserves huge virtual space, and mmap'd files cost ~nothing resident — name the single Chapter 03 mechanism doing all four.</li>
+<li>An exploit needs: a heap-adjacent metadata fact (ch19), an address-layout fact (ch03), a frame-layout fact (ch04), and a representation fact (ch06). Name one concrete fact of each and the attack phase it serves.</li>
+<li>Why do Go, Java, C#, V8, and ART all reach the <em>same</em> allocator design (bump + size classes + per-thread caches) despite five different GCs? Derive it from Chapters 05+19+12.</li>
+<li>One sentence each: why does (a) Python's <code>gc</code> module exist, (b) Swift's weak references zero themselves while Rust's cannot, (c) COBOL forbid recursion (pre-2002), (d) Android kill apps where desktops swap?</li>
+<li>You get one hour to teach a junior "why is our p99 slow under load." Build the lesson plan from this module's chapters.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>From weakest: C (nothing enforced) &lt; C++/RAII+ASan (patterns + tooling, still UB-capable where patterns lapse) &lt; Java (memory-safe at the language level, but engine/JNI/FFI edges corrupt — ch21's mirage) ≈ Rust safe (compile-time guarantee, no GC pauses, but <code>unsafe</code> and FFI edges remain). The honest ranking is about <em>where the guarantees are enforced</em>: nowhere &lt; conventions + CI &lt; a runtime &lt; the type system — and every tier still leaks (retention) even when it cannot corrupt.</li>
+<li>Measure first (RSS/PSS trend — ch03/22), then per-runtime: Rust — ASan/heaptrack on the core (ch08/19); Python — tracemalloc + <code>gc.get_referrers</code> for cycles and closures (ch14); JS — DevTools heap snapshot, Retainers panel for detached DOM (ch15); C FFI — valgrind + reference-leak discipline (ch08); then the cross-cut suspects: per-thread caches not released (ch19), allocator arena retention (ch05/19), and false-positive "leaks" that are fragmentation plateaus (ch05). The sequence is: which tax (ch05), which runtime, which instrument.</li>
+<li>Representation: every int is a boxed PyObject — 16-byte header (refcount + type pointer) + 28 bytes total for a value C stores in 4 (ch14 vs ch08); plus pointer indirection per access (ch06), plus pymalloc's 16-byte size-class rounding (ch14), plus per-object cache-line footprint (ch02). It is header + indirection + rounding + cache, each a chapter, together ~7x.</li>
+<li>Demand paging / mapped pages with copy-on-write: fork copies page tables not pages (COW sharing); zygote's boot image is a persistent COW parent (ch22); <code>-Xmx</code> reserves virtual, commits lazily — RSS ≠ VSZ (ch03/12); file-backed mappings are resident only while hot, evictable clean pages (ch03).</li>
+<li>Ch19: freed chunk's size/fd fields sit adjacent to user data (tcache fd at chunk+16). Ch03: ASLR randomizes the PIE/mmap bases — defeat via an info leak. Ch04: the saved return address is at [rbp+8], past locals and the canary. Ch06: length is forgotten at array decay — the overflow precondition. Phases: the overflow (06) corrupts metadata (19), survives mitigation layout (03/04), and redirects control flow. This <em>is</em> Module 02's opening lecture.</li>
+<li>Bump allocation is O(1) and packs locality (ch05/02); the generational bet (ch12) makes most objects die young, so the nursery is bump-allocated and swept wholesale; per-thread caches remove the shared lock (ch05/19); size classes make free O(1) and bound fragmentation without compaction (ch19). Five GCs, one conclusion: the allocator under a GC is still Chapter 05's machine, and the physics picks the same winner each time.</li>
+<li>(a) Refcounting cannot free cycles — the gc module's mark-from-suspects collector does (ch14). (b) Swift's weak slots live in a global side table, zeroed during dealloc before the memory dies — outside the object, so an outside writer can nil them; Rust's weak count lives <em>inside</em> the Rc block the dying object occupies — nobody can zero what is about to be freed (ch16/10). (c) With no per-invocation stack, recursion would share WORKING-STORAGE across re-entries — corrupted state; LOCAL-STORAGE (a real stack) is the 2002 opt-in (ch17). (d) No swap on flash + battery + shared-pressure economics: eviction by killing priority bands is the page-replacement policy of last resort (ch22).</li>
+<li>The plan: (i) which tower level — perf stat, cache-misses (ch02); (ii) is it allocation rate driving GC/collector cadence (ch11/12/22); (iii) false sharing on shared counters (ch20/02); (iv) lock contention masquerading as memory (per-thread caches — ch19); (v) frame it as the three taxes (ch05) and confirm with the per-runtime instrument (the toolbox table). One hour, five instruments, every answer verifiable — that is the module's whole promise.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch22.html"><span class="cn-label">previous</span><span class="cn-title">Ch 22</span></a>
+<a class="next" href="../index.html#module-01"><span class="cn-label">next</span><span class="cn-title">Module 01 index</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/23-unification.md">chapters/23-unification.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

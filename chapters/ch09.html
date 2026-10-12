@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 09 — C++: lifetime is scope (RAII) — deep-roots</title>
+<meta name="description" content="Chapter 09 of the memory-models module: Chapter 09 — C++: lifetime is scope (RAII)">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 09 — C++: lifetime is scope (RAII) — deep-roots">
+<meta property="og:description" content="Chapter 09 of the memory-models module: Chapter 09 — C++: lifetime is scope (RAII)">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 09 — C++: lifetime is scope (RAII) — deep-roots">
+<meta name="twitter:description" content="Chapter 09 of the memory-models module: Chapter 09 — C++: lifetime is scope (RAII)">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part II · the languages</div>
+<h1 class="post-title">Chapter 09 — C++: lifetime is scope (RAII)</h1>
+<div class="post-meta">chapter 09 &middot; ~22 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> C++ starts from C's memory model — same pointers, same stack frames (Chapter 04), same heap machinery (Chapter 05), same layouts (Chapter 06) — and changes one thing: <em>who is responsible for cleanup</em>. RAII ("resource acquisition is initialization") ties every resource to an object, and every object's lifetime to its scope: the closing brace of a block becomes a compiler-generated sequence of destructor calls in reverse construction order. Because scopes exit even when an exception tears the stack apart, cleanup is deterministic and impossible to forget. Smart pointers, move semantics, guaranteed copy elision, and the rule of zero all fall out of that one decision. There is no garbage collector — and after this chapter you will rarely miss one.</blockquote>
+<h2 id="scope-is-a-destructor-call">Scope is a destructor call</h2>
+<p>Chapter 04 ended on the fact all of C++ stands on: the compiler knows, statically, the layout of every stack frame, so it knows the exact instant each local dies — the closing brace, when the frame pops. C (Chapter 08) threw that knowledge away and made <code>free</code> your problem. C++ cashes it in: <strong>the destructor is a function the compiler calls for you at scope exit, for every fully constructed local, no matter how the scope exits.</strong></p>
+<p>RAII in three sentences: acquire the resource in the constructor (open the file, take the lock, allocate the buffer); release it in the destructor; never touch the release by hand again. "Resource" means anything that must be given back — memory, file descriptors, mutexes, transactions — and the name describes the acquisition, but the consequence is better read backwards: <strong>lifetime is scope</strong>. Two ordering rules are hard parts of the design, both derivable from dependency:</p>
+<ul>
+<li>Locals destruct in reverse construction order — <code>b</code> was constructed after <code>a</code>, so <code>b</code> may hold pointers into <code>a</code>, so <code>b</code> must die first.</li>
+<li>Members destruct in reverse declaration order, <em>after</em> the class's own destructor body runs. Same argument, one level down.</li>
+</ul>
+<pre><code class="language-cpp">#include &lt;cstdio&gt;
+
+struct Tracer {
+    const char* name;
+    explicit Tracer(const char* n) : name(n) { std::printf("ctor %s\n", name); }
+    ~Tracer()                                { std::printf("dtor %s\n", name); }
+};
+
+int main() {
+    Tracer a{"a"};
+    {
+        Tracer b{"b"};
+        Tracer c{"c"};
+    }              // compiler emits ~c(); ~b(); right here — reverse order
+    Tracer d{"d"};
+}                  // then ~d(); ~a();</code></pre>
+<pre><code class="language-text">ctor a
+ctor b
+ctor c
+dtor c
+dtor b
+ctor d
+dtor d
+dtor a</code></pre>
+<p>Now the constraint that <em>forced</em> this design: <strong>exceptions</strong>. When a <code>throw</code> fires, the runtime unwinds the stack frame by frame hunting for a matching <code>catch</code>, and in every frame it must run the destructors of all fully constructed locals — immediately, deterministically, reverse order. There is no collector to sweep the garbage later; this language deliberately has none (Chapters 12 and 14 walk the other road). A language with exceptions therefore <em>must</em> bind destruction to scope, or every function between <code>throw</code> and <code>catch</code> leaks everything it holds. It is also why C++ never grew Java's <code>finally</code>: RAII subsumes it — cleanup is a property of the <em>type</em>, written once, not of every call site, written forever. Python's <code>with</code>, Go's <code>defer</code>, and Rust's drop scopes (Chapter 10) descend from this argument.</p>
+<p>Run-time cost: nothing. Destructor calls are emitted at compile time against known frame addresses (Chapter 04's fixed offsets) — no runtime discovery of "what is alive", unlike a tracing GC (Chapters 12, 15). The price is type-system discipline — the rest of this chapter.</p>
+<h2 id="new-and-delete-malloc-with-constructors-bolted-on">new and delete: malloc with constructors bolted on</h2>
+<p><code>new</code>/<code>delete</code> sit <em>on top of</em> the Chapter 05 machinery — the default <code>operator new</code> on Linux (libstdc++ as of GCC 13) is a thin wrapper over <code>malloc</code> — but add three things:</p>
+<ol>
+<li><strong>Types, sizes, constructors.</strong> <code>new Widget</code> requests exactly <code>sizeof(Widget)</code> bytes and runs the constructor in that memory; <code>delete p</code> runs the destructor, then returns the bytes. <code>malloc(24)</code> gives you 24 anonymous bytes — the object-ness of Chapter 06 is your own convention. <code>new std::string[10]</code> requests <code>320 + 8</code> bytes (libstdc++: 32-byte strings plus an 8-byte cookie, below) — the <em>type</em> computes the size, not you.</li>
+<li><strong>Failure mode.</strong> <code>malloc</code> returns <code>NULL</code>; <code>new</code> throws <code>std::bad_alloc</code> (the C-minded <code>new (std::nothrow) T</code> returns null).</li>
+<li><strong>Per-type dispatch.</strong> <code>operator new</code> is overloadable — per class or globally — so one type's allocations can be routed into the Chapter 19 arena without touching anything else. <code>malloc</code> is one global function; C has nowhere to hang per-type policy.</li>
+</ol>
+<pre><code class="language-cpp">#include &lt;cstdio&gt;
+#include &lt;cstdlib&gt;
+#include &lt;new&gt;
+
+struct Widget {
+    double payload[4];                                   // 32 bytes
+    static void* operator new(std::size_t n) {
+        std::printf("Widget::operator new(%zu)\n", n);   // prints 32: the TYPE chose the size
+        void* p = std::malloc(n);
+        if (!p) throw std::bad_alloc{};
+        return p;
+    }
+    static void operator delete(void* p) noexcept { std::free(p); }
+};
+// new Widget;   -&gt; operator new(32), then the ctor runs IN the returned bytes
+// delete w;     -&gt; ~Widget, then operator delete(w)</code></pre>
+<p>The split is the point: allocation is <em>policy</em> (overridable, per-type); construction and destruction are the <em>type's business</em>, always paired. Chapter 08's "the one who allocates frees with the matching function" had no compiler help at all.</p>
+<p><strong>Array-ness is allocation metadata, so mismatching it is undefined behavior.</strong> <code>new Foo[8]</code> does not just request <code>8 * sizeof(Foo)</code> bytes. <code>delete[]</code> must know how many destructors to run, and the count is not in the objects — so for a type with a non-trivial destructor the compiler writes an 8-byte <em>cookie</em> (Itanium C++ ABI, GCC 13/Clang as of 2024) <em>before</em> the pointer you receive, in the same bookkeeping neighborhood as Chapter 05's chunk headers. The failures write themselves:</p>
+<ul>
+<li><code>delete p</code> where <code>p = new Foo[8]</code>: one destructor runs (seven skipped), then <code>operator delete</code> receives a pointer <em>offset</em> by the cookie from the allocation start. glibc's <code>free()</code> reads a "chunk header" at <code>p - 8</code>, finds the cookie where the size field belongs, and aborts with <code>free(): invalid size</code> — otherwise Chapter 21 would call it an attack surface.</li>
+<li><code>delete[] p</code> where <code>p = new Foo</code>: the runtime reads a "cookie" that is actually some other allocation's bytes and calls the destructor a garbage number of times.</li>
+<li>The compiler <em>must</em> know array-ness at the <code>delete</code> site because the count lives in the allocation's metadata (Chapter 05), not in the type, not in the pointer.</li>
+</ul>
+<p>If <code>Foo</code>'s destructor is trivial, no cookie is needed and the mismatch "works" on glibc — still UB, now invisible, one refactor away from a crash.</p>
+<h2 id="the-pointers-that-clean-up-after-themselves">The pointers that clean up after themselves</h2>
+<p><code>std::unique_ptr&lt;T&gt;</code> is the smallest RAII wrapper: one pointer, one rule — the scope that owns it deletes it.</p>
+<pre><code class="language-cpp">#include &lt;cstdio&gt;
+#include &lt;memory&gt;
+
+struct Node { int v; ~Node() { std::printf("~Node(%d)\n", v); } };
+
+static_assert(sizeof(std::unique_ptr&lt;Node&gt;) == sizeof(Node*));  // 8 == 8, zero overhead
+
+void f() {
+    auto n = std::make_unique&lt;Node&gt;(42);  // acquisition = initialization
+    // ... anything here may throw ...
+}                                         // ~Node + operator delete HERE, guaranteed</code></pre>
+<p>How can one pointer also "remember" how to delete? The deleter is a <em>template parameter</em>, and the default (<code>default_delete&lt;T&gt;</code>) is an empty struct stored via the <strong>empty-base trick</strong>: the deleter is a base class of the pointer wrapper, and empty base classes add zero bytes (EBO, derived below). Zero-cost holds only while the deleter is stateless: <code>unique_ptr&lt;T, void(*)(T*)&gt;</code> is 16 bytes, 40 on libstdc++ with a <code>std::function&lt;void(T*)&gt;</code> deleter. Copying is disabled (two owners would double-free); moving transfers the pointer and nulls the source. One owner, and the owner is a scope.</p>
+<p><code>std::shared_ptr&lt;T&gt;</code> answers a different question — <em>who is last out?</em> — with manual reference counting: the mechanism Python automates (Chapter 14), but deterministic and without a cycle detector. The pointer itself is 16 bytes, always: <code>[T* obj] [control-block*]</code>. The counts live in a heap-allocated <strong>control block</strong>, and the block is where the design lives:</p>
+<ul>
+<li><strong>strong count</strong> — how many <code>shared_ptr</code>s own the object; starts at 1.</li>
+<li><strong>weak count</strong> — how many <code>weak_ptr</code>s are watching, plus 1 reservation held by the strong count itself; starts at 1.</li>
+<li><strong>deleter storage</strong> — how to destroy the object; zero bytes for the empty default (EBO again).</li>
+<li>Does the block contain the object's vptr? <strong>No — never.</strong> The block is not the object; if <code>T</code> is polymorphic, <em>T's</em> vptr sits in <em>T</em>'s bytes, wherever they are. (Honest detail: libstdc++ and libc++ both give the block <em>its own</em> vptr, because the block's dispose hooks are virtual — that vptr belongs to the block's type, not to yours. Strong + weak + deleter is the concept; the block's own vptr is a stdlib's business.)</li>
+</ul>
+<pre><code class="language-text">std::shared_ptr&lt;Widget&gt; sp          sizeof(sp) == 16 (x86-64)
++-----------------+-----------------+
+| obj ptr         | block ptr       |
++-----------------+-----------------+
+        |               |
+        |               v
+        |    ONE allocation: make_shared&lt;Widget&gt; (libstdc++ as of GCC 13,
+        |    Widget is 8 bytes of payload)
+        |    +----------------+------------+------------+-----------------+
+        |    | vptr  8 B      | strong 4 B | weak   4 B | Widget  8 B     |
+        |    | (the block's   | = 1        | = 1        | (obj ptr aims   |
+        |    |  own hooks)    |            |            |  HERE, mid-     |
+        |    |                |            |            |  allocation)    |
+        |    +----------------+------------+------------+-----------------+
+        |    |&lt;-- control block header (16 B) --&gt;|&lt;-- the object -------&gt;|
+        |    request: 24 B -&gt; glibc 2.35: one 32 B chunk (Chapter 05)
+        '-------------------------------------------------------------------&gt;</code></pre>
+<p><code>std::make_shared&lt;Widget&gt;(...)</code> is <strong>one</strong> <code>operator new</code> for object <em>and</em> block — a 24-byte request served from one 32-byte glibc chunk, counts and object cache-adjacent. The two-step form, <code>shared_ptr&lt;Widget&gt;(new Widget)</code>, is <strong>two</strong> allocations: the object (8-byte request, 32-byte chunk) plus a block that also stores the raw object pointer (24-byte request, 32-byte chunk) — two malloc calls, 64 bytes, two strangers in the cache. <code>make_shared</code> halves the traffic.</p>
+<p>Why <strong>two</strong> counts? Because <code>weak_ptr</code> exists. A <code>weak_ptr</code> (16 bytes too) holds only a block pointer — it observes without owning. When the strong count hits 0, the object's destructor runs <em>immediately</em> (deterministic — the anti-GC), but the <strong>block must survive</strong> every <code>weak_ptr</code>: a weak pointer must always have a valid count to consult, or checking <code>expired()</code> would itself be a use-after-free — on the <em>count</em>. So the weak count pins the block, and only when it reaches 0 is the block freed. Three consequences worth memorizing:</p>
+<ul>
+<li>A <code>weak_ptr</code> can dangle the <em>object</em> (that's its job — <code>lock()</code> then atomically fails and returns null) but <strong>never the block</strong>. That asymmetry is the feature.</li>
+<li>With <code>make_shared</code>, object and block share one allocation, so a lingering <code>weak_ptr</code> pins the <em>whole</em> chunk: the destructor ran, the payload is logically dead, the bytes stay mapped until the last watcher dies. "RSS stuck at high-water mark after we cleared the cache" is this, more often than not.</li>
+<li>The counts are lock-free atomics (x86-64): copying <code>shared_ptr</code>s across threads costs a real atomic inc/dec, and the final decrement publishes with release semantics — Chapter 20 arriving early.</li>
+</ul>
+<h2 id="moving-steal-the-guts-not-the-bytes">Moving: steal the guts, not the bytes</h2>
+<p>Copy semantics duplicate: a <code>vector</code> copy allocates a second buffer and copies every element — right for values, catastrophic for returning a 1 MB buffer. <strong>Move semantics</strong> add a question the compiler can ask: <em>may I treat this object as expiring?</em> If yes, the answer is not "copy the bytes" but <strong>steal the guts, leave the source valid-but-empty</strong>. The <code>vector</code> move constructor copies the three pointers and nulls the source's — three loads, three stores, zero allocations (libstdc++ GCC 13, libc++ LLVM 17, MSVC VS 2022, for the stateless default allocator).</p>
+<p>The most useful fact about <code>std::move</code>: <strong>it is only a cast.</strong> It compiles to <code>static_cast&lt;T&amp;&amp;&gt;(x)</code> — no code runs at the move itself, no bytes move, no function is called. It is a compile-time annotation: "treat <code>x</code> as expiring." Whether anything <em>happens</em> depends on whether the receiver has a constructor overload that cares: <code>int y = std::move(x);</code> is a plain 4-byte copy. The work happens inside the move constructor that the cast <em>selects</em>.</p>
+<p>Moved-from conventions, precisely: standard-library objects are left <strong>valid but unspecified</strong> — operations without preconditions (<code>clear</code>, <code>assign</code>, <code>size</code>, destruction) are safe. In practice every major stdlib leaves moved-from containers <em>empty</em> (vector: three null pointers, capacity 0), so reuse right after a move is routine. The one type with a <em>guaranteed</em> moved-from state is <code>unique_ptr</code>: null.</p>
+<p>Then the compiler removes the move entirely. A function returning by value gets its return slot in the <em>caller's</em> frame, its address passed as a hidden argument (Chapter 04's <code>sret</code> convention), and <strong>return value optimization</strong> constructs the returned object directly in that slot — the callee never owns a copy, so there is nothing to move. C++17 makes this mandatory for prvalues ("guaranteed copy elision"):</p>
+<pre><code class="language-cpp">Widget make() { return Widget{7}; }        // C++17: constructed IN the caller's slot
+
+struct NoCopy {
+    NoCopy(int);
+    NoCopy(const NoCopy&amp;) = delete;        // copy deleted
+    NoCopy(NoCopy&amp;&amp;) = delete;             // move ALSO deleted
+};
+NoCopy make2() { return NoCopy{7}; }       // still fine: no copy AND no move ever happens</code></pre>
+<p><code>make2</code> compiles because nothing is elided — there was nothing to elide; the object is born in the caller's slot. NRVO (returning a <em>named</em> local) remains an optional as-if optimization, not a guarantee. Practical order of cheapness: guaranteed elision &gt; move &gt; copy — since C++17, "return big things by value" stopped being a performance topic.</p>
+<h2 id="what-these-objects-look-like-in-bytes">What these objects look like in bytes</h2>
+<p>Chapter 06 derived vptr/vtable for any dynamically dispatched language. Here is the concrete C++ edition (Itanium ABI — GCC 13/Clang, x86-64; MSVC differs in details):</p>
+<pre><code class="language-text">struct Shape { virtual double area() const; virtual ~Shape(); double x, y; };
+struct Circle : Shape { double r; };        // sizeof(Circle) == 32 = vptr 8 + x 8 + y 8 + r 8
+
+  c (on the stack, say)                     vtable for Circle (exactly ONE per class,
+  +----------------+------------+           in .data.rel.ro — read-only after
+  | vptr (8 B)     | x  y  r    |           relocation, Chapter 03)
+  |      .         | 24 B       |
+  +----------------+------------+           +----------------------------------+
+       |                                   | offset-to-top: 0                 |
+       |                                   | typeinfo ptr -&gt; "Circle" RTTI    |
+       '----------------------------------&gt;+----------------------------------+
+                                           | &amp;Circle::~Circle (complete)      |
+                                           | &amp;Circle::~Circle (deleting)      |
+                                           | &amp;Circle::area                    |
+                                           +----------------------------------+
+                                              plain function pointers, at
+                                              compile-time-known slot indices</code></pre>
+<p>Every <code>Circle</code> carries the same 8-byte vptr; the table is one per class, not per object. The cost of <code>c.area()</code> versus a direct call: load vptr, load the function pointer from its slot, jump indirectly — two <em>dependent</em> loads (each a potential miss, ~100 cycles cold — Chapter 02) and, worse, an indirect branch the compiler cannot resolve statically, so <strong>no inlining</strong> and everything inlining would have removed. The real price of virtual is not two extra instructions; it is the lost optimizer knowledge. Module 04 (queued) rebuilds C++ classes in stripped binaries from exactly these tables.</p>
+<p><strong>Why is <code>sizeof(empty struct) == 1</code>?</strong> Objects must have distinct addresses — <code>&amp;a == &amp;b</code> for two live objects is illegal — so even an object with no data occupies one byte. An <em>empty base</em> may share the derived object's address, though: <code>struct E{}; struct D : E { int x; };</code> gives <code>sizeof(D) == 4</code>. That is the <strong>empty base optimization (EBO)</strong> — the load-bearing trick behind zero-size deleters, zero-size allocators, and compressed pairs. For <em>members</em>, C++20 adds <code>[[no_unique_address]]</code> (MSVC: <code>[[msvc::no_unique_address]]</code>) to get the same sharing.</p>
+<p><strong><code>std::string</code> SSO.</strong> A 5-character string should not cost a malloc, so every stdlib's string is a <em>union</em> with two personalities — short: inline buffer; long: heap pointer + size + capacity — and the folklore is how each smuggles the discriminator and length into spare bits:</p>
+<pre><code class="language-text">libstdc++ (GCC 13, x86-64): sizeof(std::string) == 32, 15 chars inline
+
+  SHORT (&lt;= 15 chars, ZERO allocations):
+  +--------------+--------------+-----------------------------+
+  | ptr (8 B)    | length (8 B) | 16-byte union: 15 chars +   |
+  | points HERE  | = 5          | NUL, padding                |
+  +--------------+--------------+-----------------------------+
+   0              8              16                            32
+  discriminator: ptr == address of its own inline buffer
+
+  LONG: the same 32 bytes read as | heap ptr | length | capacity (8 of the 16) |
+
+libc++ (LLVM 17, x86-64): sizeof == 24, 22 chars inline — length packed into one
+byte, a long/short bit flipped inside the cap field. Smaller object, MORE
+capacity. MSVC: 15 chars inline, different packing again.</code></pre>
+<p><strong><code>std::vector</code></strong> is exactly three pointers — 24 bytes, x86-64, all three major stdlibs:</p>
+<pre><code class="language-text">std::vector&lt;int&gt; v                        sizeof(v) == 24
+
+    v.begin()       v.end()               v.end_of_storage()
+       |              |                        |
+       v              v                        v
+       +----+----+----+----+-------------------+
+       | 10 | 20 | 30 | 40 |    (unused)       |   heap buffer
+       +---------------------------------------+
+       |&lt;-- size() = 4 --&gt;|
+       |&lt;------ capacity() = 8 ---------------&gt;|</code></pre>
+<p>No size field is stored — size and capacity are pointer differences. On <code>push_back</code> with <code>end == end_of_storage</code>, the vector allocates a new buffer (libstdc++/libc++ double the capacity; MSVC grows 1.5x), <em>moves</em> every element, destroys the old ones, and frees the old buffer to the Chapter 05 free list. The "iterator invalidation rules" from every textbook now stop being fine print and become what they always were — <strong>memory relocation rules</strong>: any operation that reallocates physically moves every element, so every pointer, reference, and iterator into the old buffer aims at freed memory. <code>reserve()</code> is not a style preference; it is the tool that prevents relocation.</p>
+<h2 id="the-rule-of-zero-and-the-escape-hatches">The rule of zero, and the escape hatches</h2>
+<p>The <strong>rule of three</strong> (C++98): write any of destructor, copy constructor, copy assignment and you almost certainly need all three — you are hand-managing a resource, and the missing one is a leak or a double-free. The <strong>rule of five</strong> (C++11) adds move constructor and move assignment. The <strong>rule of zero</strong> is modern practice: write <em>none</em> of them — give the class RAII members and let the compiler's generated functions do memberwise destruction, copy, and move:</p>
+<pre><code class="language-cpp">class Session {                 // rule of 0: owns nothing raw
+    std::unique_ptr&lt;Conn&gt; conn; // deletes itself
+    std::string         name;   // SSO or heap, frees itself
+public:
+    // no destructor, no copy/move: all five generated, all five correct
+};</code></pre>
+<p>Copying is naturally <em>deleted</em> (unique_ptr is not copyable — one owner), which is usually the correct semantics anyway. Review translation: raw <code>new</code>/<code>delete</code> in a class body is a smell; hand-written fives are where self-assignment bugs and double-frees have lived for 30 years.</p>
+<p>Sometimes you must separate <em>object lifetime</em> from <em>storage lifetime</em> — that is placement new. <code>operator new(size_t)</code> takes a size; <strong>placement new takes a pointer</strong> and constructs an object in memory you already own. Its inverse is not <code>delete</code> but <code>std::destroy_at</code> (C++20), which runs the destructor without freeing anything:</p>
+<pre><code class="language-cpp">alignas(Widget) char buf[sizeof(Widget)];  // my bytes, my lifetime
+Widget* w = new (buf) Widget{args...};     // construct ONLY — nothing was allocated
+// ... use w ...
+std::destroy_at(w);                        // destruct ONLY — buf is still mine</code></pre>
+<p>This is the seam under <code>std::pmr</code> (C++17): <code>std::pmr::memory_resource</code> is an abstract <em>allocator</em> interface — <code>allocate(bytes, alignment)</code>, <code>deallocate</code>, <code>is_equal</code> — and <code>std::pmr::vector&lt;int&gt;</code> routes its growth allocations through your resource instead of global <code>new</code>. Chapter 19's arena, reached from C++ as a library feature:</p>
+<pre><code class="language-cpp">#include &lt;memory_resource&gt;
+
+class FrameArena : public std::pmr::memory_resource {   // bump allocator, freed in one shot
+    char   buf[1024];
+    size_t off = 0;
+    void* do_allocate(size_t n, size_t a) override {
+        off = (off + a - 1) &amp; ~(a - 1);        // round up to alignment
+        if (off + n &gt; sizeof(buf)) throw std::bad_alloc{};
+        void* p = buf + off;
+        off += n;                              // the "free list" is one integer
+        return p;
+    }
+    void  do_deallocate(void*, size_t, size_t) override {}   // per-object frees: no-ops
+    bool  do_is_equal(const std::pmr::memory_resource&amp; o) const noexcept override {
+        return this == &amp;o;
+    }
+};
+
+void render(FrameArena&amp; frame) {
+    std::pmr::vector&lt;int&gt; scratch(&amp;frame);     // growth comes from the arena: bumps
+    scratch.push_back(7);
+}   // vector's destructor STILL RUNS: elements destroyed (deterministic, RAII),
+    // then "deallocate" no-ops back to the arena — storage dies with the frame</code></pre>
+<p>The two axes are now independent: object lifetime (ctors/dtors, still scope-bound) and storage lifetime (the arena, freed wholesale per frame). Games and compilers build whole pipelines on this split.</p>
+<p>The last trap is the <strong>static initialization order fiasco (SIOF)</strong>. Globals with <em>dynamic</em> initializers (initializers that run code) initialize in unspecified order across translation units — the linker lays each TU's <code>.init_array</code> (run by the loader before <code>main</code>, Chapter 03) in link order, and link order is nobody's contract:</p>
+<pre><code class="language-cpp">// settings.cpp — TU A
+std::string g_suffix = load_suffix();          // dynamic initializer: code before main
+
+// registry.cpp — TU B
+extern std::string g_suffix;
+std::vector&lt;std::string&gt; g_paths{ build_paths(g_suffix) };   // ALSO dynamic — order? UNSPECIFIED</code></pre>
+<p>If TU B's initializer runs first, <code>g_paths</code> is built from a <code>g_suffix</code> that has not been constructed. With libstdc++'s string, the zeroed <code>.bss</code> (Chapter 03) makes it look merely empty — a silently wrong prefix. Make the victim a <code>std::map</code> and you get the signature symptom: <strong>a segfault before <code>main()</code> prints a single line</strong> — <code>~map</code> runs on an uninitialized tree when B's global is destroyed. C (Chapter 08) cannot have this bug, structurally: all C initializers are link-time constants in <code>.data</code>/<code>.rodata</code> — no code runs, no order to get wrong.</p>
+<p>Two fixes. First, the function-local static: initialization moves to first use, and the call graph — not the linker — defines the order:</p>
+<pre><code class="language-cpp">const std::string&amp; suffix() {
+    static std::string s = load_suffix();   // runs on first pass, thread-safely
+    return s;
+}</code></pre>
+<p>"Thread-safely" is a C++11 guarantee ("magic statics"): on the Itanium ABI (GCC/Clang) the compiler emits an 8-byte guard variable in <code>.bss</code> and wraps the init in <code>__cxa_guard_acquire</code>/<code>__cxa_guard_release</code>; after the first call, every entry is one cheap load of the guard byte. Second, the <strong>nifty counter</strong> — how libstdc++ bootstraps <code>&lt;iostream&gt;</code>: the header declares a tiny <code>Init</code> class whose constructor bumps a count; every TU including <code>&lt;iostream&gt;</code> instantiates one static <code>Init</code> object; the <em>first</em> constructed runs the real setup (std::cout alive), the <em>last</em> destroyed flushes. Header inclusion becomes an initialization vote — order-independent by construction.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>A moved-from vector is never dead.</strong> The standard says valid-but-unspecified; the practice: on libstdc++ (GCC 13), libc++ (LLVM 17), and MSVC (VS 2022) the move constructor steals the three pointers and nulls the source — empty, capacity 0, immediately reusable. The only moved-from object with a <em>guaranteed</em> state is <code>unique_ptr</code>: null.</li>
+<li><strong><code>std::vector&lt;bool&gt;</code> is not a vector of bools.</strong> It is a bitfield: one bit per element, <code>operator[]</code> returns a <em>proxy</em> object, <code>&amp;v[0]</code> cannot exist, there is no <code>data()</code>. Known broken since the 1998 standard, unfixable without breaking every shipped binary's ABI — so WG21 keeps it. Use <code>std::vector&lt;char&gt;</code> or <code>std::bitset</code> when you need addresses.</li>
+<li><strong>SSO capacity is a stdlib fingerprint.</strong> 15 chars in 32 bytes (libstdc++), 22 chars in 24 bytes (libc++), 15 on MSVC. A one-line <code>sizeof(std::string)</code> print identifies the implementation — smaller object yet <em>larger</em> inline capacity is the libc++ party trick, paid for in bit-packing.</li>
+<li><strong>Function-local statics are guard-variable code.</strong> 8-byte guard in <code>.bss</code>, <code>__cxa_guard_acquire</code>/<code>__cxa_guard_release</code> on the Itanium ABI (GCC/Clang, C++11 "magic statics"). After first initialization the fast path is one load of the guard byte — a static inside a hot-loop-called function stays nearly free.</li>
+<li><strong>The passkey idiom</strong> turns an API invariant into a compile-time check: give the token type private constructors and a <code>friend</code> declaration, so only the authorized factory can mint tokens; everyone else can <em>pass</em> them, never <em>fabricate</em> them. "Only <code>Connection</code> may construct <code>Session</code>" — enforced by the type system, at zero run-time cost.</li>
+<li><strong>Lifetime extension has a trapdoor.</strong> <code>const std::string&amp; r = std::string("x");</code> extends the temporary's lifetime to <code>r</code>'s — safe. <code>const std::string&amp; r = getBox().label;</code> does <strong>not</strong>: extension applies only to a temporary bound <em>directly</em>; <code>label</code> is a reference <em>returned by a member call</em>, the <code>Box</code> dies at the end of the full expression, and <code>r</code> dangles. A top source of "works in debug, garbage in release."</li>
+<li><strong>A stray <code>weak_ptr</code> pins a whole <code>make_shared</code> allocation.</strong> The object's destructor ran; the bytes — object <em>and</em> block, one chunk — stay mapped until the last watcher dies. "Why is RSS not dropping after we released the cache?" — count the <code>weak_ptr</code>s, not the <code>shared_ptr</code>s.</li>
+<li><strong>Zero-cost holds only while the deleter is stateless.</strong> <code>sizeof(unique_ptr&lt;T&gt;)</code> is 8 with the default deleter, 16 with a function pointer, 40 on libstdc++ with a <code>std::function</code> deleter. In a 10-million-edge graph, 40-byte smart pointers are 320 MB of deleter payload.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Reproduces on a laptop with g++ (GCC 13 here) and clang++ (LLVM 17, libc++).</p>
+<pre><code class="language-bash">mkdir ch09 &amp;&amp; cd ch09
+cat &gt; probe.cpp &lt;&lt;'EOF'
+#include &lt;cstdio&gt;
+#include &lt;memory&gt;
+#include &lt;string&gt;
+#include &lt;vector&gt;
+
+struct Big { char blob[4096]; };
+static_assert(sizeof(std::unique_ptr&lt;Big&gt;) == sizeof(Big*), "one pointer, no more");
+
+int main() {
+    std::printf("sizeof(unique_ptr&lt;Big&gt;) = %zu\n", sizeof(std::unique_ptr&lt;Big&gt;));
+    std::printf("sizeof(shared_ptr&lt;Big&gt;) = %zu\n", sizeof(std::shared_ptr&lt;Big&gt;));
+    std::printf("sizeof(string)          = %zu\n", sizeof(std::string));
+    std::printf("sizeof(vector&lt;int&gt;)     = %zu\n", sizeof(std::vector&lt;int&gt;));
+
+    std::string s = "short";       // 5 chars
+    std::string l = "this string is definitely longer than any inline buffer";
+    auto inside = [](const std::string&amp; x) {    // 1 = data() inside the object (SSO)
+        return (const char*)&amp;x &lt;= x.data() &amp;&amp; x.data() &lt; (const char*)(&amp;x + 1);
+    };
+    std::printf("short string inline?   %d\n", inside(s));
+    std::printf("long  string inline?   %d\n", inside(l));
+}
+EOF
+g++ -std=c++17 -O0 -g probe.cpp -o probe &amp;&amp; ./probe
+clang++ -std=c++17 -stdlib=libc++ -O0 -g probe.cpp -o probe-libcxx &amp;&amp; ./probe-libcxx</code></pre>
+<p>Expected, x86-64 — the libstdc++ column then the libc++ comparison:</p>
+<pre><code class="language-text">                         libstdc++ (GCC 13)    libc++ (LLVM 17)
+sizeof(unique_ptr&lt;Big&gt;) = 8                     8
+sizeof(shared_ptr&lt;Big&gt;) = 16                    16
+sizeof(string)          = 32                    24     &lt;- the fingerprint
+sizeof(vector&lt;int&gt;)     = 24                    24
+short string inline?   1                       1      (data() points into the object)
+long  string inline?   0                       0      (data() went to the heap)</code></pre>
+<p>Destructor order, including the exception path that forced the design:</p>
+<pre><code class="language-cpp">// unwind.cpp
+#include &lt;cstdio&gt;
+struct T { const char* n; explicit T(const char* s):n(s){} ~T(){ std::printf("dtor %s\n", n);} };
+int main() {
+    T a{"a"};
+    try {
+        T b{"b"};
+        throw 1;              // unwind: ~b runs NOW, while hunting for the handler
+    } catch (int) {
+        std::printf("caught\n");
+    }
+    std::printf("after catch\n");
+}                             // ~a runs at scope exit</code></pre>
+<pre><code class="language-bash">g++ -std=c++17 unwind.cpp -o unwind &amp;&amp; ./unwind
+# dtor b        &lt;- unwinding destroyed b deterministically
+# caught
+# after catch
+# dtor a</code></pre>
+<p>Finally, watch the tools catch what the compiler cannot:</p>
+<pre><code class="language-cpp">// leak.cpp — two bugs on purpose; fix one at a time
+struct Leak { char pad[64]; };
+int main() {
+    new Leak[1024];           // BUG 1: pointer dropped -&gt; 64 KB leaked
+    Leak* p = new Leak[8];    // BUG 2: array-new, scalar-delete
+    delete p;                 //      -&gt; cookie mismatch, heap corruption
+}</code></pre>
+<pre><code class="language-bash">g++ -std=c++17 -g leak.cpp -o leak &amp;&amp; valgrind --leak-check=full ./leak
+#   ==NNNN== 65,536 bytes in 1 blocks are definitely lost
+#   ... by 0x...: operator new[](unsigned long)
+#   (or the glibc abort: free(): invalid size  — the cookie read as a chunk header, ch05)
+
+g++ -std=c++17 -g -fsanitize=address leak.cpp -o leak-asan &amp;&amp; ./leak-asan
+#   AddressSanitizer: new-delete-type-mismatch ... allocated 576 bytes (8*64 + 8-byte cookie)
+#   ...freed 64 bytes in a single delete — the sizes betray the array-ness
+#   LeakSanitizer: detected memory leaks — 64 KB definitely lost</code></pre>
+<p>What to notice: ASan's <code>new-delete-type-mismatch</code> prints both sizes, and the 8-byte difference <em>is</em> the Itanium ABI cookie — Chapter 05's metadata, visible through a sanitizer. The leak stack ends at <code>operator new[]</code> because that is where allocation bottomed out — you now know why.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Reading sanitizer reports.</strong> <code>new-delete-type-mismatch</code>, <code>free(): invalid size</code>, leaks whose stacks end at <code>operator new</code> — map each to its mechanism (cookie, interior pointer, dropped pointer) instead of guessing.</li>
+<li><strong>Performance decisions.</strong> <code>make_shared</code> halves allocation count and improves locality; <code>reserve()</code> before a <code>push_back</code> loop prevents both the 2x-growth relocations and the invalidation they cause; strings under 15/22 chars never touch the allocator — a profiler showing zero <code>malloc</code> traffic there is not lying.</li>
+<li><strong>Design and review.</strong> The rule of zero is a review rule: a hand-written destructor is a class proposing to hand-manage a resource — make it justify that. Stateful deleters are 8-32 bytes per pointer; in bulk data structures that is a design decision, not a detail.</li>
+<li><strong>Incidents you can now explain.</strong> "Crash before main" (SIOF); "RSS never drops after clear()" (weak_ptrs pinning make_shared chunks); "works in debug, garbage in release" (a reference to a member of a returned temporary).</li>
+<li><strong>Interview answers with derivations, not folklore.</strong> Why two counts in a shared_ptr; why <code>sizeof(unique_ptr)</code> is 8; why <code>vector&lt;bool&gt;</code> breaks <code>&amp;v[0]</code>; why C++17 made return-by-value free.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 04 (the stack):</strong> scope exit is a frame pop; destructor calls are emitted at compile time against known offsets; sret is why elided returns construct directly in the caller's slot.</li>
+<li><strong>Chapter 05 (the heap):</strong> chunk headers, minimum sizes, and free lists explain the new[] cookie, the interior-pointer crash, and make_shared's one-chunk saving.</li>
+<li><strong>Chapter 06 (object layout):</strong> vptr/vtable and tag bits derived there; this chapter showed the concrete Itanium ABI layout, EBO, and the SSO union.</li>
+<li><strong>Chapter 08 (C):</strong> the explicit model new/delete sit on — and why C cannot have SIOF (no dynamic initializers, no <code>.init_array</code> code).</li>
+<li><strong>Chapter 03 (virtual memory):</strong> <code>.bss</code> zeroing and the loader-run <code>.init_array</code> are the machinery SIOF and the guard-variable fix live in.</li>
+<li><strong>Chapter 10 (Rust):</strong> moves become compiler-enforced (affine types) — "valid but unspecified" turns into "cannot be used after move."</li>
+<li><strong>Chapter 14 (Python):</strong> shared_ptr is manual refcounting; weak_ptr is the manual cycle-breaker; Python automates both, plus a cycle detector.</li>
+<li><strong>Chapter 16 (Swift/Obj-C):</strong> ARC is the compiler writing your shared_ptr copies and releases for you.</li>
+<li><strong>Chapter 19 (allocators):</strong> placement new + pmr is how arena and frame allocators become usable C++ library code.</li>
+<li><strong>Chapter 20 (hardware memory model):</strong> the atomic strong/weak counts, and why the final decrement needs release semantics.</li>
+<li><strong>Chapter 21 (memory security):</strong> new/delete mismatches and the weak-pinned use-after-free are entry points for the attacks covered there.</li>
+<li><strong>Module 04 (decompilation, queued):</strong> vtable + RTTI reconstruction of C++ classes starts from this chapter's diagram.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Your teammate wants <code>finally</code> blocks in C++ and proposes wrapping every cleanup in <code>try { ... } catch(...) { cleanup(); throw; }</code>. In terms of stack unwinding, explain why the language instead bound destructors to scope — and name one guarantee a scope-bound destructor gives that a hand-written cleanup call cannot.</li>
+</ol>
+<ol>
+<li>``<code>cpp int x = 5; int y = std::move(x); std::vector&lt;int&gt; v = make();     // returns a 1000-element vector auto w = std::move(v); </code>`<code> What machine code runs at </code>std::move(x)<code> itself, and what is </code>y<code>? After the second move, what are </code>v<code>'s three pointers on libstdc++ (GCC 13), and which operations are guaranteed safe on </code>v` by the standard?</li>
+</ol>
+<ol>
+<li>Predict the numbers, x86-64: <code>sizeof</code> of an empty struct, <code>std::unique_ptr&lt;Empty&gt;</code>, <code>std::shared_ptr&lt;Empty&gt;</code>, <code>std::string</code>, <code>std::vector&lt;int&gt;</code> — first for libstdc++ (GCC 13), then for libc++ (LLVM 17). Which number changes, and in which direction does the inline string capacity move?</li>
+</ol>
+<ol>
+<li><code>struct Point3 { double x, y, z; };</code> (24 bytes). <code>auto sp = std::make_shared&lt;Point3&gt;();</code> on libstdc++ (GCC 13), glibc 2.35: how many bytes does the single underlying allocation request, and how large is the glibc chunk? What exactly happens inside the block when the last <code>shared_ptr</code> dies while one <code>weak_ptr</code> survives — and in the two-allocation form (<code>shared_ptr(new Point3)</code>), how many glibc chunks does construction cost at minimum?</li>
+</ol>
+<ol>
+<li>Predict the output: ``<code>cpp #include &lt;cstdio&gt; struct M { const char* n; M(const char* s):n(s){ std::printf("%s\n", s); } ~M(){ std::printf("~%s\n", n); } }; struct C { M a{"a"}, b{"b"}; ~C(){ std::printf("~C\n"); } }; void f() { C c; M m{"m"}; return; } int main() { f(); std::printf("done\n"); } </code>``</li>
+</ol>
+<ol>
+<li>``<code>cpp struct Foo { ~Foo() { /* non-trivial */ } }; Foo* f = new Foo[8]; delete f;      // glibc aborts: free(): invalid size </code>`<code> Diagnose with Chapter 05 and this chapter: where is the element count stored, what did </code>delete f<code> do before calling the allocator, and why exactly is the pointer handed to </code>free()<code> wrong? Bonus: why does the crash sometimes *disappear* when </code>Foo`'s destructor is made trivial?</li>
+</ol>
+<ol>
+<li>``<code>cpp std::vector&lt;std::string&gt; v; v.reserve(2); const std::string* first = &amp;v.emplace_back("a"); v.emplace_back("b"); v.emplace_back("c"); std::printf("%s\n", first-&gt;c_str()); </code>`<code> Why is </code>first<code> dangling after the third </code>emplace_back`, in memory terms? What did the vector physically do at that moment, and what is the fix?</li>
+</ol>
+<ol>
+<li>A release build segfaults before <code>main()</code>; the debug build works. TU B has a global <code>std::map&lt;std::string, Config&gt;</code> initialized from a global <code>std::string</code> defined in TU A. Name the failure, explain why C (Chapter 08) structurally cannot have it, and give both fixes — including what the guard variable does in the function-local-static fix, and which libstdc++ header feature historically used the other fix.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Concept.</strong> When a <code>throw</code> unwinds, every frame between <code>throw</code> and <code>catch</code> must release its resources <em>deterministically, while the frames are being popped</em> — there is no GC to clean up later. A hand-written cleanup call only runs on paths the author remembered: early returns, the tenth exception, the next maintainer. A scope-bound destructor runs on <em>every</em> exit path — fall-through, <code>return</code>, <code>break</code>, <code>throw</code> — because the compiler emits it at the closing brace for every fully constructed local, in reverse construction order. It also covers members and temporaries, which no manual call at the call site touches.</li>
+</ol>
+<ol>
+<li><strong>Concept/predict.</strong> <code>std::move(x)</code> compiles to a cast (<code>static_cast&lt;int&amp;&amp;&gt;</code>) — zero instructions; <code>y</code> is 5, copied. For the vector, the cast <em>selects</em> the move constructor, and that is the code that runs: it copies <code>v</code>'s three pointers into <code>w</code> and nulls <code>v</code>'s — <code>begin == end == end_of_storage == nullptr</code>, so <code>size() == 0</code>, <code>capacity() == 0</code> (libstdc++ GCC 13; libc++ and MSVC do the same for the stateless allocator). The standard guarantees only valid-but-unspecified, so operations without preconditions — <code>clear()</code>, <code>assign()</code>, <code>push_back()</code>, <code>size()</code>, destruction — are safe; reading element values is not. Convention: assume empty, reuse freely.</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> libstdc++: 1, 8, 16, 32, 24. libc++: 1, 8, 16, 24, 24 — only <code>sizeof(std::string)</code> changes (32 → 24), while the inline capacity moves <em>up</em>, from 15 to 22 characters. Empty struct is 1 byte because distinct objects need distinct addresses; unique_ptr is one pointer because the empty deleter is an empty base (EBO); shared_ptr is two pointers (object + control block); vector is begin/end/end_of_storage.</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> The block header is 16 bytes (vptr 8 for the block's own virtual hooks, strong 4, weak 4) plus the 24-byte Point3: one 40-byte request. glibc 2.35 x86-64: 40 + 8 = 48, already a multiple of 16, so a 48-byte chunk. When the last <code>shared_ptr</code> dies: <code>~Point3</code> runs immediately (strong → 0), the strong count's hold on the block is released (weak 2 → 1), and the block — dead object still inside — stays allocated while the surviving <code>weak_ptr</code>'s count is 1. Two-allocation form: the object needs a 24-byte request (32-byte chunk), and the block a 24-byte request (16-byte header + 8-byte pointer to the separate object; 32-byte chunk): <strong>two chunks, 64 bytes minimum</strong>, versus one 48-byte chunk and one malloc call.</li>
+</ol>
+<ol>
+<li><strong>Predict the output.</strong> ``<code>text a b m ~m ~C ~b ~a done </code>`<code> Construction: </code>C<code>'s members in declaration order (</code>a<code>, </code>b<code>), then </code>m<code>. Destruction of </code>f<code>'s locals in reverse construction order: </code>~m<code> first, then </code>~C<code> — whose *body* prints </code>~C<code> before its members are destroyed — then members in reverse declaration order (</code>~b<code>, </code>~a<code>). </code>done<code> prints after </code>f` returns.</li>
+</ol>
+<ol>
+<li><strong>Bug-diagnosis (cross-chapter: 05).</strong> The count 8 is in the 8-byte array cookie the compiler wrote <em>in front of</em> the returned pointer (Itanium ABI), alongside Chapter 05's chunk bookkeeping. <code>delete f</code> first ran exactly one <code>~Foo</code> (seven skipped), then called <code>operator delete(f)</code>. But <code>f</code> is 8 bytes past the allocation start — an <em>interior pointer</em>. glibc's <code>free()</code> reads its chunk header at <code>f - 8</code>, finds the cookie (the value 8) where the size field belongs, and aborts with <code>free(): invalid size</code> rather than corrupt its bins. <code>delete[] f</code> would read the cookie, run 8 destructors, back up past the cookie to the true chunk start, and free correctly. With a trivial destructor the compiler elides the cookie — the pointer equals the allocation start and the mismatch happens to "work" (still UB, now silent until a refactor makes the destructor non-trivial).</li>
+</ol>
+<ol>
+<li><strong>Bug-diagnosis.</strong> After <code>reserve(2)</code>, capacity is 2. The third <code>emplace_back</code> finds <code>end == end_of_storage</code>: it allocates a new buffer (capacity 4 on libstdc++/libc++, 3 on MSVC's 1.5x growth), <em>moves</em> the two strings, destroys them in the old buffer, and frees it. <code>first</code> pointed into that old buffer — now a free-list chunk (Chapter 05) that the next allocation can reuse — so <code>first-&gt;c_str()</code> reads freed memory: garbage, stale "a", or a crash. Iterator/pointer invalidation is exactly this relocation. Fix: <code>v.reserve(3)</code> (or an upper bound) before taking addresses — or store the index, never the pointer.</li>
+</ol>
+<ol>
+<li><strong>Bug-diagnosis (cross-chapter: 08, 03).</strong> The static initialization order fiasco: both globals have dynamic initializers, the linker lays each TU's <code>.init_array</code> in link order, and the loader runs them before <code>main</code> (Chapter 03) in unspecified order across TUs. If TU B's initializer runs first, the map is populated from a <code>std::string</code> that exists (its <code>.bss</code> is zeroed) but has not run its constructor; when B's map is destroyed, its nodes hold garbage — the pre-<code>main</code> segfault. C cannot have SIOF: all its initializers are link-time constants in <code>.data</code>/<code>.rodata</code>; no code runs in any order. Fix 1 — function-local static: <code>const std::string&amp; suffix() { static std::string s = load_suffix(); return s; }</code> — initialization moves to first call, ordering follows the call graph, and the Itanium ABI makes it thread-safe with an 8-byte guard variable in <code>.bss</code>: <code>__cxa_guard_acquire</code> serializes the first init, <code>__cxa_guard_release</code> marks it done, later calls pay one load of the guard byte. Fix 2 — the nifty counter: libstdc++'s <code>&lt;iostream&gt;</code> declares a static <code>std::ios_base::Init</code> object in every including TU; the first constructed runs the real setup (std::cout alive), the last destroyed flushes — header inclusion becomes an order-independent initialization vote.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch08.html"><span class="cn-label">previous</span><span class="cn-title">Ch 08</span></a>
+<a class="next" href="ch10.html"><span class="cn-label">next</span><span class="cn-title">Ch 10</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/09-cpp.md">chapters/09-cpp.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

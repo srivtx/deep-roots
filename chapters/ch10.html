@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 10 — Rust: ownership, borrows, and the third way — deep-roots</title>
+<meta name="description" content="Chapter 10 of the memory-models module: Chapter 10 — Rust: ownership, borrows, and the third way">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 10 — Rust: ownership, borrows, and the third way — deep-roots">
+<meta property="og:description" content="Chapter 10 of the memory-models module: Chapter 10 — Rust: ownership, borrows, and the third way">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 10 — Rust: ownership, borrows, and the third way — deep-roots">
+<meta name="twitter:description" content="Chapter 10 of the memory-models module: Chapter 10 — Rust: ownership, borrows, and the third way">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part II · the languages</div>
+<h1 class="post-title">Chapter 10 — Rust: ownership, borrows, and the third way</h1>
+<div class="post-meta">chapter 10 &middot; ~17 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> C frees by hand (ch08); C++ offers RAII but a silent type system (ch09); the GC languages hire a runtime (ch11–ch16). Rust's third way: make <em>who owns each value</em> something the compiler proves. Every value has exactly one owner; assignment moves; access borrows. Break the aliasing × mutation invariant and you get a compile error, not a CVE. The tracking costs zero at run time — no GC thread, no refcount unless you ask. Safe Rust can still <em>leak</em> (Rc cycles, <code>Box::leak</code>), but it cannot <em>corrupt</em>.</blockquote>
+<h2 id="the-third-way-ownership-as-a-compile-time-fact">The third way: ownership as a compile-time fact</h2>
+<p>Part II's four questions — value, owner, freer, safety — get unusual answers here. C: bytes you own and free, no safety (ch08). The GC family — Java's generational heap is the archetype (ch12): references into a runtime-owned heap, where safety costs a collector that can find every pointer. Rust:</p>
+<ul>
+<li>A <strong>value</strong> is laid out like C laid it: integers, structs, arrays inline, no per-object header (ch06).</li>
+<li><strong>Ownership</strong> is a compile-time fact: every value has exactly one owner at every point in the program.</li>
+<li><strong>Freeing</strong> happens at the owner's scope end: the compiler inserts destructor calls there, which free the memory — RAII from ch09, enforced language-wide. You cannot forget to free a buffer, because you were never the one doing it.</li>
+<li><strong>Safety</strong> follows: use-after-free, double-free, dangling pointers are <em>type errors</em> here, caught before the program runs.</li>
+</ul>
+<p>The cost model is the crucial claim: ownership is a <em>static</em> analysis — no GC, no tracing, no runtime that knows where pointers live, and the same destructor calls a C++ compiler emits (ch09). The price is compile-time borrow-checker errors: debug at build time instead of at 3 a.m.</p>
+<h2 id="affine-by-default-moves-are-free-copies-are-earned">Affine by default: moves are free, copies are earned</h2>
+<p>Chapter 09 introduced affine types — values usable <em>at most</em> once. Rust makes that the default for every type that owns something:</p>
+<pre><code class="language-rust">fn main() {
+    let a = String::from("hello"); // a OWNS: stack header (ptr, cap, len) + heap bytes
+    let b = a;                     // MOVE: header memcpy'd to b; binding `a` is dead
+    // println!("{}", a);          // error[E0382]: use of moved value: `a`
+    println!("{}", b);
+
+    let x = 5_i32;                 // i32 is Copy
+    let y = x;                     // bitwise copy; x remains perfectly usable
+    println!("{} {}", x, y);       // copies are opt-in via the Copy trait
+}</code></pre>
+<p>A move compiles to the same instructions as a copy — often nothing after optimization. The difference is what the compiler <em>believes</em>: <code>a</code> refers to nothing now, and using it is E0382.</p>
+<p>Contrast C++ (ch09): <code>auto b = std::move(a)</code> leaves <code>a</code> alive in a "valid but unspecified state" — a zombie, because <code>a</code> is still an object whose destructor must run. Rust moves the whole ownership: the source binding dies, and using it is a compile error, never a silent zombie.</p>
+<p>The <code>Copy</code> rule is mechanical:</p>
+<ul>
+<li><strong><code>Copy</code> requires</strong>: every field <code>Copy</code>, and no <code>Drop</code> implementation.</li>
+<li><strong>What is <code>Copy</code></strong>: integers, floats, <code>bool</code>, <code>char</code>, <code>&amp;T</code>, tuples/arrays of <code>Copy</code>, fn pointers — plain data, memcpy-complete.</li>
+<li><strong>What is not, and why</strong>: <code>String</code>, <code>Vec&lt;T&gt;</code>, <code>Box&lt;T&gt;</code>, <code>Rc&lt;T&gt;</code>, <code>File</code> — each owns a resource with a destructor. A bitwise copy would make <em>two owners of one buffer</em>, and both destructors would free it: the double-free of ch08.</li>
+</ul>
+<h2 id="borrows-and-lifetimes-proving-the-aliasing-mutation-invariant">Borrows and lifetimes: proving the aliasing × mutation invariant</h2>
+<p>Ownership alone would be unusable — no function could look at a value without taking it. Borrowing is the escape: a temporary, checked view, in two mutually exclusive kinds:</p>
+<div class="table-wrap"><table><thead><tr><th>You hold</th><th>Count</th><th>Reads</th><th>Writes</th></tr></thead><tbody><tr><td><code>&amp;T</code> shared</td><td>any number, simultaneously</td><td>yes</td><td>no</td></tr><tr><td><code>&amp;mut T</code> unique</td><td>exactly one</td><td>yes</td><td>yes</td></tr></tbody></table></div>
+<p>The invariant is the XOR: at any moment a value has either many readers or exactly one writer — never a writer with live readers, never two writers:</p>
+<pre><code>aliasing  x  mutation  =  what every memory-safety bug needs
+
+  use-after-free  = read a freed object    -&gt; reader outlived owner
+  data race       = 2 threads, &gt;= 1 write  -&gt; two "writers"
+  iterator inval. = mutate while reading   -&gt; writer + reader</code></pre>
+<p>A <strong>data race</strong> is precisely "two accesses to one location, at least one a write, no synchronization" (ch20 has the hardware half). The invariant makes that combination <em>unrepresentable</em>: <code>&amp;mut T</code> cannot coexist with any other borrow. Add <code>Send</code>/<code>Sync</code> and a data race in safe Rust requires <code>unsafe</code> to even attempt.</p>
+<p>The everyday form is E0502:</p>
+<pre><code class="language-rust">fn main() {
+    let mut v = vec![1, 2, 3];
+    let first = &amp;v[0];     // shared borrow of v begins
+    v.push(4);             // error[E0502]: cannot borrow `v` as mutable
+                           //   because it is also borrowed as immutable
+    println!("{}", first); // borrow still live HERE (its last use)
+}</code></pre>
+<p>Why illegal: <code>push</code> may reallocate (ch05), leaving <code>first</code> dangling. The checker doesn't know about realloc — it enforces the simpler invariant that covers it.</p>
+<p><strong>NLL (non-lexical lifetimes)</strong>, stable since Rust 1.31 (2018 edition), keeps this tolerable: a borrow runs from creation to <em>last use</em>, not to the end of its lexical block. Print <code>first</code> before <code>v.push(4)</code> and it compiles — the reader is dead when the writer arrives. (Pre-2018 Rust checked scopes, not uses; NLL is the fix.)</p>
+<h3>Lifetimes are constraints, not directives</h3>
+<p>The <code>'a</code> in <code>fn longest&lt;'a&gt;(x: &amp;'a str, y: &amp;'a str) -&gt; &amp;'a str</code> extends nothing. It is a <em>constraint</em> for the solver: "the output is valid for some region <code>'a</code> where both inputs are." The checker <em>proves</em> every call site against it and <em>infers</em> the regions; you annotate only signatures, where inference is ambiguous. In a body you cannot tell the compiler anything about lifetimes — you can only fail its proof. Two codes, two failure modes:</p>
+<ul>
+<li><strong>E0106, missing lifetime specifier</strong> — signature ambiguity: <code>fn f(a: &amp;str, b: &amp;str) -&gt; &amp;str</code>. Which input backs the output? You must name the relationship; each call site is then checked.</li>
+<li><strong>E0597, borrowed value does not live long enough</strong> — body-level dangling, with an anatomy worth memorizing:</li>
+</ul>
+<pre><code class="language-rust">fn main() {
+    let r;
+    {
+        let x = 42;
+        r = &amp;x;
+    }                 // x is dropped HERE
+    println!("{}", r);
+}</code></pre>
+<pre><code>error[E0597]: `x` does not live long enough
+ --&gt; src/main.rs:6:13
+  |
+5 |         let x = 42;
+  |             - binding `x` declared here
+6 |         r = &amp;x;
+  |             ^^ borrowed value does not live long enough
+7 |     }
+  |     - `x` dropped here while still borrowed
+8 |     println!("{}", r);
+  |                    - borrow later used here</code></pre>
+<p><em>(rustc 1.7x; exact wording drifts between versions.)</em></p>
+<p>Read it as a three-point story: <strong>span 1</strong> the borrow is created, <strong>span 2</strong> the owner dies, <strong>span 3</strong> the borrow is <em>used</em> — the error is that 3 &gt; 2. The pipe diagram is the whole theory of dangling pointers, drawn by the compiler, and <code>rustc --explain E0597</code> prints a tutorial on this error class. <code>--explain</code> works for every <code>error[Exxxx]</code> code and is the toolchain's most underused feature.</p>
+<h2 id="the-heap-is-opt-in-box-vec-and-storage-in-the-niches">The heap is opt-in: Box, Vec, and storage in the niches</h2>
+<p>Rust is stack-first: nothing is boxed implicitly — the heap is opt-in.</p>
+<pre><code class="language-rust">use std::mem::size_of;
+
+fn main() {
+    let b: Box&lt;u8&gt; = Box::new(7);               // 1 byte on the heap, pointed at
+    assert_eq!(size_of::&lt;Box&lt;u8&gt;&gt;(), 8);        // the Box itself is ONE pointer
+    assert_eq!(size_of::&lt;Option&lt;Box&lt;u8&gt;&gt;&gt;(), 8); // ...and so is Option of it
+    assert_eq!(size_of::&lt;Vec&lt;u8&gt;&gt;(), 24);       // ptr + cap + len, 3 machine words
+}</code></pre>
+<p><code>Box&lt;T&gt;</code> is the minimal heap type — one owner, one pointer, destructor frees the pointee — and <code>size_of::&lt;Box&lt;T&gt;&gt;() == 8</code> on 64-bit for <em>every</em> <code>T</code> from <code>u8</code> to a 4 KB struct: the <code>unique_ptr</code> of ch09 with the arithmetic in the type system. <code>Vec&lt;T&gt;</code> is the ch06 triple in the flesh:</p>
+<pre><code>   Vec&lt;T&gt;: 24 bytes (on the stack usually; repr(Rust) — sizes observed on
+   rustc 1.7x, 64-bit; typical, not an API guarantee)
+
+   +----------------+   +----------------------+----------------------+
+   | ptr    (8 B)   |   | 0   1   2   3   4    |   spare slots        |
+   | cap    (8 B)   |--&gt;| [T] [T] [T] ...      |   ...up to cap       |
+   | len    (8 B)   |   +----------------------+----------------------+
+   +----------------+      ^-- heap block: cap * size_of::&lt;T&gt;() bytes; first len
+                             slots initialized (ch05: malloc'd, not calloc'd)</code></pre>
+<p>Same 24 bytes as <code>String</code> — a <code>String</code> <em>is</em> a <code>Vec&lt;u8&gt;</code> with a UTF-8 invariant. <code>push</code> with <code>len == cap</code> doubles the capacity (realloc-or-move, amortized O(1) — ch05), and the destructor frees the buffer exactly once, because there is exactly one owner.</p>
+<h3>The niche trick: enums that cost nothing</h3>
+<p>Rust enums are the tagged unions of ch06 plus one refinement that changes the economics: the compiler hunts <em>niches</em> — bit patterns a type can never produce — and parks the discriminant in them. <code>&amp;T</code> is never null, so all-zeroes is a free place to say "no value": <code>Option&lt;&amp;T&gt;</code> is the <strong>same size</strong> as <code>&amp;T</code>, 8 bytes, with <code>None</code> <em>being</em> the null pattern — documented as a <em>guarantee</em> for <code>Option&lt;&amp;T&gt;</code>, <code>Option&lt;&amp;mut T&gt;</code>, <code>Option&lt;Box&lt;T&gt;&gt;</code>, <code>Option&lt;NonNull&lt;T&gt;&gt;</code>, and fn pointers. The concrete number:</p>
+<pre><code class="language-rust">assert_eq!(size_of::&lt;Box&lt;u8&gt;&gt;(), 8);          // a pointer
+assert_eq!(size_of::&lt;Option&lt;Box&lt;u8&gt;&gt;&gt;(), 8);  // STILL a pointer — tag rides the niche</code></pre>
+<p>Compare C++'s <code>std::optional&lt;unique_ptr&lt;uint8_t&gt;&gt;</code>: pointer + engaged flag + padding = 16 bytes (ch06, ch09). Rust's optionality lives <em>inside</em> the pointer — null was the billion-dollar mistake, so Rust deletes it and reclaims its bit pattern as the <code>None</code> tag.</p>
+<h2 id="sharing-rc-arc-and-the-poor-man-s-gc">Sharing: Rc, Arc, and the poor man's GC</h2>
+<p>One owner per value is the law — until data is genuinely shared: two parents, a cache hit twice, a tree node in a map. Then Rust offers <em>explicit</em> reference counting, met in ch09 as <code>shared_ptr</code>: <code>Rc&lt;T&gt;</code> (single-threaded) and <code>Arc&lt;T&gt;</code> (atomic) wrap the value in a heap block with inline counts.</p>
+<pre><code>   Rc&lt;String&gt; handle                    heap block (the RcBox&lt;String&gt; allocation)
+   (one machine word)   +---------------+----------------+-------------------------+
+   +----------------+   | strong: usize | weak:   usize  | String payload (24 B)   |
+   | ptr  (8 B)     |--&gt;|        (8 B)  |         (8 B)  | ptr | cap | len | "..." |
+   +----------------+   +---------------+----------------+-------------------------+
+   handle: 8 B             RcBox&lt;String&gt; total: 16 B header + 24 B payload = 40 B
+
+   handle.clone()      -&gt; strong += 1     (Rc: plain add; Arc: atomic add)
+   last drop           -&gt; strong == 0: payload dropped; weak == 0: block freed
+   Rc::downgrade()     -&gt; weak   += 1: keeps the BLOCK alive, not the value</code></pre>
+<p>The counts are <em>inline with the value</em> — one allocation, unlike Python's per-object refcount word (ch14). Cloning an <code>Rc</code> never touches the payload: one integer add, one pointer copy. <code>Rc</code> uses <em>plain</em> increments and is <code>!Send</code>/<code>!Sync</code> (ship one to a thread: E0277) — two threads doing <code>strong += 1</code> on one word is itself a data race (ch20). <code>Arc</code> uses atomic read-modify-writes, each a cache-line ping-pong (ch02). That one word, atomics or not, is the whole <code>Rc</code>/<code>Arc</code> difference — chosen <em>explicitly</em>, unlike Swift's compiler-inserted ARC (ch16): refcounting is never ambient; a GC-ish feel is assembled:</p>
+<pre><code class="language-rust">use std::rc::{Rc, RefCell};
+
+fn main() {
+    let shared = Rc::new(RefCell::new(vec![1, 2, 3]));
+    let a = Rc::clone(&amp;shared);      // strong: 1 -&gt; 2, no payload copied
+    let b = Rc::clone(&amp;shared);      // strong: 2 -&gt; 3
+    a.borrow_mut().push(4);          // run-time writer check; released at
+                                     // end of statement
+    println!("{:?}", shared.borrow()); // [1, 2, 3, 4]; strong hits 0 at scope
+}                                      // end -&gt; vec dropped, block freed</code></pre>
+<p><code>Rc&lt;RefCell&lt;T&gt;&gt;</code> is the famous <strong>"poor man's GC"</strong>: any number of owners, mutation on demand, values die with the last handle. <code>RefCell</code> is needed because <code>Rc&lt;T&gt;</code> hands out <code>&amp;T</code> — shared, immutable — while mutation demands exclusivity; interior mutability resolves that by <em>relocating the check</em>:</p>
+<ul>
+<li><strong><code>Cell&lt;T&gt;</code></strong> for <code>Copy</code> types: no checking — <code>get</code>/<code>set</code> are memcpys through <code>UnsafeCell</code>; <code>Cell&lt;i32&gt;</code> is as fast as a plain <code>i32</code>.</li>
+<li><strong><code>RefCell&lt;T&gt;</code></strong> for any <code>T</code>: an <code>isize</code> borrow flag — 0 un-borrowed, positive = live <code>&amp;T</code> readers, −1 = one <code>&amp;mut T</code> writer. Violations <em>panic</em> ("already mutably borrowed: BorrowError", as of 1.7x) instead of failing to compile.</li>
+</ul>
+<p>The chapter's thesis in miniature: the invariant is <em>the same</em> — the borrow checker proves it statically, <code>RefCell</code> checks it dynamically, and E0502 becomes a 3 a.m. panic. Threads repeat the move: <code>Arc&lt;Mutex&lt;T&gt;&gt;</code> relocates the check into lock contention.</p>
+<h2 id="the-edges-unsafe-leaks-and-what-safe-really-promises">The edges: unsafe, leaks, and what safe really promises</h2>
+<p><strong><code>unsafe</code></strong> is the acknowledged escape hatch. Inside an <code>unsafe</code> block you may dereference raw pointers (<code>*const T</code>/<code>*mut T</code> — thin, unchecked, 8 bytes, no lifetimes), call unsafe functions, implement unsafe traits — taking on the obligation the checker normally carries: aliasing rules, no data races, no dangling. Those rules have a formal model the ecosystem actually runs: <strong>Stacked Borrows</strong> and its successor <strong>Tree Borrows</strong> (Ralf Jung et al.) define when a raw-pointer-derived access <em>invalidates</em> aliasing references, and <strong>Miri</strong> (<code>cargo +nightly miri run</code>) interprets unsafe code under that model, flagging undefined behavior real hardware lets slip. Well-shaped codebases keep unsafe a thin shell — data structure, FFI — wrapped in a safe API; the shell gets the review hours.</p>
+<p><strong>Leaks are safe.</strong> Rust guarantees no memory <em>unsafety</em> (use-after-free, double-free, dangling, races) — not absence of leaks. Three ways to leak in safe code:</p>
+<ol>
+<li><strong>Rc cycles</strong>: two values holding each other's strong count stay at 1 forever; destructors never run. Python built a cycle detector for this (ch14); Rust's answer is <code>Rc::downgrade</code> → <code>Weak&lt;T&gt;</code> — parent strong, child weak.</li>
+<li><strong><code>Box::leak(x)</code></strong>: deliberately returns <code>&amp;'static mut T</code>, never dropped — the standard move for once-per-process config tables and arenas.</li>
+<li><strong><code>std::mem::forget(x)</code></strong>: consumes the value, runs no destructor. Safe on purpose since Rust 1.0 — safe leaks demonstrably exist (item 1), so the library does not pretend destructors are guaranteed, and safe APIs are written leak-tolerant.</li>
+</ol>
+<p><strong>The security payoff</strong> is why the industry cares. Microsoft's MSRC (BlueHat 2019, ~a decade of CVE data): roughly <strong>70% of Microsoft's CVEs are memory-safety bugs</strong>. Google Chromium (2020): <strong>at least 70% of serious security bugs</strong> are memory-safety bugs. Overflow, use-after-free, type confusion — the exploit starter pack of ch21 — is what the borrow checker makes unrepresentable in safe code. That ~70% is the ceiling disciplined C/C++ teams cannot get under, and why Android, Windows, and Chrome keep rewriting attack surface into Rust. Safe Rust eliminates the whole class in safe code; the <code>unsafe</code> shell is where auditing concentrates (ch21).</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>Copy</code> is a marker trait with no methods and a hard rule: no <code>Drop</code>.</strong> Nothing <em>runs</em> for a copy — the compiler just doesn't invalidate the source. Any type with a destructor is disqualified: <code>Cell&lt;i32&gt;</code> is <code>Copy</code>, <code>RefCell&lt;i32&gt;</code> is not (memcpy would duplicate live borrow state). <code>&amp;T</code> is <code>Copy</code>; <code>&amp;mut T</code> is not — exclusivity is not copyable.</li>
+<li><strong><code>Rc</code> is single-threaded to the bone</strong> — plain <code>+= 1</code>, <code>!Send</code>/<code>!Sync</code>; <code>Arc</code> is the same layout with atomic RMWs. The internal weak count is stored <strong>one higher</strong> than <code>Rc::weak_count()</code> reports — the extra 1 belongs to the strong side (as of 1.7x).</li>
+<li><strong><code>Box&lt;T&gt;</code> is <code>Clone</code> only when <code>T: Clone</code></strong> — the clone deep-copies the payload. <code>Rc&lt;T&gt;</code> is <code>Clone</code> for <em>any</em> <code>T</code>: it bumps the count. Same operator, different cost — <code>Rc&lt;String&gt;</code> clone is one integer; <code>Box&lt;String&gt;</code> clone is a heap round-trip.</li>
+<li><strong><code>&amp;[T]</code> and <code>&amp;str</code> are fat pointers — 16 bytes = (ptr, len)</strong>, the ch06 slice. But <code>&amp;[T; 1000]</code> is <em>thin</em> (8 B): the length is in the type. <code>&amp;dyn Trait</code> is (ptr, vtable), also 16 — why <code>&amp;[u8]</code> beats <code>&amp;Vec&lt;u8&gt;</code> in signatures.</li>
+<li><strong><code>Cow&lt;'a, str&gt;</code></strong> (clone-on-write) is the borrow-vs-own enum: <code>Borrowed(&amp;'a str) | Owned(String)</code>, 32 bytes on 64-bit (observed 1.7x) — zero-copy until you mutate. Ch03's copy-on-write pages, per-value.</li>
+<li><strong>Drop order: locals in reverse declaration order — struct <em>fields</em> in declaration order.</strong> The local rule matches C++ (ch09); the field rule is the <em>opposite</em> (C++ destroys members in reverse). Port a drop-sensitive C++ struct and this bites.</li>
+<li><strong><code>Pin</code> exists because of self-referential structs.</strong> An <code>async</code> future's locals share one allocation, and some hold pointers to <em>other fields of it</em> — move it and they dangle. <code>Pin&lt;Box&lt;T&gt;&gt;</code> forbids the move, which is why async Rust leaks <code>Pin</code> into everyone's signatures.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Reproducible with a stock <code>rustup</code> install (stable, Rust 2021 edition; outputs observed on rustc 1.7x, 64-bit — prose drifts between versions, error codes do not).</p>
+<p><strong>1. Sizes, no faith required.</strong> <code>cargo new sizes &amp;&amp; cd sizes</code>, replace <code>src/main.rs</code>:</p>
+<pre><code class="language-rust">use std::mem::size_of;
+use std::rc::Rc;
+
+fn main() {
+    println!("{}", size_of::&lt;Box&lt;u8&gt;&gt;());          // 8
+    println!("{}", size_of::&lt;Option&lt;Box&lt;u8&gt;&gt;&gt;());  // 8   &lt;- niche: same as the Box
+    println!("{}", size_of::&lt;Vec&lt;u8&gt;&gt;());          // 24  &lt;- ptr + cap + len
+    println!("{}", size_of::&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt;());  // 24  &lt;- niche strikes again
+    println!("{}", size_of::&lt;&amp;[u8]&gt;());            // 16  &lt;- fat pointer
+    println!("{}", size_of::&lt;&amp;[u8; 100]&gt;());       // 8   &lt;- thin: len in the type
+    println!("{}", size_of::&lt;Rc&lt;u8&gt;&gt;());           // 8   &lt;- the handle
+}</code></pre>
+<p><code>cargo run</code>. Notice which numbers <code>Option</code> fails to change — each is a niche you just verified.</p>
+<p><strong>2. Meet E0382 and E0502.</strong> Put this in <code>src/main.rs</code>:</p>
+<pre><code class="language-rust">fn main() {
+    let s = String::from("hello");
+    let t = s;
+    println!("{}", s);      // E0382
+
+    let mut v = vec![1, 2, 3];
+    let first = &amp;v[0];
+    v.push(4);              // E0502
+    println!("{}", first);
+}</code></pre>
+<p><code>cargo build 2&gt;&amp;1 | head -40</code>, then <code>rustc --explain E0382 | less</code>. In E0382's output, find "value moved here" (at <code>let t = s;</code>) and "value used here" (the <code>println!</code>) — the three-point story again. Delete the two offending lines one at a time: each error vanishes independently, two separate proofs failing.</p>
+<p><strong>3. (Optional, deeper)</strong> <code>cargo +nightly miri setup &amp;&amp; cargo +nightly miri run</code> on a project with a deliberately bad <code>unsafe</code> block — Miri names the undefined behavior that release-mode hardware would have let sail through.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Errors as a diagnosis map.</strong> E0382: an owner moved — find the move span. E0502: aliasing × mutation — find the other borrower's <em>last use</em>; the fix is often reordering two lines. E0597: the pipe diagram <em>is</em> the fix. Run <code>--explain</code> before Stack Overflow.</li>
+<li><strong>Performance choices with numbers.</strong> <code>&amp;str</code> (16 B) vs <code>String</code> (24 B + heap) vs <code>Rc&lt;str&gt;</code> (8 B handle + heap + counts) is a decision about memcpy, allocation, and atomic counts — derivable, not folklore. Prefer borrows at API boundaries; <code>Rc</code>/<code>Arc</code> only when ownership truly is shared.</li>
+<li><strong>A design smell detector.</strong> <code>Rc&lt;RefCell&lt;T&gt;&gt;</code> in a tree or graph means "shared and mutable": find the cycle, consider <code>Weak</code> children. The threaded version is <code>Arc&lt;Mutex&lt;T&gt;&gt;</code> under contention (ch02, ch20).</li>
+<li><strong>Security review triage, and the interview answer.</strong> "It's Rust, we're memory-safe" — what sits outside the safe subset? Count <code>unsafe</code> blocks (<code>cargo geiger</code>), run Miri in CI on them (ch21). And "what does the borrow checker check?" — <em>the aliasing × mutation invariant over regions computed from last use (NLL)</em>, incidentally the exact precondition of a data race.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>ch04 (the stack)</strong> — ownership's destructor calls live in the frame epilogue; drops are a scope fact, not a runtime event.</li>
+<li><strong>ch05 (the heap)</strong> — <code>Vec</code>'s doubling growth and <code>Rc</code>'s one-block layout are allocator mechanics (bins, realloc-vs-move).</li>
+<li><strong>ch06 (object layout)</strong> — tagged unions, fat pointers, niches reclaimed: <code>Option&lt;&amp;T&gt; == &amp;T</code> is the payoff.</li>
+<li><strong>ch08 (C)</strong> — every rule here is compile-time C discipline; E0382 is the double-free caught earlier.</li>
+<li><strong>ch09 (C++)</strong> — RAII language-wide; moves without the zombie; <code>Arc</code> vs <code>shared_ptr</code>, identical inline counts.</li>
+<li><strong>ch11–ch16</strong> — GC runtimes buy safety; Rust wagers the type system can pay. Swift's ARC (ch16) is the closest cousin.</li>
+<li><strong>ch20</strong> — the borrow invariant is the software half of the data race; <code>Arc</code>'s atomics the hardware half.</li>
+<li><strong>ch21</strong> — the ~70% CVE statistic, the classes safe Rust retires, auditing the <code>unsafe</code> shell.</li>
+<li><strong>ch23</strong> — Rust anchors the compile-time-enforcement column; region inference goes to the queued compilers module (ROADMAP.md).</li>
+<li><strong>Queued cybersecurity module</strong> — exploits needing memory unsafety, and attacking safe-Rust targets.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<p><strong>1. (Concept)</strong> Your teammate proposes making <code>String: Copy</code> "because memcpy works on it." What breaks? State the compiler's rule for what may be <code>Copy</code>, and name one type that is <code>Copy</code> despite holding a pointer.</p>
+<p><strong>2. (Concept)</strong> True or false: writing <code>fn f&lt;'a&gt;(x: &amp;'a str) -&gt; &amp;'a str</code> tells the compiler to keep the input alive longer. Justify in terms of constraints vs. directives; where can't you write lifetime annotations at all?</p>
+<p><strong>3. (Predict the numbers)</strong> On 64-bit rustc 1.7x: <code>size_of</code> of <code>Box&lt;u8&gt;</code>, <code>Option&lt;Box&lt;u8&gt;&gt;</code>, <code>Vec&lt;u8&gt;</code>, <code>Option&lt;Vec&lt;u8&gt;&gt;</code>, <code>&amp;[u8]</code>, <code>&amp;[u8; 7]</code>, and the <code>Rc&lt;u8&gt;</code> handle. Bonus: how many heap bytes does one <code>Rc&lt;u8&gt;</code> allocate (strong + weak + payload + padding)?</p>
+<p><strong>4. (Predict the output)</strong> <code>Loud(&amp;'static str)</code> prints "drop {name}" in its <code>Drop</code>. <code>main</code> declares <code>let _a = Loud("a"); let _b = Loud("b");</code> then <code>let _p = Pair(Loud("x"), Loud("y"));</code> with <code>struct Pair(Loud, Loud);</code>. Write the exact output lines, in order.</p>
+<p><strong>5. (Bug diagnosis — does this compile?)</strong></p>
+<pre><code class="language-rust">fn main() {
+    let s = String::from("deep");
+    let t = s;
+    let u = s;
+    println!("{} {} {}", t, u, s);
+}</code></pre>
+<p>If not: which error code, at which line, and two different fixes that both compile.</p>
+<p><strong>6. (Bug diagnosis — the leak)</strong> Two <code>Rc&lt;Node&gt;</code>s, <code>a</code> and <code>b</code>, with <code>a.next = Some(Rc::clone(&amp;b))</code> and <code>b.next = Some(Rc::clone(&amp;a))</code> through <code>RefCell</code>. No <code>Drop</code> printouts appear at exit. Why is nothing freed, why is this <em>safe</em>, and what is the standard fix?</p>
+<p><strong>7. (Bug diagnosis — compile time vs. run time)</strong></p>
+<pre><code class="language-rust">use std::cell::RefCell;
+fn main() {
+    let cell = RefCell::new(vec![1, 2, 3]);
+    let w = cell.borrow_mut();
+    let r = cell.borrow();
+    println!("{:?} {:?}", w, r);
+}</code></pre>
+<p>Does this compile? What happens at run time, and with what error class? Name the compile-time error code you'd get instead if <code>cell</code> were a plain <code>Vec</code> and you wrote the analogous <code>&amp;mut</code> + <code>&amp;</code> borrows.</p>
+<p><strong>8. (Cross-chapter)</strong> Sizes on 64-bit and the one-sentence <em>why</em>, for each pair: <code>Option&lt;Box&lt;u8&gt;&gt;</code> vs <code>std::optional&lt;std::unique_ptr&lt;uint8_t&gt;&gt;</code>; then <code>Rc&lt;String&gt;</code> vs <code>std::shared_ptr&lt;std::string&gt;</code> — what's identical in layout, what differs in cost, and who inserts the bookkeeping in Swift's ARC (ch16) that both Rust and C++ make you write yourself?</p>
+<details>
+<summary>Answers</summary>
+<p><strong>1.</strong> A bitwise <code>String</code> copy duplicates the (ptr, cap, len) header — <em>two owners of one heap buffer</em> — and both destructors free it: the double-free of ch08. The rule: <code>Copy</code> requires all fields <code>Copy</code> <strong>and no <code>Drop</code></strong> — a destructor is a certificate that "this value owns something a memcpy cannot duplicate." The teammate confuses <em>can</em> memcpy with <em>may</em> memcpy. A pointer-holding <code>Copy</code> type: <code>&amp;T</code> — it borrows rather than owns, so copying it is free; the referend's lifetime is the borrow checker's separate job. And <code>&amp;mut T</code> is <em>not</em> <code>Copy</code> — exclusivity is not copyable.</p>
+<p><strong>2.</strong> False — precisely backwards. <code>'a</code> is a <strong>constraint</strong> the checker solves, not a directive: "the output is valid for some region in which the input is valid." Every call site is <em>checked</em> against that; nothing is kept alive longer because you wrote <code>'a</code> — a failing call site gives E0597, the constraint violated, not ignored. Lifetime annotations cannot appear inside function <em>bodies</em> at all: bodies are inferred; annotations live in signatures and type declarations, where inference has no body to read.</p>
+<p><strong>3.</strong> <code>Box&lt;u8&gt;</code>: <strong>8</strong> — one pointer. <code>Option&lt;Box&lt;u8&gt;&gt;</code>: <strong>8</strong> — the null niche carries <code>None</code> (documented null-pointer optimization). <code>Vec&lt;u8&gt;</code>: <strong>24</strong> — ptr, cap, len (ch06). <code>Option&lt;Vec&lt;u8&gt;&gt;</code>: <strong>24</strong> (observed 1.7x) — the non-null pointer / non-zero capacity leave a spare bit pattern for <code>None</code>. <code>&amp;[u8]</code>: <strong>16</strong> — fat pointer (ptr, len). <code>&amp;[u8; 7]</code>: <strong>8</strong> — thin; the length lives in the <em>type</em>. <code>Rc&lt;u8&gt;</code> handle: <strong>8</strong> — one pointer to the block. Bonus: the <code>RcBox&lt;u8&gt;</code> heap block is <code>8 (strong) + 8 (weak) + 1 (u8) + 7 (padding) = 24</code> bytes.</p>
+<p><strong>4.</strong> Exactly:</p>
+<pre><code>drop x
+drop y
+drop b
+drop a</code></pre>
+<p><code>_p</code> is the last-declared local, so it drops first; <em>inside</em> <code>Pair</code>, Rust drops fields in <strong>declaration order</strong> — <code>x</code> then <code>y</code>. Then <code>_b</code>, <code>_a</code> in reverse declaration order. The trap: C++ (ch09) destroys members in <em>reverse</em> declaration order, so the identical class prints <code>y, x</code> there.</p>
+<p><strong>5.</strong> No. <code>let t = s;</code> <strong>moves</strong> <code>s</code> (not <code>Copy</code>: heap buffer + destructor). <code>let u = s;</code> then uses a moved-from binding — <strong>error[E0382] "use of moved value: <code>s</code>"</strong> at that line, with "value moved here" pointing at <code>let t = s;</code>. C++ would have compiled this into three owners of one buffer — ch09's zombie, multiplied. Fix A — borrow: <code>let t = &amp;s; let u = &amp;s;</code> and drop the trailing <code>, s</code> from the <code>println!</code>; many shared readers are legal. Fix B — <code>let t = s.clone();</code>: one heap round-trip, two owners of two buffers, each freed once. Fix A allocates nothing and is the idiomatic default; knowing when <code>clone</code> is <em>wasted</em> is the experienced move.</p>
+<p><strong>6.</strong> <code>a</code> holds a strong count on <code>b</code> and <code>b</code> on <code>a</code>: at exit each block's strong count is still 1, held by the <em>other</em> node — neither reaches 0, no destructor runs, no block returns to the allocator. A leak, not corruption: no dangling pointer, no double free — memory simply never reclaimed. Rust guarantees no memory <em>unsafety</em>, not absence of <em>leaks</em>, and it cannot: safe code can always construct this shape (which is why <code>std::mem::forget</code> is a safe function). Fix: make one direction <strong><code>Weak&lt;T&gt;</code></strong> via <code>Rc::downgrade</code> — <code>Weak</code> bumps only the weak count, keeping the <em>block</em> alive, not the <em>value</em>; when the last strong handle dies the payload drops even with <code>Weak</code>s outstanding (they see <code>None</code> from <code>upgrade()</code>). Trees: parents own strongly, children point weakly back. Python (ch14) solved the same loop with a runtime cycle detector; Rust makes you encode the direction — the cost of having no runtime.</p>
+<p><strong>7.</strong> It <strong>compiles</strong> — <code>RefCell</code>'s borrow checking is <em>run time</em>, by design; that is its purpose (mutation through shared handles, the base of the <code>Rc&lt;RefCell&lt;T&gt;&gt;</code> "poor man's GC" pattern). At run time it <strong>panics</strong>: <code>borrow_mut()</code> set the flag to −1 (one writer), and <code>cell.borrow()</code> cannot add a reader — thread 'main' panicked at 'already mutably borrowed: BorrowError' (as of 1.7x). The compile-time analogue on a plain <code>Vec</code> — <code>&amp;mut v</code> while <code>&amp;v[...]</code> is live — is <strong>error[E0502]</strong>, "cannot borrow as mutable because it is also borrowed as immutable." Same invariant, two enforcement points: E0502 proves it at build time for free; <code>RefCell</code> pays a flag check per access and converts the proof into a panic — that relocation <em>is</em> interior mutability.</p>
+<p><strong>8.</strong> <code>Option&lt;Box&lt;u8&gt;&gt;</code> = <strong>8 bytes</strong>; <code>std::optional&lt;unique_ptr&lt;uint8_t&gt;&gt;</code> = <strong>16 bytes</strong> (8-byte pointer + 1-byte <code>has_value</code> flag, padded). Rust's niche stores <code>None</code> in the bit pattern a non-null pointer can never take — documented for <code>Option&lt;Box&lt;T&gt;&gt;</code> — while C++'s <code>optional</code> is a tagged struct (ch06) and <code>unique_ptr</code> offers it no niche. <code>Rc&lt;String&gt;</code> vs <code>shared_ptr&lt;string&gt;</code>: the layout idea is near-identical — strong and weak counts <strong>inline with the value in one allocation</strong> (Rust: 8 + 8 header + 24 payload) — but the costs differ. <code>Rc::clone</code> is a plain integer increment (<code>Rc</code> is <code>!Send</code>/<code>!Sync</code>, single-threaded), while <code>shared_ptr</code>'s counts are always atomic: single-threaded C++ pays the cache-line synchronization Rust lets you avoid, and cross-thread Rust demands <code>Arc</code> with the same atomic cost. Who inserts the bookkeeping: in Rust <em>you</em> write every <code>Rc::clone</code>/drop; in C++ <em>you</em> route assignments through <code>shared_ptr</code>'s copy machinery; in Swift (ch16) the <em>compiler</em> inserts retain/release at every alias point. Same data structure, three answers: Rust visible and optional, C++ visible and semi-implicit, Swift invisible and mandatory.</p>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch09.html"><span class="cn-label">previous</span><span class="cn-title">Ch 09</span></a>
+<a class="next" href="ch11.html"><span class="cn-label">next</span><span class="cn-title">Ch 11</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/10-rust.md">chapters/10-rust.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

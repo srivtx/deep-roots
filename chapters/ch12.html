@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 12 — Java: the generational heap of the JVM — deep-roots</title>
+<meta name="description" content="Chapter 12 of the memory-models module: Chapter 12 — Java: the generational heap of the JVM">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 12 — Java: the generational heap of the JVM — deep-roots">
+<meta property="og:description" content="Chapter 12 of the memory-models module: Chapter 12 — Java: the generational heap of the JVM">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 12 — Java: the generational heap of the JVM — deep-roots">
+<meta name="twitter:description" content="Chapter 12 of the memory-models module: Chapter 12 — Java: the generational heap of the JVM">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part II · the languages</div>
+<h1 class="post-title">Chapter 12 — Java: the generational heap of the JVM</h1>
+<div class="post-meta">chapter 12 &middot; ~15 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Java's answer to "who frees memory?" is "nobody — reachability decides." Every thread owns a private stack of frames (locals + operand stack — chapter 04's frame, different ISA); all threads share one heap where allocation is a pointer bump in a thread-private slice of eden: ~10 ns per object, cheaper than <code>malloc</code> (chapter 05). Reclamation is tracing GC (chapter 11 deepened here) on one bet: <em>most objects die young</em> — the heap splits by age (eden + two survivors 8:1:1, then old gen), the young are evacuated while a 4-bit header age counts to tenure at 15, and old gen belongs to collectors from Serial to ZGC on the pause/throughput/footprint axis. Numbers: HotSpot, OpenJDK 17/21, 64-bit, compressed oops on, unless stated.</blockquote>
+<h2 id="1-the-frame-machine-one-shared-heap-one-stack-per-thread">1. The frame machine: one shared heap, one stack per thread</h2>
+<p>Java's four answers: a <em>value</em> is a primitive or a reference, never an object; <em>ownership</em> is undefined (no <code>free</code>, no <code>delete</code>); <em>freeing</em> is the collector's job once unreachable; <em>safety</em> is memory + type safety, <code>null</code> the one hole.</p>
+<p>The JVM spec describes one heap per JVM and <strong>one stack per thread</strong>. Each frame has a fixed shape, computed at class-file creation time:</p>
+<ul>
+<li>a <strong>local variable table</strong> — slot 0 is <code>this</code> in instance methods, then parameters, then locals; <code>long</code>/<code>double</code> take two slots;</li>
+<li>an <strong>operand stack</strong> — the expression workspace; <code>max_stack</code> is fixed at compile time;</li>
+<li>a constant-pool pointer.</li>
+</ul>
+<p><code>javac</code> computes both sizes, so frames never grow. Default: <strong>1 MB</strong> on 64-bit Linux/Windows (<code>-Xss1m</code>; check <code>-XX:+PrintFlagsFinal -version | grep ThreadStackSize</code>). Exceed it and you get <code>StackOverflowError</code>, not a segfault — the guard-region fault becomes an exception.</p>
+<p>The bytecode is a <strong>stack machine</strong>; <code>javap -c</code> shows the frame machinery directly:</p>
+<pre><code class="language-java">// a method of class Frames
+static int area(int w, int h) {      // locals: [0]=w, [1]=h, [2]=product
+    int product = w * h;
+    return product + 1;
+}</code></pre>
+<pre><code class="language-text">$ javap -c Frames
+static int area(int, int);
+  Code:
+     0: iload_0        // push locals[0] (w)          stack: [w]
+     1: iload_1        // push locals[1] (h)          [w, h]
+     2: imul           // pop 2, push product         [w*h]
+     3: istore_2       // pop into locals[2]          []
+     4: iload_2        //                             [product]
+     5: iconst_1       //                             [product, 1]
+     6: iadd           //                             [product+1]
+     7: ireturn        // pop top = return value</code></pre>
+<p>Pushed arguments become the callee's locals[0]/[1]; the result returns on the caller's stack — chapter 04's convention, except <code>iload_0</code> packs operation <em>and</em> slot in one byte. Why stack-machine shaped when every real CPU is a register machine? <strong>Compactness</strong>: implicit operands ("top of stack") make common instructions 1 byte, which mattered when class files crossed modems. <strong>Verifiability</strong>: each instruction's stack effect is exactly known, so type-checking is one linear abstract interpretation — no dataflow analysis over registers. <strong>Portability</strong>: the spec names no registers; the tiered JIT (C1/C2) does register allocation per CPU, with profiles. <code>javap -c</code> shows the <em>pre-JIT</em> truth — the interpreter is only a bridge.</p>
+<h2 id="2-what-every-object-pays-the-12-byte-header-and-the-32-gb-cliff">2. What every object pays: the 12-byte header and the 32 GB cliff</h2>
+<p>Every heap object, arrays included, has the same header (64-bit HotSpot, compressed class pointers on — the default):</p>
+<pre><code class="language-text">offset  size  field
+     0     8   mark word       identity hash (31 bits) | GC age (4 bits) | lock bits (2)
+     8     4   klass pointer   compressed -&gt; class metadata in Metaspace
+    12     N   fields (HotSpot reorders: longs/doubles 8-aligned first, then ints,
+               shorts, bytes, references last)
+    ...   pad  total rounded up to a multiple of 8</code></pre>
+<p>The 8-byte <strong>mark word</strong> is a union — the object's administrative record (classic 64-bit split; biased locking removed in JDK 15, JEP 374):</p>
+<pre><code class="language-text">+------- 25 ------+------ 31 -----+--- 1 --+--- 4 --+--- 1 --+-- 2 --+
+| unused          | identity hash | unused | GC AGE | biased | lock  |
++-----------------+----------------+--------+--------+--------+-------+
+              lock: 01 unlocked | 00 thin | 10 inflated | 11 marked</code></pre>
+<p>The 4-bit <strong>GC age</strong> field is the pivot of section 4 — and why no object survives more than <strong>15</strong> minor collections before tenure: 4 bits count 0–15, so <code>MaxTenuringThreshold</code> defaults to and maxes at 15.</p>
+<p>The 4-byte <strong>compressed class pointer</strong> is half of the compressed-oops trick: with compressed oops (default when heap &lt; 32 GB), <em>references</em> are 32 bits too. Objects are 8-byte aligned, so the low 3 bits of every address are provably zero — drop them. Decode is a shift: <code>(narrow_oop &lt;&lt; 3) + heap_base</code>; 32 bits then address 2^32 x 8 = 2^35 = <strong>32 GB</strong>. Ask for 33 GB and HotSpot falls back to 8-byte references — the cliff. A 32 GB heap and a 31 GB heap are different <em>machines</em>: every reference costs 8 bytes in the first, 4 in the second. Reference-dense graphs (trees, maps, nested DTOs) shrink by tens of percent at 31 GB — <em>giving back 1 GB lets more live data fit</em>: "give back 1 GB, get several GB back." (<code>-XX:ObjectAlignmentInBytes=16</code> pushes it to 64 GB, paying 8-byte field alignment.)</p>
+<p>Field layout follows chapter 06's rules, largest-first. Worked example: <code>class Cell { long v; int i; Cell next; }</code> = 12-byte header, 4 bytes of padding (offset 12 is not 8-aligned and the <code>long</code> must be), <code>v</code> at 16–24, <code>i</code> at 24–28, 4-byte reference <code>next</code> at 28–32 — <strong>32 bytes, only 16 payload</strong>. An <code>ArrayList&lt;Integer&gt;</code> pays a 4-byte reference plus a 16-byte <code>Integer</code> per element — 20 bytes where an <code>int[]</code> uses 4: chapter 06's boxing warning, with header teeth.</p>
+<h2 id="3-ten-nanosecond-allocation-the-eden-and-the-tlab">3. Ten-nanosecond allocation: the eden and the TLAB</h2>
+<p>Chapter 05 priced <code>malloc</code> at tens of ns: free-list search, coalescing, thread agreement. Java's <code>new</code> is ~<strong>10 ns</strong> — about the cost of zeroing the memory. Allocation happens in a <strong>TLAB (thread-local allocation buffer)</strong>: each thread privately owns a few hundred KB of eden (adaptive) and bumps a pointer — <code>object = tlab.top; tlab.top += size;</code> — then zeroes the object and writes its header.</p>
+<p>Three <code>malloc</code> costs vanish: no free-list search (fresh contiguous space), no synchronization (thread-private), no fragmentation bookkeeping (freed memory is abandoned, never reused). Chapter 05's bump allocator, viable because <em>reclamation is batch</em>. An exhausted TLAB triggers a <strong>TLAB refill</strong> — a new chunk of eden, one sync per few hundred KB, not per object; oversized objects allocate from eden with a global CAS. When <em>eden</em> runs out, nothing can bump — exactly a minor-GC trigger.</p>
+<h2 id="4-the-generational-bet-die-young-get-copied">4. The generational bet: die young, get copied</h2>
+<p>Derive it from program structure. Locals, iterators, boxed temporaries, request-scoped DTOs: allocated on scope entry, dead at scope exit. Long-lived data is the opposite pole: caches, pools, singletons, config trees — born at startup, alive forever. Real programs are bimodal: a huge mass of short-lived allocations over a small stable core. That is the <strong>weak generational hypothesis</strong>. The design falls out:</p>
+<ol>
+<li>A region where <em>everything is young</em> is cheap to collect only if cost scales with <em>live</em> data, not garbage: mark-sweep (chapter 11's Go) walks the garbage too; a <strong>copying collector</strong> copies survivors and abandons the rest.</li>
+<li>Copying needs empty space and compacts for free (survivors end up dense — chapter 05's fragmentation dissolved). So young gen = <strong>eden + two survivors</strong>, default ratio <strong>8:1:1</strong> (<code>SurvivorRatio=8</code>; young is 1/3 of the heap with <code>NewRatio=2</code> on Serial/Parallel; G1 sizes young dynamically, starting ~5%).</li>
+</ol>
+<pre><code class="language-text">     |&lt;--------- young gen (default ~1/3 of heap) ---------&gt;|
+     +--------------------------------+--------+--------+---------------+
+     |             EDEN               |   S0   |   S1   |    OLD GEN    |
+     |          8/10 of young         |  1/10  |  1/10  |   ~2/3 heap   |
+     +--------------------------------+--------+--------+---------------+
+     new objects die here     S0/S1 swap from/to each minor GC; survivors age++
+     minor GC: stop-the-world copy of live eden+from -&gt; to; tenure at age &gt; 15
+     or survivor overflow</code></pre>
+<ol>
+<li>Each minor GC copies survivors into the other survivor space — <strong>Cheney's 1970 algorithm</strong>: scan to-space from the front, copy not-yet-copied referents, forward the pointers (breadth-first evacuation) — and increments the mark word's 4-bit age, tenuring at 15 or survivor overflow. Afterwards eden and old <code>from</code> are pure garbage, reused wholesale: cost tracks the few percent that lived, not the MB that died.</li>
+<li>Objects too big for eden (or ≥ 50% of a G1 region: regions are 1–32 MB, so ≥ 1 MB qualifies on an 8 GB heap) skip young, going straight to old — G1 calls them <em>humongous</em>. Big temp arrays are old-gen pressure in disguise.</li>
+</ol>
+<p>Two survivors, not one, so evacuation always has an empty contiguous target — a shape V8 (ch 15) and the CLR (ch 13) reuse.</p>
+<h2 id="5-the-needles-and-the-old-folks-card-tables-and-the-collector-tour">5. The needles and the old folks: card tables and the collector tour</h2>
+<p>A minor GC must find every pointer into young gen. Roots (thread stacks) are cheap; pointers <em>from old gen into eden</em> are the problem — scanning gigabytes of old gen would erase the point of "minor." Fix: make stores leave notes. Every reference assignment runs a <strong>write barrier</strong>; the classic encoding is the <strong>card table</strong> — old gen in 512-byte cards, one side-table byte per card, marked <strong>dirty</strong> when a young pointer is stored into an old object:</p>
+<pre><code class="language-text">  old gen, 512-byte cards           card table (1 byte/card = 1/512 of heap)
+  +---------------+----+-------------+       +---+---+---+
+  | card 0        |  1 | card 2      |       | 0 | 1 | 0 |  1 = dirty: "in this
+  +---------------+----+-------------+       +---+---+---+     512 B lives a young ptr"
+        node.child = freshObject;      write barrier flips the byte</code></pre>
+<p>Minor GC scans roots + dirty cards only; the barrier costs a few instructions per reference store — the price of cheap minors. G1 collects <em>regions</em>, not generations, so each region keeps a <strong>remembered set</strong> of the cards elsewhere pointing into it, refined by background threads.</p>
+<p>The old generation is the collector <em>tour</em>, one stop per pause/throughput/footprint tradeoff:</p>
+<ul>
+<li><strong>Serial</strong> (<code>-XX:+UseSerialGC</code>): single-threaded mark-sweep-compact, stop-the-world. Smallest footprint, pauses scale with heap — containers, tiny heaps.</li>
+<li><strong>Parallel</strong>: same phases, multi-threaded — max throughput, 0.1–10 s pauses. Default through JDK 8.</li>
+<li><strong>CMS</strong>: concurrent mark-and-sweep, brief initial-mark/remark pauses, never compacted — fragmenting into "concurrent mode failure." Deprecated JDK 9, removed 14 (JEP 363).</li>
+<li><strong>G1</strong> — default since JDK 9: heap becomes ~2048 equal regions (1–32 MB); young/old are <em>roles</em> of regions. Concurrent marking with <strong>SATB</strong> (snapshot-at-the-beginning: the write barrier also logs the <em>old</em> value of an overwritten reference, so the marker sees the graph as it was when marking began); then "mixed" GCs evacuate the most reclaimable regions. Pause target <code>-XX:MaxGCPauseMillis</code>, default 200 ms.</li>
+<li><strong>ZGC</strong> (JDK 11 experimental, production 15, generational 21) and <strong>Shenandoah</strong> (JDK 12, production 15): concurrent <em>compaction</em> — the last stop-the-world holdout. Moving objects while threads hold pointers is the hard part: ZGC uses <strong>colored pointers</strong> (4 stolen bits atop 64-bit addresses: mark0/mark1/remapped) plus <strong>load barriers</strong> on every reference dereference, fixing stale references on the fly; Shenandoah originally added a <strong>Brooks forwarding pointer</strong> — an extra 8-byte header word pointing at the object's current location — now load-reference barriers. Both give sub-millisecond pauses independent of heap size (ZGC: 16 TB), paid in a few percent throughput (barriers on every load) and up to ~2x transient footprint ("floating garbage" outlives a cycle).</li>
+</ul>
+<p>The axis in one line: Serial/Parallel buy throughput and footprint with long pauses; G1 bounded pauses with overhead; ZGC/Shenandoah pause immunity with throughput and memory.</p>
+<h2 id="6-escape-hatches-references-escape-analysis-memory-outside-the-heap">6. Escape hatches: references, escape analysis, memory outside the heap</h2>
+<p><strong>Reference objects</strong> grade reachability — you <em>influence</em> the collector rather than command it. <code>SoftReference</code> is cleared before <code>OutOfMemoryError</code> (roughly while free-heap-MB x 1000 ms survives — <code>SoftRefLRUPolicyMSPerMB</code>); <code>WeakReference</code> clears as soon as the referent is otherwise unreachable; <code>PhantomReference</code> is enqueued <em>after</em> finalization and its <code>get()</code> always returns <code>null</code> — you never touch the corpse, only learn of the death, via a <code>ReferenceQueue</code>:</p>
+<pre><code class="language-java">// WeakHashMap idiom in miniature: dead keys report themselves
+ReferenceQueue&lt;BigGraphic&gt; rq = new ReferenceQueue&lt;&gt;();
+Map&lt;Reference&lt;BigGraphic&gt;, Sprite&gt; cache = new HashMap&lt;&gt;();
+// keys don't keep graphics alive; GC enqueues dead references:
+Reference&lt;? extends BigGraphic&gt; dead;
+while ((dead = rq.poll()) != null) cache.remove(dead);   // drop the orphaned sprite</code></pre>
+<p><code>finalize()</code> could keep an object alive anyway — the <strong>resurrection trick</strong>: storing <code>this</code> into a static field inside <code>finalize()</code> saves it from the very collection reclaiming it (it must die a <em>second</em> time). Resurrection, unbounded delay, and an extra GC cycle per dying object are why finalization was deprecated for removal (JEP 421, JDK 18) in favor of <strong><code>java.lang.ref.Cleaner</code></strong> — phantom-reference machinery for registering off-heap cleanup actions.</p>
+<p><strong>Escape analysis</strong> is the JIT quietly deleting allocations. Per compiled hot method, C2 asks: does this allocation escape — stored to the heap, passed to an uninlined call, crossing threads? If not, <strong>scalar replacement</strong> dissolves it into registers and stack slots — "objects on the stack" as a <em>runtime</em> optimization — and <code>synchronized</code> on it is deleted outright (<strong>lock elision</strong>). Chapter 11's Go escape analysis moved from compile time to JIT time: Java can be optimistic — a wrong guess deoptimizes to the heap; Go's compiler must be statically right, so it stays conservative.</p>
+<p><strong>Memory outside the heap</strong> lives in two places. <strong>Metaspace</strong> holds class metadata — klass structures, method bytecode, constant pools — in native memory, replacing PermGen, the fixed-size region infamous for <code>OutOfMemoryError: PermGen space</code> after one redeploy too many (removed JDK 8, JEP 122). It grows dynamically, bounded by <code>MaxMetaspaceSize</code> (default <em>unbounded</em> — it can eat the process), with klass structures in a 1 GB compressed class space indexed by the 4-byte header pointer. <strong>Direct <code>ByteBuffer</code>s</strong> hold native memory (<code>allocateDirect</code>), freed when the buffer dies <em>and</em> a Cleaner notices — which requires a GC to run. Four failure signatures:</p>
+<ul>
+<li><code>OutOfMemoryError: Java heap space</code> — live set + transient &gt; <code>-Xmx</code>; diff <code>jmap -histo:live</code> runs to find the growing class.</li>
+<li><code>OutOfMemoryError: GC overhead limit exceeded</code> — &gt; 98% time in GC recovering &lt; 2% heap — the OOM of <em>thrashing</em>, not of size.</li>
+<li><code>OutOfMemoryError: Metaspace</code> — classloader leak: redeploys, dynamic proxies, generated classes pinned by one live instance.</li>
+<li><code>OutOfMemoryError: Direct buffer memory</code> — direct buffers exceeded <code>-XX:MaxDirectMemorySize</code> (default = <code>Xmx</code>) while the heap looks healthy.</li>
+</ul>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>System.gc()</code> exists — and RMI calls it hourly.</strong> <code>-XX:+DisableExplicitGC</code> no-ops explicit calls, but direct-<code>ByteBuffer</code> Cleaners <em>depend</em> on a GC noticing their death — the insider move is <code>-XX:+ExplicitGCInvokesConcurrent</code> (still collects, but concurrently).</li>
+<li><strong>The 32 GB cliff is a cliff, not a slope.</strong> One GB of <code>-Xmx</code> decides 4- vs 8-byte references: a 31 GB heap can out-hold a 32 GB one. Measure both before "upgrading."</li>
+<li><strong><code>-XX:+AlwaysPreTouch</code></strong> faults every heap page at startup instead of lazily — seconds of startup for flat first-minute latency; standard in containers (<code>-Xms == -Xmx</code>).</li>
+<li><strong><code>System.arraycopy</code> is an intrinsic</strong> — it compiles to no Java at all; the JIT substitutes a hand-vectorized <code>memcpy</code>-style primitive, so element-wise copy loops never win. Same for <code>String.hashCode</code>, <code>Math.sin</code>, <code>Integer.bitCount</code>.</li>
+<li><strong>Allocation rate, not heap size, drives GC.</strong> Minor GCs per second = allocation rate ÷ eden size: a 2 GB/s service on a 400 MB eden gets ~5 young GCs/s; growing young gen buys <em>frequency</em>, not cheaper GCs.</li>
+<li><strong><code>-XX:+UseStringDeduplication</code></strong> (G1): duplicate <code>String</code> backing <code>byte[]</code>s share one array — free memory when country codes, config keys, log labels repeat millions of times.</li>
+<li><strong><code>Integer.valueOf</code> caches −128..127</strong> (<code>IntegerCache</code>, tunable <code>-XX:AutoBoxCachemax</code>): <code>==</code> on boxed values works small, fails at 200 — the bug that survives every review.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>OpenJDK 17+:</p>
+<pre><code class="language-bash"># 1. GC log: unified logging, 256 MB heap for readable numbers
+$ java -Xms256m -Xmx256m -Xlog:gc,gc+heap Alloc.java
+[0.013s][info][gc,heap] Heap region size: 1M (256 regions)      &lt;- G1, 2048-region target
+[0.128s][info][gc] GC(0) Pause Young (Normal) (G1 Evacuation Pause)
+[0.128s][info][gc] GC(0)   12M-&gt;3M(256M) 2.1ms                   &lt;- before-&gt;after(total) pause</code></pre>
+<p>Read <code>12M-&gt;3M(256M) 2.1ms</code>: live set, committed heap, pause. Healthy young pauses are single-digit ms; the capacity signal is <em>frequency</em> — allocation rate ÷ eden size. <code>-Xlog:gc*</code> is the kitchen sink; <code>-Xlog:gc+tlab</code> adds TLAB refill stats.</p>
+<pre><code class="language-bash"># 2. Object layout, proven: JOL 0.16 on JDK 17 — a 3-line main:
+#    println(ClassLayout.parseInstance(new Object()).toPrintable())
+java.lang.Object object internals:
+OFF  SZ   TYPE DESCRIPTION               VALUE
+  0   4        (object header: mark)     0x00000001 (age: 0)    # the GC age bits live here
+  8   4        (object header: class)    0x0000c210              # compressed class pointer
+ 12   4        (object alignment gap)                              # pad to 8
+Instance size: 16 bytes</code></pre>
+<p>A bare <code>Object</code> is 16 bytes — 12 header + 4 alignment; print <code>Cell</code> and check its 32.</p>
+<pre><code class="language-bash"># 3. Who eats the heap:
+$ jmap -histo:live $PID | head -5
+ num     #instances         #bytes  class name (module)
+   1:        4011221       96300240  [B                         # byte[]: String/ArrayList payloads
+   2:        1202311       28864632  java.lang.String</code></pre>
+<p><code>[B</code> on top is normal — every <code>String</code>/<code>ArrayList</code> points at one. Run it twice, minutes apart; the class whose count grows is the leak — for Metaspace OOMs, look for custom classloader names.</p>
+<pre><code class="language-java">// 4. Allocation cost — and EA deleting it. Alloc.java
+public class Alloc {
+    static final class Point { final int x, y; Point(int x, int y) { this.x = x; this.y = y; } }
+    static Point[] keep = new Point[1024];
+
+    public static void main(String[] a) {
+        long n = 100_000_000, t0 = System.nanoTime(), sink = 0;
+        for (long i = 0; i &lt; n; i++) {
+            Point p = new Point((int) i, (int) (i &gt;&gt; 32));   // dies immediately...
+            if ((i &amp; 1023) == 0) keep[(int) (i &amp; 1023)] = p; // except every 1024th:
+            sink += p.x;                                     // an escape defeats scalar replacement
+        }
+        System.out.printf("%.1f ns/alloc (sink=%d)%n",
+                          (System.nanoTime() - t0) / (double) n, sink);
+    }
+}</code></pre>
+<p>With the periodic escape, expect ~5–15 ns per allocation. Delete the <code>keep[...]</code> line: C2 scalar-replaces the object, the loop becomes register arithmetic, the timing reads ~0 ns — and the GC log goes silent. That silence <em>is</em> escape analysis.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Capacity planning is arithmetic:</strong> allocation rate ÷ eden size = minor-GC frequency; cost tracks survivors. Collector choice is an SLO decision: 200 ms (G1) vs sub-ms (ZGC/Shenandoah) vs max throughput (Parallel).</li>
+<li><strong>Diagnose OOMs by message, not <code>-Xmx</code>:</strong> four strings, four subsystems — heap leak (diff histograms), thrash (live set vs heap), classloader leak (Metaspace), off-heap leak (direct buffers).</li>
+<li><strong>"Java has no leaks" is false:</strong> leaks are <em>reference</em> leaks (static caches, listeners, <code>ThreadLocal</code> pools) — the collector is right, the graph is wrong.</li>
+<li><strong>Interview-grade derivation:</strong> "why is Java allocation ~10 ns?" — derivable from chapters 04–06 in one breath: TLAB bump, no locks, no free list, dead memory abandoned.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Ch 04</strong> — the JVM frame is chapter 04's locals+operand design, different ISA.</li>
+<li><strong>Ch 05</strong> — TLAB is the bump allocator; the copying collector is the batch "free".</li>
+<li><strong>Ch 06</strong> — header, reordering, padding: same rules with managed headers; JOL extends the arithmetic.</li>
+<li><strong>Ch 07</strong> — stack-machine bytecode vs register ISAs; the JIT is the bridge.</li>
+<li><strong>Ch 08–10</strong> — ownership inverts: no owner, reachability decides, no deterministic destruction; <code>Cleaner</code> is best-effort.</li>
+<li><strong>Ch 11</strong> — tracing GC without generations or moving; this chapter is what adding both buys (cheap young GC, compaction) and costs (write barriers, pauses).</li>
+<li><strong>Ch 13, 15, 17</strong> — CLR and V8 run the same 8:1:1-shaped bet; COBOL is the opposite pole — fixed records, nothing to collect.</li>
+<li><strong>Ch 22 + Modules 02/04/05 (queued)</strong> — ART under a hard cap; allocation-storm DoS and class-file reading both build on this chapter.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>The JVM spec defines a stack machine; every real CPU is a register machine. Give two derived reasons the spec is stack-shaped, and who does the register assignment.</li>
+</ol>
+<ol>
+<li>Predict the instance size of <code>class Cell { long v; int i; Cell next; }</code> on 64-bit HotSpot with compressed oops; account for every byte.</li>
+</ol>
+<ol>
+<li>Predict total heap bytes of <code>new byte[5]</code> on that JVM, header included.</li>
+</ol>
+<ol>
+<li>This passed every test: <code>Integer a = 100, b = 100, c = 200, d = 200;</code> — what does <code>(a == b) + " " + (c == d)</code> print, and why?</li>
+</ol>
+<ol>
+<li>A service sets <code>-XX:+DisableExplicitGC</code> to silence a library's <code>System.gc()</code> calls and uses NIO direct <code>ByteBuffer</code>s heavily. RSS climbs for hours, <code>jmap -histo:live</code> looks clean, and it dies with <code>OutOfMemoryError: Direct buffer memory</code>. Explain the mechanism; name the flag that fixes both problems.</li>
+</ol>
+<ol>
+<li>A 1 GB-heap app crawls at 100% GC CPU for minutes, then throws <code>OutOfMemoryError: GC overhead limit exceeded</code>. The dump shows ~980 MB live — a static map "cache-primed" with the whole user table. Why minutes of thrash, not a fast failure?</li>
+</ol>
+<ol>
+<li>Cross-chapter (ch 05, ch 11): name two structural reasons a HotSpot <code>new</code> costs ~10 ns where glibc <code>malloc</code> costs tens of ns — and what the JVM pays in exchange.</li>
+</ol>
+<ol>
+<li>Cross-chapter arithmetic: young gen 512 MB, <code>SurvivorRatio=8</code>, allocation rate 2 GB/s. Compute eden size and minor-GC frequency, and explain why survivors 10x smaller than eden do not overflow.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Compactness and verifiability.</strong> (a) Implicit operands ("top of stack") let common instructions be 1 byte, which mattered for downloaded class files. (b) Each instruction's stack effect is exactly known, so the verifier type-checks a method by one linear abstract interpretation of the operand stack — no dataflow analysis. Register assignment is the tiered JIT's (C1/C2) job, per CPU, with profiles; the spec stays hardware-neutral.</li>
+</ol>
+<ol>
+<li><strong>32 bytes.</strong> Header = 8 (mark) + 4 (klass pointer) = 12. Fields go largest-first: the <code>long</code> needs 8-byte alignment and offset 12 is not 8-aligned, so 4 bytes of padding follow the header; <code>v</code> at 16–24, <code>i</code> at 24–28, the compressed 4-byte <code>next</code> at 28–32 — already aligned. 12 + 4 + 8 + 4 + 4 = 32, only 16 payload.</li>
+</ol>
+<ol>
+<li><strong>24 bytes.</strong> Array header = 8 mark + 4 class + 4 length = 16, plus 5 payload = 21, rounded to 8-alignment = 24. A <code>byte[1]</code> also costs 24 — the header dominates small arrays.</li>
+</ol>
+<ol>
+<li><strong><code>true false</code>.</strong> Autoboxing routes through <code>Integer.valueOf</code>, which caches −128..127, so <code>a</code> and <code>b</code> are the <em>same object</em> — <code>==</code> (reference comparison) is true. 200 is outside the cache: two distinct objects, false. Never <code>==</code> boxed types — use <code>equals</code>; know the range (<code>IntegerCache</code>, tunable <code>-XX:AutoBoxCachemax</code>), which makes the bug intermittent by value.</li>
+</ol>
+<ol>
+<li><strong>Direct buffers are freed by a Cleaner, and a Cleaner fires only when a GC notices the buffer is unreachable.</strong> With a quiet heap, no GC runs, so dead buffers and their native memory accumulate; <code>DisableExplicitGC</code> also killed the library's <code>System.gc()</code> — the cleanup trigger. Fix: <code>-XX:+ExplicitGCInvokesConcurrent</code> — <code>System.gc()</code> still triggers collection (Cleaners get serviced), but concurrently. Longer term: pool or free buffers explicitly.</li>
+</ol>
+<ol>
+<li><strong>The 98/2 rule.</strong> "GC overhead limit exceeded" fires when &gt; 98% of time is in GC recovering &lt; 2% of the heap (<code>GCTimeLimit</code>/<code>GCHeapFreeLimit</code>) — a thrashing detector. With ~980 MB live in 1 GB, every full GC walks a nearly all-live heap, frees almost nothing, and re-collects immediately; the JVM spends minutes "trying" to rule out a transient spike. The fix is not <code>-Xmx</code>: the map is the leak — bound the cache and the thrash vanishes.</li>
+</ol>
+<ol>
+<li><strong>(a) The TLAB is thread-private: no lock, no CAS, no contention — glibc needs per-arena locks; Go needs per-P caches for the same reason. (b) The bump pointer allocates from fresh contiguous eden: no free list, no coalescing, no best-fit, no fragmentation — dead memory is abandoned, not reused.</strong> The JVM pays later, in batch: pauses proportional to survivors, plus standing footprint (eden sizing; ~2x live for concurrent collectors). <code>malloc</code> spreads cost evenly and never stops threads; Go sits between — same idea, non-moving.</li>
+</ol>
+<ol>
+<li><strong>Eden = 512 x 8/10 ≈ 410 MB; each survivor ≈ 51 MB.</strong> Frequency = 2 GB/s ÷ 410 MB ≈ <strong>5 minor GCs/s</strong>. Survivors can be 10x smaller because copying cost is proportional to <em>live</em> data: only objects alive at GC time need a destination; a healthy survival rate is a few percent of eden (~10–40 MB), not 410 MB. If occupancy exceeds the space routinely, objects overflow into old gen prematurely — survival rate or young sizing is wrong. 8:1:1 is that bet, defaulted.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch11.html"><span class="cn-label">previous</span><span class="cn-title">Ch 11</span></a>
+<a class="next" href="ch13.html"><span class="cn-label">next</span><span class="cn-title">Ch 13</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/12-java-jvm.md">chapters/12-java-jvm.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

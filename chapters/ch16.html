@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 16 — Swift and Objective-C: the compiler counts (ARC) — deep-roots</title>
+<meta name="description" content="Chapter 16 of the memory-models module: Chapter 16 — Swift and Objective-C: the compiler counts (ARC)">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 16 — Swift and Objective-C: the compiler counts (ARC) — deep-roots">
+<meta property="og:description" content="Chapter 16 of the memory-models module: Chapter 16 — Swift and Objective-C: the compiler counts (ARC)">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 16 — Swift and Objective-C: the compiler counts (ARC) — deep-roots">
+<meta name="twitter:description" content="Chapter 16 of the memory-models module: Chapter 16 — Swift and Objective-C: the compiler counts (ARC)">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part II · the languages</div>
+<h1 class="post-title">Chapter 16 — Swift and Objective-C: the compiler counts (ARC)</h1>
+<div class="post-meta">chapter 16 &middot; ~24 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Swift and Objective-C manage the heap with <em>reference counting</em> — Python's mechanism (Chapter 14) — but the counting is done by the <strong>compiler at compile time</strong>, with C++'s zero-runtime-system philosophy (Chapter 09): every strong pointer copy gets an inserted <code>retain</code>, every drop an inserted <code>release</code>, exactly like RAII's scope-exit destructor calls. No collector process, no pauses, and objects die at a <em>deterministic</em> moment: the last release. The price: cycles leak unless broken by hand with <code>weak</code>, and every pointer bump costs instructions. Around that core sits forty years of Apple engineering — an 8-byte header whose spare bits hide the refcount, pools that defer death one runloop turn, side tables that zero weak references, values that copy-on-write — and a kernel that kills your process, with no exception to catch, when you exceed its memory budget.</blockquote>
+<h2 id="the-compiler-counts-arc-between-python-and-c">The compiler counts: ARC between Python and C++</h2>
+<p>Chapter 14 taught the mechanism: every object carries a count, references increment it, drops decrement it, zero means <em>deallocate now</em>. Chapter 09 taught the philosophy: if the compiler sees every construction and destruction site, it can emit the cleanup calls itself — that is why a C++ destructor call costs nothing at run time. ARC (Automatic Reference Counting, Clang 3.0 / Xcode 4.2, 2011) is the intersection:</p>
+<ul>
+<li><strong>Python (Chapter 14):</strong> the <em>interpreter</em> executes <code>Py_INCREF</code>/<code>Py_DECREF</code> at run time, plus a cycle detector.</li>
+<li><strong>C++ (Chapter 09):</strong> <em>you</em> typed the counting — <code>shared_ptr</code>'s copy constructor is library code doing the atomic increment.</li>
+<li><strong>ARC:</strong> the <em>compiler</em> proves where references begin and end and inserts the retain/release pairs into the machine code before the program runs. Nobody types them; no runtime hunts garbage.</li>
+</ul>
+<p>The whole system in one example, with the inserted calls written as comments:</p>
+<pre><code class="language-swift">final class Room {
+    var name: String
+    init(name: String) { self.name = name }
+    deinit { print("Room \(name) freed") }
+}
+
+func audit() {
+    let kitchen = Room(name: "kitchen")  // strong count = 1 (you own it)
+    let pantry  = kitchen                // INSERTED: objc_retain / swift_retain -&gt; count 2
+    print(pantry.name)                   // last use of pantry
+}                                        // INSERTED: release x2 -&gt; deinit runs HERE,
+                                         // on this thread, at this instruction</code></pre>
+<p>One nuance against C++: a destructor runs at the closing brace (Chapter 09); Swift's optimizer may release the moment a variable's <em>last use</em> is over, often earlier. The guarantee is "after last use, no later than scope exit" — the exact point is the compiler's choice (quiz question 4).</p>
+<p><strong>What ARC buys.</strong> Nothing corresponds to Chapter 12's GC threads or Chapter 15's scavenger — no pauses, no write barriers, no allocation-rate hitches. Destruction is deterministic: <code>deinit</code> runs at the last release, on whatever thread performed it, so file handles and camera sessions close at a moment you can observe with a <code>print</code> — versus Chapter 12's finalizers, which run "eventually, maybe never."</p>
+<p><strong>What ARC costs.</strong> First, <strong>cycles leak</strong> — no cycle detector exists (quiz question 8), so a parent and child referencing each other strongly survive until the process dies; the escape hatch is <code>weak</code>, and unbroken cycles are the most common bug class in iOS code (section 4). Second, <strong>every pointer bump costs instructions</strong>: a strong copy is an atomic increment — one <code>ldadda</code> on arm64, a few cycles hot, hundreds when two cores ping-pong the refcount word (Chapter 02's false sharing, live). A tracing collector pays nothing per pointer and everything in pauses; ARC pays always-but-tiny. You only choose <em>when</em> you pay.</p>
+<p>History in three sentences: Objective-C had manual retain/release from the NeXT era; Apple tried an optional garbage collector on the Mac (macOS 10.5, 2007) and never shipped it on iOS; ARC landed in 2011 and the collector was deprecated. Swift (2014) was born with ARC and never had another mode.</p>
+<h2 id="one-word-of-header-the-objective-c-object-and-a-free-retain">One word of header: the Objective-C object, and a free retain</h2>
+<p>Every Objective-C class descends from <code>NSObject</code>, and every instance begins with the same 8 bytes on 64-bit: the <strong><code>isa</code> pointer</strong>, naming the object's class — Chapter 06's type word, one field instead of C++'s per-object vtable (method lookup is a runtime hash through the class). The word is nearly free real estate: an arm64 class pointer needs only ~33 bits, because user-space addresses stop at <code>0x1000000000</code>. Since the 64-bit iPhone 5s (iOS 7, 2013), the runtime packs the rest with live data — the <strong>non-pointer isa</strong>.</p>
+<pre><code class="language-text">The isa word — arm64, 64-bit, Apple objc4 (widely documented iOS layout;
+field WIDTHS are private and have shifted across runtime releases — the
+SHAPE is the lesson). 8 bytes total:
+
+ 63 62...............44 43 42 41......36 35.............3 2 1 0
++---+-------------------+---+---+---------+---------------+-+-+-+
+| T |  extra_rc (19 b)  | S | W | magic(6)| shiftcls (33) |C|A|N|
++---+-------------------+---+---+---------+---------------+-+-+-+
+  |   |                   |   |   |         |               | | |
+  |   |                   |   |   |         |               | | +-- N = 1: packed isa
+  |   |                   |   |   |         |               | +---- A: has associated objects
+  |   |                   |   |   |         |               +------ C: has a C++ destructor
+  |   |                   |   |   |         +---------------------- class pointer, &lt;&lt; 3
+  |   |                   |   |   |                 (mask 0x0000000ffffffff8)
+  |   |                   |   |   +---------------------------------- 6 debugger magic bits
+  |   |                   |   +-------------------------------------- W: weakly_referenced (side
+  |   |                   |          table holds weak slots for it)
+  |   |                   +------------------------------------------ S: refcount spilled to
+  |   |                                                    the side table
+  |   +-------------------------------------------------------------- strong count MINUS 1 (19 bits,
+  |                                                                  524,287 max): retain is ONE
+  |                                                                  atomic add on THIS word
+  +------------------------------------------------------------------ tagged-pointer flag (Chapter 06
+                                                                     tag bits, 1-bit form; tagged
+                                                                     objects are not heap objects)</code></pre>
+<p>Three consequences:</p>
+<ul>
+<li><strong>The refcount lives in the isa.</strong> <code>retain</code> is a single atomic add to a word the object already owns — no second counter, no lookup, no lock; only 19-bit overflow spills to the side table (bit S). Hitting zero triggers <code>dealloc</code>.</li>
+<li><strong>The header is 8 bytes; the minimum instance is 16.</strong> Apple's malloc hands out 16-byte-aligned chunks (Chapter 05's quantum rules), so a zero-ivar <code>NSObject</code> subclass is 16 bytes: 8 live isa + 8 alignment filler.</li>
+<li><strong>Pure Swift classes spend a different 16.</strong> A Swift instance starts with a 16-byte <code>HeapObject</code> header (Swift 5.9, 64-bit): an 8-byte <em>metadata pointer</em> (it plays the isa and doubles as the ObjC isa for interop) plus an 8-byte word packing a 32-bit strong count, a 32-bit unowned count, and flags. Weak references always live outside the object (section 4). Both worlds bottom out at 16 bytes — composed differently: ObjC crams the count <em>into</em> the class word; Swift refuses and pays a second word.</li>
+</ul>
+<p>Before 2011, all of it was manual — <strong>MRC</strong>. The rules were learnable; the discipline was brutal. The canonical trap explains the next section:</p>
+<pre><code class="language-objc">// MRC, pre-2011: returning an object has two wrong answers and one right one
+- (NSString *)badCrash {                     // wrong answer #1: crash
+    NSString *s = [[NSString alloc] initWithFormat:@"%@", self.name];
+    [s release];            // count hits 0: the object dies RIGHT HERE
+    return s;               // caller gets a dangling pointer (Chapter 21 fodder)
+}
+// wrong answer #2: return s with no release at all — the caller forgets
+// the +1, and it leaks on every call
+- (NSString *)right {
+    NSString *s = [[NSString alloc] initWithFormat:@"%@", self.name];
+    return [s autorelease]; // release DEFERRED, not skipped: the pool balances
+                            // the +1 one turn later. Caller: use, never release.
+}</code></pre>
+<p>MRC ran on naming conventions made law: methods beginning <code>alloc</code>, <code>new</code>, <code>copy</code>, <code>mutableCopy</code> return a +1 you must release; everything else returns +0 you must not. ARC turned the convention into compiler-enforced rules — it reads selector families and emits the matching calls, and still honors those families at interop boundaries, which is why Cocoa names are load-bearing.</p>
+<h2 id="autorelease-dying-exactly-one-runloop-turn-later">Autorelease: dying exactly one runloop turn later</h2>
+<p><code>autorelease</code> says: "release this object later, on my behalf." It exists because of the return bind — a function returning an object cannot know whether the caller will keep it, and the caller cannot know whether it owns the result. The answer is a <strong>deferred release</strong>: hand the object to an <strong>autorelease pool</strong>, a queue drained at a well-defined future moment.</p>
+<p>The mechanism (objc4) is a page-structured stack — Chapter 04's stack rebuilt in the heap, one per thread:</p>
+<pre><code class="language-text">thread-local pool stack:
+
+  page (4,096 bytes)                page (4,096 bytes)
++------------------------------+  +------------------------------+
+| header: magic, thread id,    |  |  ~500 more slots ...         |
+|   parent/child page links    |&lt;-+------------------------------+
+| ~500 slots of (object ptr)   |  (doubly-linked pages; the "hot
+| [ POOL_BOUNDARY = nil ] &lt;---+   page" cached in TLS)
+| slot slot slot ...           |
++------------------------------+
+  push = objc_autoreleasePoolPush(): a nil boundary token lands in the page
+  pop  = objc_autoreleasePoolPop(token): send -release to every object
+         above the token, top-down; possibly freeing thousands in one sweep</code></pre>
+<p>Each page is 4,096 bytes with a ~56-byte header (magic, thread, page links) and roughly 500 object slots; overflow links another page.</p>
+<p><strong>Who calls pop on iOS: the runloop.</strong> The main thread wraps <em>every event</em> — each touch, timer fire, layout pass, network callback — in a push/pop pair, draining before the thread sleeps (<code>kCFRunLoopBeforeWaiting</code>). That is the "later" in autorelease: <strong>one runloop turn</strong>. Objects autoreleased during your event handler die together when the handler returns.</p>
+<p>Under ARC, <code>autorelease</code> has not gone away; it went into two hiding places:</p>
+<ol>
+<li><strong>Return values across the ObjC boundary.</strong> A callee returning a +0 object emits <code>objc_autoreleaseReturnValue</code>; the caller emits <code>objc_retainAutoreleasedReturnValue</code>. The pair calls each other's bluff through thread-local storage: the callee stashes its return address <em>instead of</em> autoreleasing; the caller checks TLS, recognizes the site, and skips the retain — the pool round trip collapses to two loads, which is why ARC returns are nearly free.</li>
+<li><strong>Loops that create many temporaries.</strong> One event handler allocating 100,000 autoreleased objects keeps them all alive until the <em>event ends</em> — RSS climbs in a line that on iOS ends at a Jetsam kill (section 6). Drain per iteration instead:</li>
+</ol>
+<pre><code class="language-objc">for (NSDictionary *row in rows) {      // 100,000 rows, ONE runloop event
+    @autoreleasepool {                 // push: boundary token
+        Template *t = [self.template copy];
+        NSAttributedString *s = [self render:row withTemplate:t];
+        [self emit:s];
+    }                                  // pop: releases t, s, and every
+}                                      // autoreleased byte of render:, NOW</code></pre>
+<p>Swift's spelling is <code>autoreleasepool { ... }</code> — same push/pop, worth reaching for in tight loops over ObjC-heavy APIs (image decoding, JSON, CoreData). Pure Swift loops of value types have nothing to drain: ARC releases at last use, immediately.</p>
+<h2 id="cycles-side-tables-and-capture-lists">Cycles, side tables, and capture lists</h2>
+<p>Refcounting's blind spot arrived in Chapter 14 (Python needed a whole <code>gc</code> module for it) and Chapter 09 (<code>shared_ptr</code> cycles leak until broken with <code>weak_ptr</code>). ARC has the same blind spot and <em>no detector</em>: you break cycles yourself with <code>weak</code> and <code>unowned</code> — and to know what those words cost, you need to know where weak references live.</p>
+<p><strong>Weak references are NOT a counter in the object.</strong> The design (ObjC runtime; Swift 5 has its own variant) is a <strong>side table</strong>: a fixed global array of 64 <code>SideTable</code> structures; each object's address hashes into exactly one. It owns the weak bookkeeping <em>outside</em> the object — which is exactly what makes zeroing possible:</p>
+<pre><code class="language-text">global: SideTables[64]  -- hash(object address) --&gt; one SideTable
+
++----------------------------------------------------------+
+| SideTable                                                |
+|   spinlock           (all weak zeroing under ONE lock)   |
+|   refcnts:  map&lt;obj, stored count&gt;     (overflow only)   |
+|   weak_table:                                           |
+|     map&lt;obj, weak_entry_t&gt;                              |
+|       weak_entry_t: 4 inline weak-pointer slots,         |
+|                     spilling to a malloc'd array         |
++----------------------------------------------------------+
+
+dealloc(obj), in order:
+  1. isa.W set?  lock the table -&gt; write nil into EVERY slot
+                 -&gt; free the entry                     &lt;- THE ZEROING
+  2. isa.S set?  drop the spilled refcount
+  3. isa.C/A?    run C++ dtor / release associations
+  4. free(obj)   &lt;- memory becomes reusable only here</code></pre>
+<p>Why this design:</p>
+<ul>
+<li><strong>Rust (Chapters 09/10)</strong> keeps the weak count <em>inside the <code>Rc</code> control block</em>, the same allocation as the object. One fewer lookup — but a surviving <code>Weak</code> <strong>pins the whole allocation</strong>: the object's bytes stay on the heap (Chapter 09's zombie object) until the last weak dies, because the count a weak must read lives in the block being pinned. Zeroing needs an outside writer, and there is no outside.</li>
+<li><strong>Objective-C/Swift</strong> move the slots outside. On dealloc, under the side table's spinlock, every slot is set to <code>nil</code> <strong>before step 4 frees the memory</strong> — no window exists in which a weak variable points to freed bytes. A weak <em>read</em> pairs the nil-check with a retain, so a reader racing dealloc either sees nil or wins the retain. The cost: a hash lookup and a lock at dealloc, plus a tombstone-sized entry while weak refs exist.</li>
+<li><strong>Python (Chapter 14)</strong> sits between: <code>weakref.ref()</code> zeroes its slot (the wrapper goes dead, callbacks fire) — but as an opt-in wrapper object, while a raw borrowed <code>PyObject*</code> in a C extension has no machinery at all and dangles freely. Apple made weak a <em>storage class any variable can have</em>, which is why the machinery had to be a runtime-level global table.</li>
+</ul>
+<p><strong><code>unowned</code> vs <code>weak</code> — crash vs optional.</strong> <code>weak var x: T?</code> is an optional: on target death the side table zeroes the slot, <code>x</code> reads <code>nil</code>, and you handle absence. <code>unowned let x: T</code> is non-optional and never zeroed: access after death is a <strong>guaranteed fatal error</strong> ("attempted to read an unowned reference but the object was already deallocated" — Swift 5.9 wording is close to that) — a checked crash, not a dangling read. <code>unowned</code> is cheaper (no side entry, no unwrapping) and correct only when its lifetime is <em>provably nested inside</em> the target's. Async callbacks violate that nesting constantly.</p>
+<p><strong>The lazy-destroyed-object story</strong> is how unowned bugs survive testing. A <code>dispatch_after</code> block fires two seconds after being armed; the test passes because the owner "hasn't deallocated yet" — nobody saw a crash. The owner's destruction is <em>lazy</em>: its last strong reference may sit in an autorelease pool that drains per runloop event, or on a queue that runs later. Then a release build — which schedules all of this differently — moves the dealloc across the two-second boundary, and the crash appears in the field. Destruction timing is deterministic, but <em>which moment</em> it lands on depends on pool drains and scheduling, and the two build configurations choose differently.</p>
+<p><strong>Captures: closures are the other half of every cycle.</strong> A closure that escapes its scope (stored, or kept by an API) cannot borrow the stack (Chapter 04's frames die), so the compiler moves each captured variable into a heap <strong>context object</strong> — a reference-counted box with one field per captured variable: V8's environment design from Chapter 15, statically laid out. Each field defaults to a <strong>strong</strong> reference. <code>[weak self]</code> and <code>[unowned self]</code> are capture lists: they change how <em>one field of that box</em> is stored.</p>
+<pre><code class="language-text">escaping closure { [weak self] in ... }
+
++------------------+     +------------------------------+
+| function pointer |     | context object (refcounted   |
+| context ptr ------+---&gt; | heap box — Chapter 15's      |
++------------------+     | environment, statically      |
+                         | known fields:                |
+                         |   [ weak self: Player? ]  ----+--&gt; side table slot
+                         |   [ other captured vars ]    |
+                         +------------------------------+</code></pre>
+<p>Now the leak every iOS app ships once:</p>
+<pre><code class="language-swift">final class ScoreBoard {
+    var score = 0
+    private var token: NSObjectProtocol?
+
+    func start() {
+        token = NotificationCenter.default.addObserver(
+            forName: .tick, object: nil, queue: nil
+        ) { _ in
+            self.score += 1        // the context box's field is a STRONG self
+        }
+    }
+    deinit { print("ScoreBoard freed") }   // never prints
+}</code></pre>
+<p>Walk the graph the Memory Graph debugger would draw:</p>
+<pre><code class="language-text">NotificationCenter (process-global, never deallocates)
+      | strong (until removeObserver)
+      v
+   token --strong--&gt; closure --strong--&gt; ScoreBoard --strong--&gt; token
+   CYCLE: closure -&gt; ScoreBoard -&gt; token -&gt; closure</code></pre>
+<p>The cruel part is the "fix" everyone writes first: "I'll remove the observer in <code>deinit</code>." <code>deinit</code> never runs — the cycle keeps the object alive, so the cleanup is unreachable. Order matters: <strong>break the cycle first, then clean up in <code>deinit</code>:</strong></p>
+<pre><code class="language-swift">token = NotificationCenter.default.addObserver(
+    forName: .tick, object: nil, queue: nil
+) { [weak self] _ in
+    guard let self = self else { return }  // weak: slot zeroed at ScoreBoard's death
+    self.score += 1
+}
+deinit {
+    if let token { NotificationCenter.default.removeObserver(token) }
+    // reachable NOW: weak broke closure -&gt; self, deinit CAN run; removing
+    // the token then releases center -&gt; token -&gt; closure in that order
+}</code></pre>
+<p>Same shape, other costumes: <code>Timer.scheduledTimer(withTimeInterval:repeats:) { self.tick() }</code> (runloop → timer → closure → self, until <code>invalidate()</code>), and delegates — which is why forty years of Cocoa convention declares every <code>delegate</code> property <code>weak</code>. A strong delegate is a cycle with a timescale of "forever."</p>
+<h2 id="value-semantics-memcpy-niches-and-copy-on-write">Value semantics: memcpy, niches, and copy-on-write</h2>
+<p>Classes are the refcounted world. Swift's structs and enums are Chapter 06's value layouts — and they change the economics completely.</p>
+<p><strong>A struct assignment is a memcpy</strong> — no refcount, no allocator, no identity; the bytes are duplicated. But the copy is <strong>shallow</strong>: if a field holds a reference, the memcpy duplicates the <em>pointer</em> and ARC inserts a retain for that field — two structs, one shared pointee (Chapter 06's "copy the pointer, not the pointee"):</p>
+<pre><code class="language-swift">struct Tag { var id: Int; var active: Bool }    // size 9, stride 16
+var a = Tag(id: 7, active: true)
+var b = a              // one 9-byte copy; no heap traffic
+b.active = false       // a.active is still true: separate storages
+
+struct ViewTag { var view: UIView; var z: Int } // view is a strong reference
+var t1 = ViewTag(view: v, z: 0)
+var t2 = t1            // bytes copied AND view's refcount +1: v itself is SHARED</code></pre>
+<p><strong>Enums are tagged unions</strong> (Chapter 06), compiled to the layouts Chapter 10 derived for Rust: single-payload enums exploit <em>niches</em> — <code>Optional&lt;SomeClass&gt;</code> is exactly 8 bytes on 64-bit (Swift 5.9), <code>nil</code> reusing the all-zero pointer pattern no object can legally have, just like <code>Option&lt;Box&lt;T&gt;&gt;</code>. Payloads without spare bits get a tag byte: <code>enum State { case idle; case running(Double) }</code> has size 9, stride 16, alignment 8 — an 8-byte <code>Double</code> plus a 1-byte discriminant, padded to stride by Chapter 06's rules.</p>
+<p><strong>Copy-on-write is the bridge between the two worlds.</strong> If structs copy eagerly, <code>Array</code>, <code>String</code>, <code>Dictionary</code>, and <code>Set</code> — all structs — would memcpy megabytes per assignment. Instead each holds one reference to a reference-counted <em>backing store</em>, and copying the struct copies that pointer plus one retain (Chapter 09's <code>shared_ptr</code> move, hidden inside a value type):</p>
+<pre><code class="language-swift">var a: [Int] = [1, 2, 3]
+var b = a              // O(1): struct memcpy + ONE retain of the buffer
+b.append(4)            // isKnownUniquelyReferenced(&amp;b.buffer) == false
+                       // -&gt; allocate a NEW buffer [1,2,3,4]; a never notices
+a[0] = 99              // a's buffer is unique now: write in place, no allocation</code></pre>
+<pre><code class="language-text">after `var b = a`                    after `b.append(4)`
+
+a [ buf*, 3 ]---+                    a [ buf*, 3 ]----&gt; [ RC 1 | cap 3 | 1 2 3 ]
+                |                                         (untouched, now unique)
+                v
+      +------------------+
+      | RC 2 | cap 3     |                b [ buf*, 4 ]----&gt; [ RC 1 | cap 4 | 1 2 3 4 ]
+      | 1 | 2 | 3        |                                  (NEW buffer)
+      +------------------+
+                ^
+b [ buf*, 3 ]---+        ONE buffer, two owners, refcount 2</code></pre>
+<p>The trick hangs on <code>isKnownUniquelyReferenced(&amp;buffer)</code>: a stdlib check that the backing store's strong count is exactly 1, run under the exclusivity a <code>mutating</code> method already guarantees. Unique → mutate in place; shared → copy, then mutate. To you it <em>looks</em> like deep value semantics; to the machine it is one retain plus a rare copy. <strong>The trap</strong> — hold a second handle across a loop of mutations and the copy runs every iteration:</p>
+<pre><code class="language-swift">var a = Array(repeating: 0, count: 100_000)     // 800 KB buffer
+for _ in 0..&lt;10_000 {
+    let b = a          // +1: buffer shared again
+    a.append(0)        // NOT unique -&gt; copies 800 KB... EVERY iteration
+    _ = b              // b's last use keeps the alias alive past the append
+}
+// ~8 GB of memcpy, quadratic where the code looks linear</code></pre>
+<p>The rule: never hold an alias across a mutation; copy once, on purpose. The profiler's fingerprint is malloc traffic scaling with <em>loop count</em>, not data size.</p>
+<p><strong>String compresses all of this into 16 bytes.</strong> <code>MemoryLayout&lt;String&gt;.size == 16</code>, always, on 64-bit Swift (5.9): two words that are either a whole string, or a pointer plus bookkeeping:</p>
+<pre><code class="language-text">Swift 5.9, 64-bit: a String is 16 bytes, two words
+
+small string "ARC" (3 bytes, never touches the heap):
++--------------------------------+--------------------------------+
+| 41 52 43 00 00 00 00 00        | 00 00 00 00 00 00 00 [disc]    |
+| 'A''R''C' + zero fill          | up to 7 more bytes, then byte |
++--------------------------------+ 15: the DISCRIMINATOR — small- |
+  word 0: UTF-8 bytes 0..7          string flag + isASCII flag +  |
+  word 1: UTF-8 bytes 8..14         the inline count              |
+                                     +--------------------------------+
+  15 UTF-8 bytes inline, maximum.
+
+large string (16+ bytes):
++--------------------------------+--------------------------------+
+| pointer to _StringStorage ----&gt;| count (bytes) + flags          |
+| (heap, refcounted, UTF-8,      | (isASCII, shared/literal, ...) |
+|  16-byte aligned)              |                                 |
++--------------------------------+--------------------------------+</code></pre>
+<p>Byte 15 is the discriminator — Chapter 06's tag bits deciding the meaning of the other 15 bytes. Since Swift 5 (2019), native strings are stored as <strong>UTF-8 in place</strong>: the count is a byte count, storage is tail-allocated after the header, and indexing is O(n), because UTF-8 code units are 1–4 bytes — byte position is not character position. UTF-8's self-synchronization (a decoder resyncs within 3 bytes) is what makes arbitrary slicing safe; the cost is that <code>String</code>'s subscript takes an opaque <code>String.Index</code>, never an integer.</p>
+<p>One honest paragraph on why <code>String</code> is <em>weird</em>: a Swift <code>Character</code> is an <strong>extended grapheme cluster</strong> — a user-perceived character, not a byte, code unit, or code point. <code>"é"</code> is one Character as one scalar (U+00E9, 2 UTF-8 bytes) or as two (e + combining U+0301, 3 bytes). The family emoji is <strong>one</strong> Character of 7 scalars and 25 UTF-8 bytes — guaranteed heap. Consequently <code>s.count</code> (Characters) is an O(n) walk with Unicode grapheme-breaking tables, while <code>s.utf8.count</code> is O(1), a stored number; "15" in "15-byte small string" means <em>bytes</em>. That is the price of counting what humans see, and the reason <code>String</code> has no <code>s[i]</code>.</p>
+<h2 id="no-swap-no-mercy-the-apple-memory-contract">No swap, no mercy: the Apple memory contract</h2>
+<p>Everything above runs inside a memory regime unlike a desktop's (Chapter 03's swap never appears here):</p>
+<ul>
+<li><strong>iOS has no swap.</strong> Anonymous dirty pages are never written to disk — flash wear, battery, latency. File-backed code pages can be evicted and re-fetched (the bytes still exist in the app bundle); <em>your</em> data cannot. The only levers are freeing and compression.</li>
+<li><strong>Memory compression</strong> (macOS 10.9 / iOS 7, 2013): the kernel's compressor thread squeezes cold dirty pages in place with an Apple-tuned WKdm-class algorithm — typically ~3x — and decompresses on fault.</li>
+<li><strong>Per-process limits, enforced by death.</strong> There is no <code>malloc</code> returning NULL and no OOM exception to catch. When your footprint crosses the limit, the kernel's <strong>Jetsam</strong> watchdog kills the process (SIGKILL, by priority class); the crash log's termination reason reads like <code>perprocess-limit</code>. Extensions get the tightest budgets — tens of MB — foreground apps a few GB, all device- and role-dependent (Chapter 22 has the deep dive, including the memory-warning path that precedes the kill).</li>
+</ul>
+<p>ARC's per-object overhead is small — a 16-byte header and an atomic add per pointer. iOS apps burn their budget by <em>keeping pages dirty</em>: a strong-held cache of decoded images, a repeating timer whose closure captured half the object graph, an observer nobody removed. Those pages count against your limit until you free them, and nothing frees them for you — which is why <strong><code>NSCache</code> exists next to <code>Dictionary</code></strong>: same dictionary-shaped API, but it evicts its contents under memory pressure (enforces <code>totalCostLimit</code>, is thread-safe, does not copy keys). A <code>Dictionary</code> holds its bytes until you say otherwise; on iOS, that is how you meet Jetsam.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>Retain is one atomic add on the isa word.</strong> The non-pointer <code>isa</code> packs the strong count into the header on arm64 (19 bits of <code>extra_rc</code>), so <code>retain</code>/<code>release</code> touch a cache line the object already owns; the side table is an <em>overflow</em> path, hit only past ~524,287 retains or for weak bookkeeping.</li>
+<li><strong>The two 16-byte headers are different 16 bytes.</strong> A zero-ivar <code>NSObject</code> subclass is 16 bytes (8-byte isa + 8 filler from malloc's 16-byte quantum); a propertyless pure Swift class is also 16 — metadata pointer plus a packed strong/unowned count word. <code>@objc</code>-exposed Swift classes make one header serve both runtimes.</li>
+<li><strong><code>string.count</code> is not <code>string.utf8.count</code>.</strong> The first walks grapheme clusters with Unicode tables — O(n); the second reads a stored byte count — O(1). The family emoji: 1 Character, 7 scalars, 25 UTF-8 bytes — always heap. Interview trap: "how many bytes is this String?" has three right answers.</li>
+<li><strong><code>unowned</code> in async code is a latent crash.</strong> Correct only when the closure's lifetime is provably nested in the owner's — escaping callbacks (timers, notifications, <code>dispatch_after</code>, Combine sinks) are <em>scheduled</em>, not nested. Debug and release builds move dealloc timing; the crash appears in exactly one of them.</li>
+<li><strong>Deterministic <code>deinit</code> is a debugging superpower.</strong> A <code>deinit { print(...) }</code> tells you the exact last-release moment — versus Chapter 12's maybe-never finalizers. Two caveats: <code>deinit</code> runs on <em>whatever thread dropped the last reference</em>, and lazy destruction means a "dead" object may dealloc on the <em>next test</em> or the <em>next touch</em>.</li>
+<li><strong>Swift's "inline" refcount word can leave the object.</strong> In Swift 5, once an object needs slow counts (weak references, overflow), its 8-byte header refcount word is <em>swizzled into a pointer</em> to a heap side cell holding strong/unowned/weak counts — the <code>has_sidetable_rc</code> escape hatch, but the header word itself changes meaning.</li>
+<li><strong>Toll-free bridging is trivia with teeth.</strong> <code>CFStringRef</code> and <code>NSString</code> are the same object at run time; <code>CFRetain</code> on a bridged object <em>is</em> <code>retain</code>. The <code>CFAllocator*</code> first parameter all over CoreFoundation APIs is Chapter 19's pluggable-allocator idea surfacing in a 1990s API.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>1. The layouts, derived from Chapter 06</strong> (any Mac with Xcode, or a swift.org toolchain — the <code>MemoryLayout</code> lines work on Linux too):</p>
+<pre><code class="language-bash">cat &gt; layout.swift &lt;&lt;'EOF'
+import Foundation              // macOS: NSObject, class_getInstanceSize, malloc_size
+
+class Empty {}                          // pure Swift class, no superclass
+class ObjCRoot: NSObject {}             // ObjC-rooted
+
+struct S { var a: UInt32; var b: UInt8 }
+enum State { case idle; case running(Double) }
+
+print("Int:    ", MemoryLayout&lt;Int&gt;.size, MemoryLayout&lt;Int&gt;.stride, MemoryLayout&lt;Int&gt;.alignment)
+print("String: ", MemoryLayout&lt;String&gt;.size, MemoryLayout&lt;String&gt;.stride, MemoryLayout&lt;String&gt;.alignment)
+print("S:      ", MemoryLayout&lt;S&gt;.size, MemoryLayout&lt;S&gt;.stride, MemoryLayout&lt;S&gt;.alignment)
+print("State:  ", MemoryLayout&lt;State&gt;.size, MemoryLayout&lt;State&gt;.stride, MemoryLayout&lt;State&gt;.alignment)
+print("Empty?: ", MemoryLayout&lt;Empty?&gt;.size)                 // reference + nil niche
+print("Empty instance: ", class_getInstanceSize(Empty.self)) // the OBJECT, not the reference
+print("ObjC instance:  ", class_getInstanceSize(ObjCRoot.self))
+let e = Empty()
+print("malloc_size: ", malloc_size(Unmanaged.passUnretained(e).toOpaque()))
+EOF
+swift layout.swift</code></pre>
+<pre><code class="language-text">Int:     8 8 8
+String:  16 16 8
+S:       5 8 4
+State:   9 16 8
+Empty?:  8
+Empty instance:  16
+ObjC instance:   16
+malloc_size:  16</code></pre>
+<p>Derive each before running (Chapter 06): <code>Int</code> is one word. <code>String</code> is the two-word representation, small or large, always 16. <code>S</code> is 4+1 bytes, no internal padding, size 5; stride rounds up to the alignment (4) → 8. <code>State</code> is an 8-byte <code>Double</code> plus a 1-byte tag → 9, stride 16 at alignment 8. <code>Empty?</code> is 8: <code>nil</code> occupies the pointer's illegal all-zero pattern (the niche — compare <code>Option&lt;Box&lt;T&gt;&gt;</code>, Chapter 10). And the trap the last lines expose: <code>MemoryLayout&lt;Empty&gt;.size</code> prints <strong>8</strong> — the <em>reference</em>, not the 16-byte instance.</p>
+<p><strong>2. Deterministic death, on this thread, right now.</strong> Append and rerun:</p>
+<pre><code class="language-swift">final class T { deinit { print("T freed") } }
+do {
+    let t = T()
+    print("in scope")
+}
+print("after scope")</code></pre>
+<pre><code class="language-text">in scope
+T freed
+after scope</code></pre>
+<p>Run the equivalent in a GC'd language (Chapters 12, 15) and the finalizer line may print late or never; here the ordering is a guarantee you can build a debugging technique on.</p>
+<p><strong>3. Xcode Memory Graph: see the cycle.</strong> Run any app under the debugger, pause it, then press the Debug Memory Graph button (bottom of the debug area, or Debug → Debug Memory Graph). The navigator lists heap objects grouped by class with live instance counts; click an instance and the graph shows its fields and <em>back references</em> — every strong holder, as arrows. A retain cycle is literally a loop: click from the closure's context box to <code>self</code>, from <code>self</code> to the token, from the token back to the closure. Xcode flags suspected leaks with a warning badge; the instance-count column is your leak meter (42 <code>ScoreBoard</code> instances after 42 navigations is a diagnosis, not a hint).</p>
+<p><strong>4. Command line: leaks with allocation stacks.</strong> No GUI needed on macOS:</p>
+<pre><code class="language-bash">MallocStackLogging=1 /path/YourApp.app/Contents/MacOS/YourApp &amp;
+leaks $!        # or: leaks YourApp
+#   Process:        YourApp [1234]
+#   2 leaks for 32 total leaked bytes.
+#   Leak: 0x7f8b1c000400  16 bytes
+#     Call stack: [allocator] ... -[ScoreBoard start] ...</code></pre>
+<p>The stack lands on the allocation site — walk up it to the closure capture. The same engine powers Instruments' Leaks template (Product → Profile), which adds a live allocations track: watch the COW trap's malloc traffic scale with loop count instead of data size.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Debugging the leak that isn't a leak yet.</strong> "Deinit never prints" is a cycle until proven otherwise: run the Memory Graph, follow strong edges backward, and the loop is the bug. "Deinit prints <em>late</em>" is a pending pool drain or a scheduled closure — now you can say which.</li>
+<li><strong>Performance decisions.</strong> Hold aliases across array mutations and you buy a copy per iteration — <code>isKnownUniquelyReferenced</code> explains both the trap and how to build your own COW types. Wrap ObjC-heavy loops in <code>autoreleasepool</code>. In hot paths, count refcount traffic: four <code>Int</code> fields copy free; four class references cost four atomic increments per copy.</li>
+<li><strong>Design choices.</strong> Delegates weak by default; capture lists in every escaping closure; <code>NSCache</code> — not <code>Dictionary</code> — for anything purgable, because on iOS the alternative is Jetsam.</li>
+<li><strong>Incidents you can now explain.</strong> The idle app killed with <code>perprocess-limit</code> (a repeating timer's closure holding dirty pages); the release-only callback crash (unowned plus lazy destruction); the "leak" that was one pool turn of autoreleased images; 8 GB of memcpy in a loop that "looked linear."</li>
+<li><strong>Interview answers with derivations.</strong> Why ARC is not a garbage collector (no collector process, deterministic, cycles leak — Chapter 09 vs 12). Why <code>weak</code> can zero and <code>Rc::Weak</code> cannot (where the bookkeeping lives). Why <code>String</code> is 16 bytes and <code>count</code> is O(n). What the isa word packs on arm64.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 09 (C++):</strong> ARC is the compiler writing your <code>shared_ptr</code> copy/assign/destroy calls; the isa-packed count is the control block compressed into the header; libc++'s 24-byte string with 22-char SSO vs Swift's 16/15.</li>
+<li><strong>Chapter 14 (Python):</strong> the same mechanism executed at run time by the interpreter, plus the cycle detector Swift refuses to ship — and the borrowed-reference discipline where C extensions dangle.</li>
+<li><strong>Chapter 10 (Rust):</strong> niches are shared (<code>Optional</code> of a reference = 8 bytes on both sides); <code>Rc::Weak</code>'s in-object count vs the side table is the zeroing-vs-pinning trade.</li>
+<li><strong>Chapter 15 (JavaScript/V8):</strong> escaping closures' context boxes are V8's environments with static layouts; non-escaping ones borrow the stack (Chapter 04); hidden classes are the dynamic twin of the isa/metadata word.</li>
+<li><strong>Chapter 12 (Java):</strong> the anti-model — collector threads, pauses, maybe-never finalizers, versus deterministic <code>deinit</code> on the last-releasing thread.</li>
+<li><strong>Chapter 06 (object layout):</strong> padding, tag bits, and niches derive every <code>MemoryLayout</code> number in the lab; the non-pointer isa is tag bits at production scale.</li>
+<li><strong>Chapter 05 (the heap):</strong> the 16-byte malloc quantum explains minimum instance sizes; side-table entries and COW buffers are ordinary heap allocations.</li>
+<li><strong>Chapter 02 (the hierarchy):</strong> refcount words are shared writable cache lines — atomic increments on hot objects ping-pong between cores.</li>
+<li><strong>Chapter 03 (virtual memory):</strong> no swap on iOS is where the platform contract starts; compression is the kernel's only dirty-page lever this side of death.</li>
+<li><strong>Chapter 22 (mobile memory):</strong> Jetsam priorities, the compressor, and the memory-warning path — the deep dive this chapter defers to.</li>
+<li><strong>Chapter 21 (memory security):</strong> tagged pointers, unowned-after-death (a <em>checked</em> dangling read, not an exploitable one), and why packed isas complicate pointer forgery.</li>
+<li><strong>Module 04 (decompilation, queued):</strong> reading Objective-C metadata and isa fields is step one of recovering class hierarchies from Apple binaries.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> In terms of Chapters 14 and 09: what is ARC mechanically, and what did the 2011 compiler change relative to MRC? Derive the two standing costs of the design — and name the pair of costs a tracing collector (Chapter 12) pays instead.</li>
+</ol>
+<ol>
+<li><strong>Predict the numbers</strong> (Swift 5.9, 64-bit — derive each from Chapter 06): <code>MemoryLayout&lt;String&gt;.size</code>; <code>MemoryLayout&lt;P?&gt;.size</code> for a class <code>P</code>; <code>MemoryLayout&lt;T&gt;.size/stride/alignment</code> for <code>struct T { var a: UInt32; var b: UInt8 }</code>; and for <code>enum E { case off; case dim(Double) }</code>.</li>
+</ol>
+<ol>
+<li><strong>Predict the behavior.</strong> ``<code>swift var a: [Int] = [1, 2, 3] var b = a b.append(4) a[0] = 99 a.append(5) </code>`` How many backing-store allocations happen in total, how many buffers are live at the end, and which operation triggered each and why?</li>
+</ol>
+<ol>
+<li><strong>Predict the legal outputs.</strong> ``<code>swift final class P { deinit { print("P gone") } } func f() { let p = P() print("made") use(p)                    // p's last use print("after last use") } f() print("after f") </code>`` Give two orderings of the four lines that are both valid, state what is <em>guaranteed</em> about where "P gone" can appear, and contrast with the C++ rule (Chapter 09) and the Java rule (Chapter 12).</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis.</strong> A view controller's <code>deinit</code> never runs; the Memory Graph shows <code>NotificationCenter -&gt; token -&gt; closure -&gt; self -&gt; token</code>: ``<code>swift final class VC: UIViewController { private var token: NSObjectProtocol? override func viewDidLoad() { token = NotificationCenter.default.addObserver( forName: .refresh, object: nil, queue: nil) { _ in self.reload()                                   // (A) } } deinit {                                                // (B) if let token { NotificationCenter.default.removeObserver(token) } } } </code>`` Why does (B) never fix the problem it was written for, what exactly is at (A), and what is the correct fix — including why its ordering matters?</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis.</strong> A field crash report: <code>Fatal error: Attempted to read an unowned reference but the object was already deallocated</code>, inside a <code>dispatch_after</code> callback; unreproducible in debug builds. Explain the lifetime nesting <code>unowned</code> requires, why an async callback violates it, and why the build configuration changes the outcome.</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis.</strong> ``<code>swift var rows = Array(repeating: Row.empty, count: 50_000) for i in 0..&lt;10_000 { let snapshot = rows rows[i % 50_000].flag = true _ = snapshot } </code>`<code> The profiler shows malloc traffic of roughly 10,000 × 1.2 MB. What is </code>snapshot` doing to every mutation, what check decides this, and what are two fixes?</li>
+</ol>
+<ol>
+<li><strong>Cross-chapter.</strong> CPython ships a cycle detector; Swift and Objective-C ship none. Explain what each ecosystem does instead, why <code>Rc::Weak</code> (Chapters 09/10) cannot zero the weak pointer while Objective-C/Swift <code>weak</code> can — deriving the difference from <em>where the weak bookkeeping lives</em> — and why "the kernel reclaims everything eventually" is a serious answer on iOS (Chapter 22).</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Concept.</strong> ARC is Python's runtime mechanism (per-object count, +1 per reference, deallocate at zero) with the increments and decrements inserted by the compiler at compile time, like C++'s scope-exit destructor calls — the MRC rules made automatic. Cost one: cycles leak — a mutual pair at count 2 never reaches zero and no detector exists; breaking cycles is manual <code>weak</code> discipline. Cost two: every pointer copy is an atomic increment (an <code>ldadda</code> on arm64; worst case a cross-core cache-line transfer, Chapter 02). A tracing collector reaches cycles naturally (unrooted means dead) and pays nothing per pointer — but it pays collector threads plus stop-the-world pauses, and nondeterministic finalization instead of a death moment you can print. You choose <em>when</em> you pay: always-but-tiny or batched-but-huge.</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> <code>String</code> = 16 (the two-word representation, small or large). <code>P?</code> = 8 — one word; <code>nil</code> reuses the all-zero bit pattern no legal object pointer has (the niche, exactly <code>Option&lt;Box&lt;T&gt;&gt;</code>, Chapter 10). <code>T</code> = size 5, stride 8, alignment 4: 4+1 bytes, no internal padding; stride rounds size to the max member alignment. <code>E</code> = size 9, stride 16, alignment 8: an 8-byte <code>Double</code> payload plus a 1-byte tag (a <code>Double</code> has no spare bits), padded to stride. Bonus trap: <code>MemoryLayout&lt;P&gt;.size</code> is 8 too — the <em>reference</em>, not the 16-byte instance.</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> Three allocations; two live buffers. (1) The literal allocates the first buffer. <code>var b = a</code> allocates nothing — struct copy plus one retain (RC 2). (2) <code>b.append(4)</code>: mutation while <code>isKnownUniquelyReferenced == false</code> → COW copy for <code>b</code>; <code>a</code> becomes unique again. <code>a[0] = 99</code>: in-place write, nothing allocated. (3) <code>a.append(5)</code>: <code>a</code> is unique but full (count 3, capacity 3) → growth reallocation, triggered by <em>capacity</em>, not sharing; the old buffer is freed. False intuition to catch: the copies are lazy and happen only at mutation of a shared buffer.</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> Ordering A (release at scope exit, -Onone): <code>made</code>, <code>after last use</code>, <code>P gone</code>, <code>after f</code>. Ordering B (release at last use, optimized): <code>made</code>, <code>P gone</code>, <code>after last use</code>, <code>after f</code>. Guaranteed: <code>deinit</code> runs after <code>p</code>'s last use and no later than scope exit — always after <code>made</code>, always before <code>after f</code>. C++ fixes the point by rule: the destructor runs at the closing brace, always (Chapter 09); Java's finalizer has no ordering guarantee and may run never (Chapter 12). Lesson: depend on the <em>bounds</em>, not the point — a <code>deinit</code> print proves death happened, it does not timestamp it to an instruction.</li>
+</ol>
+<ol>
+<li><strong>Bug-diagnosis.</strong> The cycle is closure → self → token → closure, with the process-global center also holding the token until <code>removeObserver</code>. Line (B) is unreachable cleanup: <code>deinit</code> runs only when the strong count hits zero, and the cycle guarantees it never does — "remove the observer in deinit" is dead code that looks like a fix. Line (A) is the strong capture: the escaping closure's heap context box stores <code>self</code> as a strong field (the default). Fix: <code>[weak self]</code> with <code>guard let self</code> — breaking closure → self lets the count reach zero, <code>deinit</code> runs, and only then does (B) execute, releasing center → token → closure in order. Break the cycle first; clean up in the now-reachable <code>deinit</code>.</li>
+</ol>
+<ol>
+<li><strong>Bug-diagnosis.</strong> <code>unowned</code> requires the reference's lifetime to be nested strictly inside the target's — the closure must die before the object can. A <code>dispatch_after</code> block's lifetime is <em>scheduled</em>, not nested: the delay can outlive the owner, and the block then reads an object whose <code>deinit</code> already ran; the runtime's unowned check turns that into the fatal error (a checked crash, not a dangling read). Build differences: destruction timing depends on autorelease-pool drains and queue scheduling, which differ between debug and release — in the debug build the object's lazy destruction lands <em>after</em> the callback, hiding the bug. Fixes: <code>[weak self]</code>, or cancel the stored <code>DispatchWorkItem</code> in <code>deinit</code>.</li>
+</ol>
+<ol>
+<li><strong>Bug-diagnosis.</strong> Every <code>rows[i % 50_000].flag = true</code> mutates a <em>shared</em> buffer: <code>snapshot</code> still holds a strong reference (its last use is after the mutation), the uniqueness check returns false, and the COW path copies the entire ~1.2 MB backing store before flipping one flag — 10,000 full copies. The check is the stdlib's <code>isKnownUniquelyReferenced</code>-style strong-count == 1 test, run under the <code>mutating</code> method's exclusivity. Fixes: don't hold the alias across the mutation (move <code>let snapshot = rows</code> out of the loop, or drop it), or build into a separate local and assign once. The law: value-semantics cost scales with <em>mutations while shared</em>, not with copies.</li>
+</ol>
+<ol>
+<li><strong>Cross-chapter.</strong> Apple's answer is discipline plus containment: <code>weak</code>/<code>unowned</code> capture lists and weak delegates break cycles by hand, <code>autoreleasepool</code> bounds temporary pile-ups, and any cycle that slips through is reclaimed wholesale at process death — Jetsam guarantees that death is bounded and total on iOS (Chapter 22), so "leak until exit" is a bounded failure mode. CPython instead pays a tracing cycle detector: periodic passes over container objects (Chapter 14). The weak difference is <em>location</em>: Rust keeps the weak count in the control block — the same allocation as the object — so a surviving <code>Weak</code> pins the block (the object's bytes persist until the last weak dies) and no outside writer exists to zero the pointer; <code>upgrade</code> checks the dead flag at read time instead. Objective-C/Swift store weak slots in the global side table, <em>outside</em> the object: on dealloc, under the side table's spinlock and before the memory is freed, every slot is set to <code>nil</code> — zeroing is possible precisely because the slots are not inside the dying object. Python's <code>weakref</code> is the middle design: an opt-in wrapper marked dead at target death, while raw borrowed pointers in C extensions stay unprotected.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch15.html"><span class="cn-label">previous</span><span class="cn-title">Ch 15</span></a>
+<a class="next" href="ch17.html"><span class="cn-label">next</span><span class="cn-title">Ch 17</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/16-swift-objc.md">chapters/16-swift-objc.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The roadmap — deep-roots</title>
+<meta name="description" content="Twelve modules from memory models to GPU memory: the build order and why each module is a consequence of the one before it.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The roadmap — deep-roots">
+<meta property="og:description" content="Twelve modules from memory models to GPU memory: the build order and why each module is a consequence of the one before it.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The roadmap — deep-roots">
+<meta name="twitter:description" content="Twelve modules from memory models to GPU memory: the build order and why each module is a consequence of the one before it.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="index.html#module-01">Module 01</a><a href="quiz.html">Quiz</a><a href="roadmap.html">Roadmap</a><a href="index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="page-main">
+<h1 class="page-title">The deep-roots roadmap</h1>
+<p class="page-sub">One program: go to the root layer of every field of computer science, from first principles, and stay there until the field’s insiders would nod. Modules are built in dependency order — each one is a root of the ones after it.</p>
+<p>One program: go to the root layer of every field of computer science, from first principles, and stay there until the field's insiders would nod. Modules are built in dependency order — each one is a root of the ones after it.</p>
+<h2 id="status-legend">Status legend</h2>
+<p><strong>LIVE</strong> — fully written, quizzed, and published · <strong>QUEUED</strong> — specified below, not yet written · <strong>SEEDED</strong> — chapter plan exists, build order after that</p>
+<hr>
+<h2 id="module-01-memory-models-of-programming-languages-live">Module 01 — memory models of programming languages · <strong>LIVE</strong></h2>
+<p>The root of the roots. Every language answers four questions — <em>what is a value, who owns it, who frees it, what safety is guaranteed</em> — and every field downstream (security, compilation, mobile, databases, concurrency) is a consequence of those answers. Twenty-three chapters: silicon → hierarchy → virtual memory → stack → heap → object layout → assembly → sixteen languages → allocators → hardware memory model → memory security → mobile → unification. Start <a href="modules/01-memory-models/README.md">here</a>.</p>
+<h2 id="module-02-memory-security-exploitation-queued">Module 02 — memory security &amp; exploitation · QUEUED</h2>
+<p>The dark mirror of module 01: every memory-model decision is an attack surface. Stack smashing and canaries; heap metadata attacks (tcache poisoning, House-of-* lore); use-after-free as the modern bug class; ROP and code reuse; ASLR/DEP/RELRO/CFI/MTE as the mitigation ladder; Rowhammer and speculative cache side channels. Prerequisite: module 01 chapters 04–06, 19, 21.</p>
+<h2 id="module-03-software-bugs-the-taxonomy-of-failure-queued">Module 03 — software bugs: the taxonomy of failure · QUEUED</h2>
+<p>The bug classes every senior engineer knows by scar tissue: memory corruption family, race family (data races, TOCTOU, deadlocks, livelocks), numeric family (overflow, float traps, i-parser/i18n), state family (inconsistent snapshots, retry storms), and the process layer (how fuzzing, sanitizers, and bisect actually find them).</p>
+<h2 id="module-04-decompilation-reverse-engineering-queued">Module 04 — decompilation &amp; reverse engineering · QUEUED</h2>
+<p>Reading what compilers leave behind. ELF/PE/Mach-O file formats from bytes up; calling conventions recovered from prologues; vtable and RTTI reconstruction for C++; recognizing allocator and CRT runtime signatures; decompilers (Ghidra/IDA/Binary Ninja) — what they can and cannot recover; anti-analysis; from module 01's assembly reference model to reading production binaries cold.</p>
+<h2 id="module-05-android-internals-queued">Module 05 — Android internals · QUEUED</h2>
+<p>Zygote fork and the boot image; ART's object model and GC (from module 01 ch22); Binder from the memory-map perspective; app process priority and lmkd; the HAL/NDK layer; APK packaging and dex; how a patch becomes an OTA. The memory module is the prerequisite because Android's entire design is memory-driven.</p>
+<h2 id="module-06-ios-internals-queued">Module 06 — iOS internals · QUEUED</h2>
+<p>XNU memory management, Jetsam bands, the VM compressor; Mach ports and message ownership; ARC across the language/ObjC-runtime boundary; app lifecycle as memory management; DYLD and the shared cache (the biggest COW artifact you own); code signing as a memory trust chain.</p>
+<h2 id="module-07-desktop-os-internals-windows-linux-macos-queued">Module 07 — desktop OS internals (Windows / Linux / macOS) · QUEUED</h2>
+<p>One architecture per part: Windows (PE, TEB/PEB, heap manager, LFH, registry virtualization), Linux (ELF, vdso, slab, page cache, OOM killer), macOS (Mach VM,Jetsam overlap, shared cache, unified memory). The page table knowledge from module 01 ch03 becomes three concrete implementations.</p>
+<h2 id="module-08-cobol-the-mainframe-world-queued">Module 08 — COBOL &amp; the mainframe world · QUEUED</h2>
+<p>The fixed-record universe deep dive: WORKING-STORAGE/LOCAL-STORAGE/LINKAGE, PICTURE as a byte-level type system, REDEFINES as unions, CICS transaction memory, AMODE 31→64, and why the world's money still runs on a memory model with no heap. Builds on module 01 ch17.</p>
+<h2 id="module-09-concurrency-distributed-memory-queued">Module 09 — concurrency &amp; distributed memory · QUEUED</h2>
+<p>From the hardware memory model (module 01 ch20) to happens-before in distributed systems: locks, lock-free, epochs, RCU; CRDTs and message passing as the distributed analog of the single-machine rules; why "memory" and "network" converge on the same consistency problems.</p>
+<h2 id="module-10-compilers-language-runtime-internals-queued">Module 10 — compilers &amp; language runtime internals · QUEUED</h2>
+<p>Where the memory models of module 01 are manufactured: AST→IR→SSA, register allocation as the stack's origin, escape analysis (Go/Java/JIT) from the compiler's side, GC barrier insertion, object header layout choices by compiler authors.</p>
+<h2 id="module-11-database-storage-engines-queued">Module 11 — database storage engines · QUEUED</h2>
+<p>The disk is the new heap: B-trees, LSM trees, page management, buffer pools as cache hierarchy (module 01 ch02 at disk scale), MVCC as copy-on-write (module 01 ch03 again), and WAL as the durable analog of the write barrier.</p>
+<h2 id="module-12-gpu-ai-accelerator-memory-queued">Module 12 — GPU &amp; AI accelerator memory · QUEUED</h2>
+<p>Unified vs discrete memory, HBM stacks, the CUDA memory hierarchy (global/shared/ registers/constant), memory coalescing as cache lines (ch02 again), allocator arenas in training frameworks, and why "out of memory" on a GPU is a different physical event.</p>
+<hr>
+<h2 id="build-order-reasoning">Build order reasoning</h2>
+<p>Memory first because: security bugs <em>are</em> memory bugs (02, 03); decompilation reads stack frames and vtables (04); mobile OSes are memory-driven schedulers (05–07); COBOL is a memory model (08); distributed consistency is memory-model theory at scale (09); compilers <em>manufacture</em> memory models (10); databases are disk-scaled memory hierarchies (11); accelerators are a new hierarchy level (12). One root, twelve trees.</p>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="index.html">Home</a>
+      <a href="index.html#module-01">Module 01</a>
+      <a href="quiz.html">Quiz</a>
+      <a href="roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="assets/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 11 — Go: escape analysis and the concurrent GC — deep-roots</title>
+<meta name="description" content="Chapter 11 of the memory-models module: Chapter 11 — Go: escape analysis and the concurrent GC">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 11 — Go: escape analysis and the concurrent GC — deep-roots">
+<meta property="og:description" content="Chapter 11 of the memory-models module: Chapter 11 — Go: escape analysis and the concurrent GC">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 11 — Go: escape analysis and the concurrent GC — deep-roots">
+<meta name="twitter:description" content="Chapter 11 of the memory-models module: Chapter 11 — Go: escape analysis and the concurrent GC">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part II · the languages</div>
+<h1 class="post-title">Chapter 11 — Go: escape analysis and the concurrent GC</h1>
+<div class="post-meta">chapter 11 &middot; ~18 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Go bets on millions of tiny goroutines, and that bet forces everything else. Tiny goroutines mean tiny stacks (2 KB); tiny stacks must grow; Go grows them by <em>copying</em> — so a pointer into a stack cannot outlive its frame. The compiler decides, at build time, which values stay in a frame and which must move somewhere whose address never changes: that decision is <em>escape analysis</em>, and it is why Go lets you write <code>&amp;x</code> as freely as C (ch08) while rarely paying <code>malloc</code>. The heap is reclaimed by a concurrent tricolor mark-and-sweep collector behind a hybrid write barrier — no compaction — paced by <code>GOGC</code> and <code>GOMEMLIMIT</code> to hold stop-the-world pauses to tens of microseconds.</blockquote>
+<h2 id="the-bet-a-million-goroutines-and-what-it-forces">The bet: a million goroutines, and what it forces</h2>
+<p>Derive the GC; don't accept it. Go's 2009 target: servers holding millions of connections, each with its own flow of control.</p>
+<p><strong>Step 1 — threads are too heavy.</strong> An OS thread costs a kernel stack (Linux default: 8 MB virtual, tens of KB committed) and kernel-mode context switches; a million of them is gigabytes of stack and scheduler meltdown. So Go put the scheduler in userspace: goroutines.</p>
+<p><strong>Step 2 — goroutine stacks must start tiny, so they must grow.</strong> A million goroutines cannot each get a big fixed stack — same math, one level down. Go starts a goroutine at <strong>2 KB</strong> (since Go 1.4; 8 KB before) — <strong>since Go 1.19</strong> adaptive, from historical average stack use, still single-digit KB. Deep recursion overflows any fixed small stack. Pre-1.3 Go chained 4 KB <em>segments</em>; Go 1.3 switched to <strong>contiguous stacks</strong>: allocate a 2x stack, copy the old one in, adjust every pointer into it.</p>
+<p><strong>Step 3 — copying stacks breaks the C memory model.</strong> In C (ch08), <code>&amp;local</code> is stable because the stack never moves. In Go, a stack can be copied at any call that finds SP below the guard, so a stack address is valid only while its frame lives <em>and</em> no growth happened. Go refuses to make you track that: <code>&amp;x</code> is legal, pointers cross channels, closures capture locals by reference. Values whose addresses might outlive a frame must live somewhere that never moves — <strong>the heap</strong> — and escape analysis is the gatekeeper for that line.</p>
+<p><strong>Step 4 — a shared heap needs automatic reclamation.</strong> Pointers cross goroutines freely, so no static rule says who frees what: manual <code>free</code> is ch08's use-after-free at program scale, and refcounting (ch14) costs an update per assignment and leaks cycles. What remains is a <em>tracing</em> collector. The chain: goroutines forced tiny stacks, tiny stacks forced copying growth, copying forced a stable-address heap, a shared heap forced a GC.</p>
+<p><strong>Step 5 — latency over throughput.</strong> Go 1.8 (2017) drew the line: stop-the-world pauses dropped to typically <strong>under 100 µs, often ~10 µs</strong>, via <strong>GC pacing</strong> (redesigned 1.18): trigger early enough to finish marking on ~<strong>25% of one GOMAXPROCS</strong> of CPU. The bill: more GC CPU and a bigger peak heap than a compacting collector — the opposite trade of the JVM (ch12). Go also never compacts; we justify that below.</p>
+<h2 id="escape-analysis-the-load-bearing-wall">Escape analysis: the load-bearing wall</h2>
+<p>Every local has a candidate home: its frame (ch04) — free, cache-hot, gone at <code>RET</code> — or the heap (ch05) — allocated, GC-tracked, address-stable. The compiler picks per-value at build time by simulating how addresses flow. Watch it decide:</p>
+<pre><code class="language-go">package escape
+
+type Point struct{ X, Y int }
+
+// stay: borrows a pointer, touches it, returns an int.
+func stay(p *Point) int {
+	p.X++
+	return p.X
+}
+
+// leak: the address of a local leaves the function.
+func leak() *Point {
+	p := Point{X: 1, Y: 2}
+	return &amp;p
+}
+
+// box: 16 bytes cannot fit an interface's single data word.
+func box() interface{} {
+	p := Point{X: 1, Y: 2}
+	return p
+}
+
+// counter: the closure outlives the frame and mutates n.
+func counter() func() int {
+	n := 0
+	return func() int { n++; return n }
+}</code></pre>
+<p><code>go build -gcflags='-m' .</code> on this file (Go 1.21; wording drifts slightly across versions, the verbs do not):</p>
+<pre><code class="language-text">./escape.go:6:10: p does not escape
+./escape.go:13:2: moved to heap: p
+./escape.go:19:2: p escapes to heap
+./escape.go:25:2: moved to heap: n
+./escape.go:26:9: func literal escapes to heap</code></pre>
+<p>The verdicts:</p>
+<ul>
+<li><code>stay</code> — the <em>parameter</em> is borrowed and forgotten; <code>p does not escape</code> (the <code>escapes=0</code> case) means callers may pass stack addresses. Silence is also a verdict: no note, no heap.</li>
+<li><code>leak</code> — <code>return &amp;p</code> hands out an address that must outlive the frame: the variable is <strong><code>moved to heap: p</code></strong>.</li>
+<li><code>box</code> — returning a value as <code>interface{}</code> forces a heap copy: the interface's data word is one pointer, and 16 bytes don't fit (next section).</li>
+<li><code>counter</code> — the returned closure is heap-allocated (<code>func literal escapes to heap</code>) and, because it <em>mutates</em> <code>n</code>, captures it by reference, forcing <strong><code>moved to heap: n</code></strong>.</li>
+</ul>
+<p>Rules of thumb:</p>
+<ol>
+<li><strong>Returning a pointer</strong> — or storing an address into anything that outlives the frame (global, map, heap object, channel send) — escapes.</li>
+<li><strong>Interface boxing often escapes</strong>: a value moved into an escaping interface is copied to the heap; the data word must be a stable pointer.</li>
+<li><strong>Closures capturing by reference escape</strong>: mutation forces capture-by-pointer, and an escaping closure drags its captures along.</li>
+</ol>
+<p>The GC only manages what reaches the heap — escape analysis is what keeps most of your <code>&amp;x</code> off it, which is why idiomatic Go profiles are quiet. <code>-m -m</code> prints the flow chains behind each verdict; the labs find the exceptions in minutes.</p>
+<h2 id="values-fat-pointers-and-the-three-word-slice">Values, fat pointers, and the three-word slice</h2>
+<p><strong>Assignment copies.</strong> <code>a := b</code> copies every byte of <code>b</code> — a 16-byte struct copies 16 bytes; no implicit <code>&amp;</code>, no pointer arithmetic (<code>&amp;x</code> is a real pointer, ch08, but <code>p+1</code> is a compile error). The "reference feel" of slices, maps, and channels comes from the copied bytes <em>containing pointers</em>.</p>
+<p><strong>An interface value is a 2-word fat pointer</strong> — ch06's tagged-union/vtable trick, and Rust's <code>&amp;dyn Trait</code> (ch10):</p>
+<pre><code class="language-text"> var i Shape = p            (p is a 16-byte Point)
+ i (16 bytes)
+ +----------------+----------------+
+ | itab ptr (8 B) | data ptr (8 B) |    &lt;- the fat pointer
+ +----------------+----------------+
+        |                       |
+        v                       v
+   itab: type +           heap copy of p
+   method table,          +--------+--------+
+   size, GC bitmap        | X (8B) | Y (8B) |
+                          +--------+--------+</code></pre>
+<p>The data word is <em>always one pointer</em>. A pointer value is stored directly; a multi-word struct like <code>p</code> must be copied somewhere stable first — the heap, because the compiler cannot prove the original stack slot outlives the interface: Go has no borrow checker (that was ch10's path). That is why <code>box()</code> prints <code>p escapes to heap</code>. "Usually" heap: pointer-shaped values skip the copy; a few tiny scalars hit static runtime tables (insiders below).</p>
+<p><strong>A slice is a 3-word header</strong> over a separate array — a length-tagged pointer with a twist (ch06):</p>
+<pre><code class="language-text"> s := make([]byte, 4, 8)
+ slice value, 24 bytes                   backing array (heap, 8 B)
+ +----------+---------+---------+       0   1   2   3   4   5   6   7
+ | ptr      | len = 4 | cap = 8 │ ──►  [a] [b] [c] [d] [ ] [ ] [ ] [ ]
+ +----------+---------+---------+
+   8 B each            append writes in here (len &lt; cap) without allocating</code></pre>
+<p>Two slice values sharing one backing array is the aliasing trap. <code>append</code> writes in place whenever <code>len &lt; cap</code> and only reallocates on overflow:</p>
+<pre><code class="language-go">func aliasBug() {
+	base := []int{0, 1, 2, 3, 4, 5, 6, 7} // one backing array A, cap 8
+
+	tail := base[4:6] // {&amp;A[4], 2, 4}: tail "owns" nothing
+
+	mid := base[2:5] // {&amp;A[2], 3, 6}: cap 6, A[2..7] writable
+	mid = append(mid, 99) // len 3 &lt; cap 6: writes A[5] IN PLACE
+
+	fmt.Println(base) // [0 1 2 3 4 99 6 7] -- 5 silently became 99
+	fmt.Println(tail) // [4 99]             -- the "unrelated" view changed
+
+	mid = append(mid, 100, 200, 300, 400) // needs 7 &gt; cap 6: NEW array,
+	// copied, detached -- base and tail never move again
+}</code></pre>
+<p>Diagnosis: the write landed at <code>ptr + len</code> = <code>&amp;A[5]</code>, which <code>base</code> and <code>tail</code> both observe. Fix: the three-index slice <code>base[2:5:5]</code> (cap forced to 3), which makes the next <code>append</code> copy — zero headroom, like handing out <code>&amp;[T]</code> in Rust. Growth on reallocation: capacity <strong>doubles</strong> while small, then ~<strong>1.25x</strong> at large sizes — doubling below 1024 elements through Go 1.17; since <strong>Go 1.18</strong> the knee is 256 elements with a smoother formula (~1.25–1.3x), rounded to a size class, so observed ratios jump.</p>
+<p><strong>Strings are immutable <code>(ptr, len)</code> — 16 bytes.</strong> Immutability makes them safe to alias and forces <code>[]byte(s)</code> and <code>string(b)</code> to copy the payload each way — in a loop, those copies are the allocation profile. Two conversions are compiler-special-cased to skip the copy: <code>m[string(b)]</code> and <code>range string(b)</code>. The zero-cast, when the bytes provably won't change, borrows instead:</p>
+<pre><code class="language-go">b := []byte("hello, world")
+s := unsafe.String(unsafe.SliceData(b), len(b)) // Go 1.20+: no copy
+// pre-1.20 folklore: *(*string)(unsafe.Pointer(&amp;b)) -- same aliasing
+b[0] = 'H' // s[0] now reads 'H': the immutability rule is your problem</code></pre>
+<p>A real alias, like the slice views above — ch08's world of invariants you maintain personally.</p>
+<h2 id="stacks-that-move">Stacks that move</h2>
+<ul>
+<li><strong>Start:</strong> 2 KB since Go 1.4; <strong>since Go 1.19</strong> adaptive from historical average use — in practice a few KB.</li>
+<li><strong>Grow:</strong> when SP would cross the guard, <code>runtime.morestack</code> allocates a 2x stack and copies:</li>
+</ul>
+<pre><code class="language-text">   BEFORE (2 KB)                       AFTER copy to 4 KB
+
+hi +----------------+              hi +----------------+
+   | main() frame   |                 | main() frame   |
+   |  p = &amp;x        |                 |  p = &amp;x'       |  same offset from
+   +----------------+                 +----------------+  the stack base,
+   | h() frame      |                 | h() frame      |  new absolute
+   |  x = 7         |                 |  x = 7         |  address
+   +----------------+ SP              +----------------+ SP
+   | frame F        |                 | frame F        |
+   +----------------+                 +----------------+
+   | stackguard     | SP hits guard   | 2 KB of fresh  |
+   |                | -&gt; morestack()  | headroom ...   |
+lo +----------------+                 | stackguard     |
+                                     lo +----------------+
+   old 2 KB block freed; every pointer into it (like p) is
+   rewritten to the same offset in the new stack</code></pre>
+<p>The runtime can fix <code>p</code> because the compiler ships <strong>stack maps</strong> — per-safe-point metadata marking which stack words hold pointers. C never had this: ch04/ch07 frames are fixed once the prologue runs.</p>
+<ul>
+<li><strong>The old design's death:</strong> pre-1.3 segmented stacks chained 4 KB blocks. If a hot loop's call chain straddled a segment boundary, <em>every iteration</em> allocated and freed a segment — the <strong>hot split</strong> problem, an allocation storm that appeared and vanished as stacks shifted a few bytes. Contiguous stacks (Go 1.3, finished in 1.4, which moved stacks into the runtime heap) grow by copying: a goroutine doubles O(log stack) times in its life.</li>
+<li><strong>Shrink:</strong> at GC time, a goroutine using under a quarter of its stack gets it halved — idle goroutines give memory back.</li>
+</ul>
+<p>The precise escape connection: a stack slot's address is a <em>temporary</em> identity — invalid after the frame returns <em>and</em> after any growth. Whenever the compiler cannot prove an address dies with the frame — returned, boxed, captured by an escaping closure, shipped to another goroutine — the pointed-to value must be heap-allocated. That is the whole rule, with a cost signature: <strong>a pointer to a stack slot prevents escape</strong>, pushing the object into the garbage stream. <code>&amp;x</code> on a 4-byte <code>int32</code> passed to another goroutine trades 4 stack bytes for a heap object plus GC tracking — such small escapes are "allocation noise".</p>
+<h2 id="the-collector-tricolor-barriers-and-never-compacting">The collector: tricolor, barriers, and never compacting</h2>
+<p>Reclamation is a <strong>concurrent tricolor mark-and-sweep</strong>: every object wears a color.</p>
+<pre><code class="language-text">            ROOTS (goroutine stacks, globals, registers)
+                              |
+        +---------------------+---------------------+
+        |                                           |
+   +----v----+     edge      +-------+    edge  +---+----+
+   |  BLACK  | -----------&gt; | GREY  | --------&gt; | WHITE |
+   +---------+              +-------+           +--------+
+
+   BLACK = scanned, known live, done
+   GREY  = known live, waiting to be scanned (the worklist / frontier)
+   WHITE = presumed dead until proven otherwise
+
+   mark step: pop a GREY object -&gt; make it BLACK -&gt; GREY every WHITE
+              object it points to
+   sweep:     worklist empty =&gt; remaining WHITE objects were unreachable
+              -&gt; their memory is reclaimed</code></pre>
+<p>The invariant that makes concurrency safe: <strong>a black object must never point directly at a white one</strong> — otherwise marking could "finish" while a live object hides behind a scanned object mutated mid-cycle. Mutators keep mutating, so Go installs a <strong>write barrier</strong> (Go 1.8+): on every heap pointer store, shade <em>both</em> the old value (Yuasa's deletion barrier — anything overwritten may be the last reference the start-of-cycle snapshot saw) <em>and</em> the new value (Dijkstra's insertion barrier — anything newly published is reachable). The hybrid lets <strong>goroutine stacks stay black all cycle</strong>: pre-1.8 Go re-scanned every stack inside a stop-the-world phase — the multi-millisecond pause; with the hybrid, the two remaining STW phases (sweep termination, mark termination) are each typically tens of microseconds.</p>
+<p>The cycle: sweep termination (STW #1); concurrent mark — ~25% CPU on dedicated workers plus <em>mark assist</em>: allocating mutators get drafted, because allocation is the tax base; mark termination (STW #2); concurrent sweep. Nothing is ever <em>moved</em>: <strong>no compaction, ever</strong>.</p>
+<p>Why Go survives that, when the JVM (ch12) treats compaction as essential: Java bump-allocates inside compacted regions and would fragment to death. Go's allocator descends from tcmalloc (ch19): <strong>~68 size classes up to 32 KiB</strong>, so any object is interchangeable with any free slot of its class and fragmentation is structurally bounded:</p>
+<pre><code class="language-text"> [P0] mcache --\       per-P, lock-free: the hot path
+ [P1] mcache ---\     miss on size class k
+ [P2] mcache ----+-----------------&gt; mcentral[k]  (per class)
+ [..]            /                        |  span out of free slots?
+                                          v
+              mheap: page allocator over 64 MB arenas (64-bit)
+              objects &gt; 32 KiB ("large"): skip mcache/mcentral,
+              dedicated span straight from mheap</code></pre>
+<p>Spans (8 KB pages grouped by class) are freed only when fully empty; the <strong>scavenger</strong> returns empty pages to the OS via <code>madvise</code> (MADV_DONTNEED default on Linux since Go 1.16). The price of never moving: fragmentation rattles inside spans, and RSS can sit far above live heap. The payoff: a write barrier suffices (moving collectors need read barriers), cgo and <code>unsafe</code> pointer arithmetic stay valid, and there is no "pinned object" concept to poison a compactor. Go chose address stability — the property step 3 demanded.</p>
+<h2 id="pacing-knobs-pools-and-escape-hatches">Pacing knobs, pools, and escape hatches</h2>
+<p><strong>GOGC</strong> (default 100) is the heap-growth dial: the next GC triggers when the heap reaches <code>live + (live + stacks + globals) * GOGC/100</code> — at 100, roughly <em>double the live heap</em>; <code>GOGC=50</code> reclaims at 1.5x live. <strong>GOMEMLIMIT</strong> (Go 1.19+) is the second knob: a <em>soft</em> ceiling on runtime-managed memory (heap, stacks, runtime structures — not cgo's C malloc). Near the limit the collector runs earlier and the scavenger works harder; failing that, GC CPU is capped at ~50% to avoid a death spiral — the limit can be <em>exceeded</em> rather than stall the program, unlike the JVM's hard <code>-Xmx</code> (ch12). Container recipe: <code>GOGC=off GOMEMLIMIT=...</code>.</p>
+<p>Watch pacing with <strong><code>GODEBUG=gctrace=1</code></strong>. One real-format line (Go 1.21), field by field:</p>
+<pre><code class="language-text">gc 12 @0.483s 1%: 0.031+0.61+0.023 ms clock, 0.25+0.32/1.2/0.062+0.18 ms cpu, 7-&gt;8-&gt;4 MB, 8 MB goal, 0 MB stacks, 1 MB globals, 8 P</code></pre>
+<ul>
+<li><code>gc 12 @0.483s</code> — 12th cycle, 483 ms since program start</li>
+<li><code>1%</code> — cumulative fraction of program time in GC (recent versions may add a second percentage for mark assist)</li>
+<li><code>0.031 + 0.61 + 0.023 ms clock</code> — wall-clock per phase: <strong>STW</strong> sweep termination, concurrent mark, <strong>STW</strong> mark termination; the two STWs sum to 54 µs — the whole pause bill</li>
+<li><code>0.25 + 0.32/1.2/0.062 + 0.18 ms cpu</code> — sweep CPU; mark CPU split dedicated / fractional / idle; mark-termination CPU</li>
+<li><code>7-&gt;8-&gt;4 MB</code> — heap at cycle start, at end, <em>live</em> after marking; <code>8 MB goal</code> — the GOGC-derived trigger for the <em>next</em> cycle (live 4 MB, GOGC 100 → 8 MB; <code>stacks</code>/<code>globals</code>, Go 1.19+, explain the rounding)</li>
+<li><code>8 P</code> — GOMAXPROCS</li>
+</ul>
+<p><strong>sync.Pool</strong> is GC-aware scratch on per-P local caches. It exists because the amortization pattern below is otherwise unwritable in a GC language — a global free list would be a leak, and per-request allocation is the noise you fight:</p>
+<pre><code class="language-go">var bufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
+func render(w io.Writer, rows []Row) {
+	buf := bufPool.Get().(*bytes.Buffer) // reuse, or New() on a miss
+	defer func() {
+		buf.Reset()  // required: you get back what you put in
+		bufPool.Put(buf)
+	}()
+	for _, r := range rows {
+		fmt.Fprintf(buf, "%v\n", r)
+	}
+	w.Write(buf.Bytes())
+}</code></pre>
+<p>Contract: a pool is a <em>cache</em>, not an owner. Every GC cycle drops its contents (the victim cache added in Go 1.13 lets one generation survive, softening post-GC misses); never Put an object you still depend on — a GC may legally take it.</p>
+<p><strong>Off-heap escapes.</strong> <code>unsafe</code> puts <em>you</em> in charge of aliasing, but the GC still sees <code>unsafe.Pointer</code> values and keeps their targets alive. <code>cgo</code> memory (<code>C.malloc</code>) is invisible to the collector — Go's pointer-passing rules let C hold a Go pointer only for the duration of a call, because the GC will not trace or pin it. Manual arenas had a moment: proposal golang/go #51317 shipped as <code>GOEXPERIMENT=arenas</code> in Go 1.20 and 1.21 — a narrow <code>arena.New</code> API with compiler use-after-free detection. Honest status: shelved by the Go team in early 2024 (proving safety for arbitrary types cost more than the win); as of Go 1.23 the sanctioned pattern is chunked <code>[]T</code> slabs with 32-bit index handles, or a <code>sync.Pool</code> per type.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The gctrace clock/cpu split is the interview trap.</strong> <code>ms clock</code> is wall time (what latency feels); <code>ms cpu</code> is summed across threads (what throughput pays). A 0.61 ms clock mark on 8 P can burn 1.2+ ms of CPU.</li>
+<li><strong><code>map[string]interface{}</code> and <code>[]interface{}</code> allocate per element.</strong> Each insert or append boxes its value: a heap copy per element. A concrete <code>[]T</code>, or generics (Go 1.18+), avoids the box.</li>
+<li><strong>Small integers box for free.</strong> <code>runtime</code> keeps a static table (<code>staticuint64s</code>) for 0–255: <code>var i interface{} = 7</code> allocates nothing; <code>= 7000</code> allocates 8 bytes. <code>fmt.Println(7)</code> doesn't allocate for the 7 — the variadic <code>[]interface{}</code> slice still does if it escapes.</li>
+<li><strong><code>GOGC=off</code> exists</strong> (env, or <code>debug.SetGCPercent(-1)</code>): the heap grows unbounded — fine for batch jobs that die in seconds, fatal for servers. Yet GOMEMLIMIT still fires with GOGC=off.</li>
+<li><strong>The large-object threshold is 32 KiB, not 64 KB.</strong> Objects over 32,768 bytes bypass mcache/mcentral for dedicated mheap spans, and fall outside <code>MemStats.BySize</code> (which stops at 32 KiB). The "64 KB" folklore conflates it with the 64 MB arena size (64-bit).</li>
+<li><strong>String concat in a loop is quadratic allocation.</strong> <code>s += t</code> allocates a fresh buffer per iteration (only a few simple shapes are compiler-optimized, fragile across versions); <code>strings.Builder</code> (Go 1.10+) grows like <code>append</code>, copying once.</li>
+<li><strong>The <code>-gcflags</code> caching gotcha.</strong> <code>go build -gcflags='-m'</code> prints nothing for a cached package — the notes are <em>build output</em>, and cached builds emit none. <code>touch</code> the file (fast) or <code>go build -a</code> (slow) to see them.</li>
+<li><strong><code>unsafe.Pointer</code> -&gt; <code>uintptr</code> -&gt; arithmetic -&gt; back is the one true GC blind spot.</strong> The heap never moves, so the <em>address</em> stays valid — the danger is <em>liveness</em>: with no typed pointer live across the sequence, the GC may free the object mid-computation. And stack addresses move on growth — never do this against a goroutine stack.</li>
+<li><strong>RSS != HeapAlloc.</strong> Idle-but-unreleased spans keep RSS high; <code>HeapIdle - HeapReleased</code> is what the scavenger hasn't <code>madvise</code>d back yet. OOMKills are filed against RSS — the exact gap GOMEMLIMIT (1.19+) closes.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>Lab 1 — escape analysis on one file.</strong> Save the <code>escape.go</code> from earlier plus a <code>main</code> that calls all four functions, then:</p>
+<pre><code class="language-sh">$ touch escape.go                                # defeat the build cache
+$ go build -gcflags='-m' . 2&gt;&amp;1 | head -20
+$ go build -gcflags='-m -m' . 2&gt;&amp;1 | grep -A2 'moved to heap'</code></pre>
+<p>Notice which declarations stay silent (the stack verdicts) and that <code>-m -m</code> shows the <code>flow:</code> chains — the compiler's proof. Then change <code>return &amp;p</code> to <code>return &amp;Point{X: 1, Y: 2}</code> and watch the message change shape: a literal escaping instead of a variable moving.</p>
+<p><strong>Lab 2 — the pacer in your terminal.</strong></p>
+<pre><code class="language-go">// gcwatch.go
+package main
+
+import (
+	"fmt"
+	"runtime"
+)
+
+func main() {
+	var sink []*byte
+	for i := 0; i &lt; 3&lt;&lt;20; i++ {
+		b := make([]byte, 64) // 64 B of garbage per iteration
+		if i%1024 == 0 {
+			sink = append(sink, &amp;b[0]) // keep ~1/1024 alive
+		}
+		if i%(1&lt;&lt;20) == 0 {
+			var m runtime.MemStats
+			runtime.ReadMemStats(&amp;m) // brief STW; fine once per million
+			fmt.Printf("HeapAlloc=%dMB NextGC=%dMB NumGC=%d TotalAlloc=%dMB\n",
+				m.HeapAlloc&gt;&gt;20, m.NextGC&gt;&gt;20, m.NumGC, m.TotalAlloc&gt;&gt;20)
+		}
+	}
+}</code></pre>
+<pre><code class="language-sh">$ GODEBUG=gctrace=1 go run gcwatch.go
+gc 1 @0.019s 2%: 0.028+0.61+0.015 ms clock, 0.22+0.35/1.5/0.08+0.14 ms cpu, 4-&gt;5-&gt;2 MB, 5 MB goal, 0 MB stacks, 0 MB globals, 8 P</code></pre>
+<p>Watch <code>HeapAlloc</code> climb toward <code>NextGC</code>, <code>NumGC</code> tick over at each crossing, and <code>TotalAlloc</code> dwarf <code>HeapAlloc</code> (cumulative garbage vs live). Rerun with <code>GOGC=50 GODEBUG=gctrace=1 go run gcwatch.go</code>: goals shrink, cycles multiply. Also worth printing: <code>HeapObjects</code>, <code>PauseNs</code> (the last 256 STW pauses), <code>PauseTotalNs</code>.</p>
+<p><strong>Lab 3 — find garbage producers with pprof.</strong></p>
+<pre><code class="language-sh">$ go test -run=xxx -bench=. -memprofile=mem.out ./...
+$ go tool pprof -sample_index=alloc_space mem.out
+(pprof) top10      # who allocated the most, ever -- the GC's workload
+(pprof) list render</code></pre>
+<p><code>alloc_space</code> (all allocation, dead or alive) finds GC pressure; <code>inuse_space</code> (the default) finds what is live now. Sampling is 512 KiB per sample (<code>runtime.MemProfileRate</code>), so numbers are estimates. With a server: <code>import _ "net/http/pprof"</code>, then <code>go tool pprof -sample_index=alloc_space http://localhost:6060/debug/pprof/heap</code>.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Allocation-noise debugging.</strong> A handler high in an <code>alloc_space</code> profile pays three taxes: allocator work, GC pacing (more garbage → earlier triggers), cache misses. Read its lines with <code>-m</code>: the usual culprits are interface boxing, <code>[]interface{}</code>, string concat, <code>&amp;local</code> handed to a goroutine.</li>
+<li><strong>Container sizing.</strong> Set <code>GOMEMLIMIT</code> to ~90% of the container limit and budget RSS, not live heap — this explains an OOMKill at 700 MB with a 300 MB live heap: unreleased spans plus doubling room between GCs.</li>
+<li><strong>The silent-overwrite incident.</strong> "Sometimes the last record repeats": two slice views over one buffer plus an <code>append</code>. Diagnose by reading <code>ptr/len/cap</code> arithmetic; fix with a three-index slice.</li>
+<li><strong>Interview answers with numbers.</strong> Why no compaction? Size-class interchangeability (ch19's tcmalloc lineage) plus address stability for cgo/unsafe. Why ~10–100 µs pauses? The hybrid write barrier removed stack rescans (Go 1.8). What does <code>GOGC=100</code> mean? The heap doubles before each cycle.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>ch04 (the stack):</strong> Go frames are ch04 frames plus a stack-check branch in every prologue (ch07) — "stacks that move" as machine code.</li>
+<li><strong>ch05 (the heap):</strong> escape analysis minimizes how often you pay ch05's costs; <code>mallocgc</code> is the fast path when you do.</li>
+<li><strong>ch06 (object layout):</strong> the itab is ch06's fat pointer animated by a compiler decision.</li>
+<li><strong>ch08–ch10 (C, C++, Rust):</strong> Go declined all three lifetime disciplines — manual free, RAII, borrow checking — and paid with a GC plus a pacer; section 1 is that trade.</li>
+<li><strong>ch12 (Java), ch13 (C#):</strong> the compacting, generational opposite pole — same tricolor theory, opposite moving/latency choices.</li>
+<li><strong>ch14 (Python), ch16 (Swift/ARC):</strong> the refcount alternative whose per-assignment cost Go's copy-everything semantics would make brutal.</li>
+<li><strong>ch19 (allocators):</strong> mcache/mcentral/mheap <em>is</em> tcmalloc's three-level design; ch19 shows where the size-class table comes from.</li>
+<li><strong>ch20 (hardware memory model):</strong> the write barrier is also a memory-ordering contract; per-P mcache is per-core state, so false sharing lives here.</li>
+<li><strong>Roadmap, security module:</strong> a non-moving GC makes use-after-free nearly impossible in pure Go — but <code>unsafe</code>, cgo, and heap grooming reopen ch21's world.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><em>(concept)</em> A colleague: "Go has a GC because Google engineers didn't trust programmers with <code>free()</code>." Derive the deeper chain this chapter argues, from goroutine design to GC, in four steps.</li>
+</ol>
+<ol>
+<li><em>(concept)</em> Go 1.8's write barrier shades two values per heap pointer store. Name both, name the two classic barriers they combine, and state the pause-related property the combination buys.</li>
+</ol>
+<ol>
+<li><em>(predict)</em> For each function: where does <code>v</code>/<code>z</code> live (stack or heap), and which <code>-gcflags='-m'</code> line appears?</li>
+</ol>
+<pre><code class="language-go">   func a(v Vec) float64   { return v.X + v.Y }                            // (a)
+   func b() *Vec           { v := Vec{1, 2, 3}; return &amp;v }                // (b)
+   func c() interface{}    { v := Vec{1, 2, 3}; return v }                 // (c)
+   func d() func() float64 { z := 0.0; return func() float64 { z++; return z } } // (d)</code></pre>
+<ol>
+<li><em>(predict)</em> A <code>gctrace</code> line ends <code>7-&gt;8-&gt;4 MB, 8 MB goal</code>. The program reruns with <code>GOGC=50</code> (same live heap; ignore stacks/globals). What is the next goal, and what does GOGC=50 trade?</li>
+</ol>
+<ol>
+<li><em>(predict)</em> What does this print, and what are <code>len</code>/<code>cap</code> of <code>mid</code> at the end?</li>
+</ol>
+<pre><code class="language-go">   base := []int{0, 1, 2, 3, 4, 5, 6, 7}
+   mid := base[2:5]
+   mid = append(mid, 99)
+   mid = append(mid, 100, 200, 300, 400)
+   fmt.Println(base, mid)</code></pre>
+<ol>
+<li><em>(bug-diagnosis)</em> A teammate swears the function below "only writes to <code>preview</code>", yet <code>data[10]</code> becomes -1 in production. Explain the exact write the <code>append</code> performs, and give the one-token fix.</li>
+</ol>
+<pre><code class="language-go">   data := make([]int, 1000, 1000)
+   // ... 1000 rows filled ...
+   preview := data[:10]
+   preview = append(preview, -1)</code></pre>
+<ol>
+<li><em>(bug-diagnosis)</em> On Go 1.21 this prints <code>3 3 3</code>; on Go 1.22 it prints a permutation of <code>0 1 2</code>. Explain both behaviors in terms of what the closure captures, and what <code>-gcflags='-m'</code> reveals.</li>
+</ol>
+<pre><code class="language-go">   for i := 0; i &lt; 3; i++ {
+       go func() { fmt.Println(i) }()
+   }</code></pre>
+<ol>
+<li><em>(cross-chapter)</em> Rust's <code>&amp;dyn Trait</code> and Go's interface value are both 2-word fat pointers (ch06, ch10). Explain why assigning a 24-byte struct to a Go interface copies it to the heap, while coercing <code>&amp;my_struct</code> to <code>&amp;dyn MyTrait</code> in Rust points directly at the (possibly stack-allocated) struct.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The chain, not the trust story.</strong> (1) Millions of concurrent flows are impossible with OS threads — MBs of stack address space, tens of KB committed each — so goroutines with KB-scale stacks. (2) A fixed 2 KB stack can't hold arbitrary recursion, so stacks grow by <em>copying</em> (Go 1.3+), invalidating every address into them. (3) <code>&amp;x</code> and cross-goroutine pointers must stay ergonomic, so escaped values need stable addresses: the heap, gated by escape analysis. (4) Free-flowing pointers have no static owner — manual free is use-after-free at scale (ch08), refcounting costs per assignment and leaks cycles (ch14) — so a tracing GC is forced.</li>
+</ol>
+<ol>
+<li>It shades the <strong>old (overwritten) value</strong> — Yuasa's <em>deletion</em> barrier, snapshot semantics — and the <strong>new value</strong> — Dijkstra's <em>insertion</em> barrier. Together, anything reachable at cycle start or published mid-cycle is shaded grey, so a mutator can never hide a live object behind a black one. Payoff: stacks are never re-scanned at mark termination — pre-1.8 Go's stack-rescan STW was the multi-millisecond pause; since 1.8 the two STW phases are tens of microseconds.</li>
+</ol>
+<ol>
+<li>(a) Stack, and silence — a value parameter, no address taken. (b) Heap: <code>moved to heap: v</code> (the address flows to the return). (c) Heap: <code>v escapes to heap</code> — 24 bytes don't fit the interface's single data word, so the value is copied there. (d) Heap: <code>moved to heap: z</code> plus <code>func literal escapes to heap</code> — the returned closure mutates <code>z</code>, forcing capture by reference.</li>
+</ol>
+<ol>
+<li>Goal = live + live*(GOGC/100) = 4 + 2 = <strong>6 MB</strong>. GOGC=50 trades <em>memory</em> for <em>GC frequency</em>: the heap only grows to 1.5x live between cycles — more CPU per byte allocated, smaller peak — the knob for memory-tight containers, and the one GOMEMLIMIT (1.19+) supersedes.</li>
+</ol>
+<ol>
+<li>First <code>append</code>: <code>mid = {&amp;A[2], 4, 6}</code>; 99 written in place at <code>&amp;A[5]</code>, so <code>base = [0 1 2 3 4 99 6 7]</code>. The second needs 8 &gt; cap 6, so it allocates a fresh array — capacity doubles 6 → 12 (small slices double; the 256/1.25x knee is Go 1.18+) — copies <code>[2 3 4 99]</code>, appends the rest: <code>mid = [2 3 4 99 100 200 300 400]</code>, <code>len = 8</code>, <code>cap = 12</code>, now detached from <code>base</code>.</li>
+</ol>
+<ol>
+<li><code>preview</code> is <code>{&amp;data[0], 10, 1000}</code> — cap is the distance to the <em>backing array's</em> end, not the view's end. With <code>len &lt; cap</code>, <code>append</code> writes <strong>in place at <code>ptr + len</code> = <code>&amp;data[10]</code></strong> — no new array, no error. Fix: the three-index slice <code>data[:10:10]</code> (cap = 10) forces a copy on the next <code>append</code>. Rule: cap, not len, bounds <code>append</code>'s blast radius.</li>
+</ol>
+<ol>
+<li>Go ≤ 1.21: one <code>i</code> for the whole loop; the closure captures it by reference (mutated by <code>i++</code>) and the <code>go</code> statement makes it escape — <code>-m</code> shows <code>moved to heap: i</code> and <code>func literal escapes to heap</code>. All three goroutines watch the same memory cell; the loop usually finishes first, so each reads the final value 3. Go 1.22 gave each iteration a fresh <code>i</code>, so each closure captures its own copy — 0, 1, 2 in scheduler order. The fix was literally a per-iteration allocation.</li>
+</ol>
+<ol>
+<li>Both data words must be a stable pointer to the value. Rust's borrow checker proves the borrow outlives the trait object's use, so the data word can point at the struct wherever it lives — stack included. Go has no lifetime proof: the interface may outlive its frame, that stack may be <em>copied</em> by growth at any moment, and Go refuses to forbid <code>var s Shape = localStruct</code> — so the compiler copies the struct to the heap, the one place whose address never changes. Same 2-word layout; the difference is who proves the lifetime: the type system (ch10) or the collector.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch10.html"><span class="cn-label">previous</span><span class="cn-title">Ch 10</span></a>
+<a class="next" href="ch12.html"><span class="cn-label">next</span><span class="cn-title">Ch 12</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/11-go.md">chapters/11-go.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

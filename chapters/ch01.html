@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 01 — Memory from silicon — deep-roots</title>
+<meta name="description" content="Chapter 01 of the memory-models module: Chapter 01 — Memory from silicon">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 01 — Memory from silicon — deep-roots">
+<meta property="og:description" content="Chapter 01 of the memory-models module: Chapter 01 — Memory from silicon">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 01 — Memory from silicon — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of the memory-models module: Chapter 01 — Memory from silicon">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part I · the machine</div>
+<h1 class="post-title">Chapter 01 — Memory from silicon</h1>
+<div class="post-meta">chapter 01 &middot; ~11 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Memory is not an abstract "array of bytes" — it is a physical machine built from capacitors that leak, wires that are long, and grids that must be addressed in rows and columns. Every rule you have ever fought — alignment, endianness, the cache hierarchy, why 64-bit "only" has 48 usable address bits — is a direct consequence of that physics. This chapter builds memory from the transistor up so that the rest of the module is derivation, not memorization.</blockquote>
+<h2 id="the-bit-is-a-physical-thing">The bit is a physical thing</h2>
+<p>Start at the bottom. A computer stores a bit in one of two ways, and the choice between them explains almost everything about how computers feel.</p>
+<p><strong>DRAM (dynamic RAM)</strong> stores one bit as charge on a microscopic capacitor, guarded by a single access transistor. The cell is tiny — one transistor and one capacitor, which is why a DIMM today holds tens of billions of them. But capacitors leak. Within roughly 64 milliseconds, a charged cell drains enough that its value becomes ambiguous, so the chip spends part of every cycle reading every row and writing it back refreshed. This is <em>refresh</em>, and it silently steals bandwidth and power from you constantly — one of the insider facts at the end of this chapter.</p>
+<pre><code>DRAM cell (1 bit)                     SRAM cell (1 bit, 6 transistors)
+
+  word line ──┤ gate                   two cross-coupled inverters
+              │                        (a latch that fights to keep its state)
+  bit line ───●──── capacitor ── ⏚
+              (charge = 1,             6 transistors, ~6x the silicon area
+               no charge = 0)          of a DRAM cell, but no refresh, ~10x faster</code></pre>
+<p><strong>SRAM (static RAM)</strong> stores a bit in a latch made of six transistors. It holds its state as long as power flows — no refresh. It is also physically large and expensive, which is why you get kilobytes of it near the CPU (registers, caches — Chapter 02) and gigabytes of DRAM further away. The entire memory hierarchy is not a clever idea someone had; it is the only thing you can build given the economics: fast memory is big-per-bit and expensive, cheap memory is small-per-bit and slow.</p>
+<h2 id="the-memory-grid-and-what-an-address-really-is">The memory grid, and what an address really is</h2>
+<p>DRAM is physically a two-dimensional grid. Cells at a row-column intersection. To read one bit, the memory controller:</p>
+<ol>
+<li>Activates a <strong>row</strong> (the whole row is sensed into a <em>row buffer</em> — hundreds of bytes come out together whether you wanted them or not),</li>
+<li>Selects the <strong>column</strong> bits you actually asked for,</li>
+<li>Transfers them over the <strong>bus</strong>.</li>
+</ol>
+<p>The bus is wider than one bit and the transfer is a <em>burst</em>: DDR memory delivers a burst of 8 transfers per read, 64 bits each — which is exactly <strong>64 bytes</strong>. Hold that number: the cache line size of every mainstream CPU (Chapter 02) is 64 bytes because the DRAM burst is 64 bytes. The hierarchy is not arbitrary; it is matched to the wire.</p>
+<pre><code>CPU ── memory controller ── channel ── rank ── bank (grid) ── row/col
+                              │
+                    address split:  | row bits | bank bits | column bits |</code></pre>
+<p>Channels are independent wires to separate sets of chips; interleaving successive addresses across channels multiplies bandwidth. Banks are independent grids inside a chip that can work in parallel. When people say "dual-channel memory," they mean two wires that fetch in parallel — roughly twice the burst throughput, not twice the speed of a single fetch.</p>
+<h2 id="byte-addressing-and-word-size">Byte addressing and word size</h2>
+<p>The CPU's memory interface addresses <strong>bytes</strong> — every address names one byte, even on a 64-bit machine. A 64-bit load reads 8 bytes starting at the given address. "Word size" means the natural register width, which determines: how much arithmetic the CPU does per instruction, which single load fills a register, and — crucially — <strong>how wide a pointer is</strong>. A pointer is just a number whose unit is bytes, so a 64-bit machine needs 8 bytes to store one.</p>
+<p>Consequence you have already met: <code>sizeof(void*) == 8</code> on x86-64, and every array of pointers strides by 8 (Chapter 06 will make you compute layout by hand).</p>
+<h2 id="endianness-a-wiring-decision-that-became-a-holy-war">Endianness: a wiring decision that became a holy war</h2>
+<p>When you store the 32-bit value <code>0x04030201</code> at address 1000, which byte lands in address 1000?</p>
+<pre><code>                     address:  1000   1001   1002   1003
+little-endian (x86, ARM64):   01     02     03     04     (least significant first)
+big-endian    (network, old SPARC/PowerPC era):   04     03     02     01</code></pre>
+<p>Little-endian is the natural wiring of an incrementing-address bus onto an integer whose low byte is closest to ground; big-endian reads in the order humans write numbers. It matters exactly twice in most careers — and both times it matters a lot:</p>
+<ul>
+<li><strong>Network byte order</strong> is big-endian by history; every socket program calls <code>htonl</code>/<code>ntohl</code> (host-to-network-long) — the names <em>are</em> the endianness chapter.</li>
+<li><strong>Reading memory dumps or file formats</strong>: <code>hexdump</code> shows you bytes; whether <code>11 22</code> is <code>0x1122</code> or <code>0x2211</code> depends on the writer's endianness — this is precisely how a COBOL COMP-3 field, a PNG header, and a stack-doomed pointer are all decoded by the same skill (Chapter 17's storage dumps, Chapter 21's exploit development).</li>
+</ul>
+<h2 id="alignment-the-rule-that-generates-padding-atomics-and-crashes">Alignment: the rule that generates padding, atomics, and crashes</h2>
+<p>Hardware does not want to fetch a 4-byte value that straddles two 8-byte lanes or two cache lines. Each access "wants" its natural alignment: an <code>n</code>-byte scalar at an address divisible by <code>n</code>.</p>
+<div class="table-wrap"><table><thead><tr><th>Type (x86-64)</th><th>Size</th><th>Natural alignment</th></tr></thead><tbody><tr><td><code>char</code></td><td>1</td><td>1</td></tr><tr><td><code>short</code></td><td>2</td><td>2</td></tr><tr><td><code>int</code>, <code>float</code></td><td>4</td><td>4</td></tr><tr><td><code>long</code>, <code>double</code>, pointer</td><td>8</td><td>8</td></tr></tbody></table></div>
+<p>Three consequences, each a chapter of this module in embryo:</p>
+<ol>
+<li><strong>Padding</strong>: a C struct with <code>char; int;</code> is 1 + 3 pad + 4 = 8 bytes, not 5. Chapter 06 turns this into a design discipline (field reordering) and shows real 20-30% size wins.</li>
+<li><strong>Atomicity</strong>: on every mainstream CPU, an aligned load or store of a word is naturally atomic — no torn reads. The entire lock-free world (Chapter 20) is built on this one physical fact; misaligned "atomics" tear.</li>
+<li><strong>Faults</strong>: x86 tolerates misaligned access (slowly, sometimes splitting a cache line); ARM historically could raise an alignment fault. The C <code>__attribute__((packed))</code> struct that worked on your desktop segfaults on some embedded ARM — a bug class that only makes sense once you know alignment is a physical request, not a style rule.</li>
+</ol>
+<h2 id="address-width-why-64-bit-means-47-usable-bits">Address width: why "64-bit" means 47 usable bits</h2>
+<p>A 64-bit pointer could name 16 exabytes, but no machine wires 64 address lines. x86-64 with 4-level page tables uses 48-bit virtual addresses — 256 TB of address space per process, which was astronomy in 2003 and is merely comfortable now. The hardware requires the top 16 bits to be a sign extension of bit 47, producing the <em>canonical address</em> split:</p>
+<pre><code>0x0000_0000_0000_0000  ..  0x0000_7fff_ffff_ffff   canonical low half   (user space)
+                       hole (non-canonical, faults)
+0xffff_8000_0000_0000  ..  0xffff_ffff_ffff_ffff   canonical high half  (kernel space)</code></pre>
+<p>This is why a userspace pointer on Linux looks like <code>0x7ffc...</code> and a kernel pointer like <code>0xffff...</code> — a fact you will use in every core dump you ever read. ARMv8 also started at 48-bit and grew an optional 52-bit (5-level) mode, same story, different round number. The 48-bit limit is also the reason pointer tagging works: the top 16 bits are guaranteed-zero spare room, which V8, JVM compressed oops, and Lisp systems all exploit (Chapters 12, 15, 06).</p>
+<h2 id="putting-one-load-on-the-timeline">Putting one load on the timeline</h2>
+<p>When your CPU executes <code>mov rax, [rsi]</code>, roughly this happens: the virtual address goes to the MMU (Chapter 03) to become a physical address; the L1 data cache is checked (4 cycles); on miss, L2 (~12), L3 (~40); on miss, a coherence check goes out to other cores (Chapter 20); finally a DRAM read: activate the row, wait ~15 ns for the sense amplifiers, burst 64 bytes over the bus. <strong>A DRAM round trip is on the order of 60-100 nanoseconds — about 200-400 CPU cycles.</strong> At 3 GHz, light itself travels only 10 cm per cycle; your RAM is electrically a distant city, and the cache hierarchy (Chapter 02) is the commuter rail built to hide that distance.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>Refresh steals your bandwidth</strong>: DRAM refreshes every row every ~64 ms (tREFI ≈ 7.8 µs between refresh commands at standard temperature). Under heavy load, refresh can consume several percent of memory bandwidth; error-correcting and high-density chips refresh more.</li>
+<li><strong>Row-buffer locality is the hidden performance lever</strong>: reading from the row currently open in a bank's row buffer is fast; switching rows costs a precharge + activate (~10s of ns). Access patterns that hop rows (pointer-chasing linked structures — Chapter 05) pay this constantly, even with "the same amount of data."</li>
+<li><strong>ECC DIMMs are 72-bit, not 64-bit</strong>: 8 extra bits per burst store a Hamming code; the machine can correct 1-bit and detect 2-bit errors per burst. Most consumer boards simply don't wire the chip-selects for it.</li>
+<li><strong><code>memset</code> of a huge buffer outruns a naive loop</strong> not because of magic but because the runtime uses wide vector stores and, above a threshold, <em>non-temporal</em> stores that bypass the cache (Chapter 02) — writing 4 GB should not evict your entire cache.</li>
+<li><strong>A pointer is bytes like anything else</strong>: leak it, and you have leaked an address — the atomic unit of the exploit economics in Chapter 21 (defeating ASLR).</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Everything in this chapter is observable from a shell on Linux:</p>
+<pre><code class="language-console">$ sudo dmidecode -t memory | grep -E 'Size|Speed|Locator' | head
+        Size: 16 GB
+        Speed: 5600 MT/s
+        Locator: ChannelA-DIMM0           # channels are physical and visible here
+$ cat /proc/meminfo | head -3
+MemTotal:       16294968 kB                # ~16 GB minus reserved regions
+MemFree:         ...
+MemAvailable:    ...                       # free + reclaimable page cache</code></pre>
+<p>Endianness and alignment, in 20 lines of C:</p>
+<pre><code class="language-c">#include &lt;stdio.h&gt;
+#include &lt;stdint.h&gt;
+int main(void) {
+    uint32_t x = 0x04030201;
+    unsigned char *p = (unsigned char *)&amp;x;
+    printf("bytes: %02x %02x %02x %02x\n", p[0], p[1], p[2], p[3]);
+    // x86-64/ARM64 Linux prints: 01 02 03 04  -&gt; little-endian
+
+    struct { char c; int i; char c2; } s;
+    printf("sizeof = %zu, offsets = %zu, %zu, %zu\n",
+           sizeof s, (size_t)&amp;s.c - (size_t)&amp;s, (size_t)&amp;s.i - (size_t)&amp;s, 0);
+    // sizeof = 12 on x86-64: 1 char + 3 pad + 4 int + 1 char + 3 trailing pad
+    return 0;
+}</code></pre>
+<p>Compile with <code>gcc -Wall demo.c &amp;&amp; ./a.out</code>, then flip the struct to <code>int; char; char;</code> and watch it drop to 8 bytes. You have just derived Chapter 06's first lesson from hardware.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Reading specifications</strong>: "8-byte aligned," "wire format is big-endian," "burst of 64" stop being incantations and become physical statements.</li>
+<li><strong>Performance intuition</strong>: every slow data structure you will ever meet is slow because it fights one of these facts — pointer chasing (row/bank switches), poor locality (cache lines you don't use — Chapter 02), or allocation churn (Chapter 05).</li>
+<li><strong>Bug hunting</strong>: crashes "only on ARM," torn reads under concurrency, and corrupt file parsers are all this chapter's material wearing a costume.</li>
+<li><strong>Interview fluency</strong>: "why is a cache line 64 bytes?" now has a first-principles answer: it is the DRAM burst width, and the hierarchy is matched to the wire.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 02</strong> — SRAM economics + DRAM distance <em>are</em> the cache hierarchy.</li>
+<li><strong>Chapter 03</strong> — the 48-bit canonical hole and the page as the OS's currency.</li>
+<li><strong>Chapter 06</strong> — padding, field reordering, and SoA all derive from natural alignment.</li>
+<li><strong>Chapter 12 / 15 / 06</strong> — compressed oops, V8 Smi tagging, and NaN-boxing all live in the spare bits that 48-bit addressing leaves in a pointer.</li>
+<li><strong>Chapter 20</strong> — "aligned word access is atomic" is the physical floor of the memory model.</li>
+<li><strong>Chapter 17</strong> — COBOL storage dumps are endianness + PICTURE byte decoding.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Why is SRAM used for caches and DRAM for main memory, rather than all SRAM? Give both the economic and the physical reason.</li>
+<li><strong>Concept.</strong> A colleague insists memory is "just an array of bytes." Name two physical properties of DRAM that falsify the "just an array" model.</li>
+<li><strong>Predict the output.</strong> On x86-64 Linux, <code>uint16_t v = 0xBEEF;</code> — write the two bytes <code>hexdump</code> would show at <code>&amp;v</code>, in order.</li>
+<li><strong>Predict the number.</strong> On x86-64, what is <code>sizeof(struct {char a; long b; char c;})</code> and where are the padding bytes?</li>
+<li><strong>Predict the number.</strong> A 3 GHz CPU with 48-bit canonical low addresses: what is the exact top address of user space in <code>0x0000...</code>-form?</li>
+<li><strong>Bug diagnosis.</strong> A firmware team's <code>struct __attribute__((packed)) {uint32_t x;}</code> pointer points to an odd address. The code works on x86 but faults on the ARM board. What two facts did the team conflate?</li>
+<li><strong>Bug diagnosis.</strong> A program copies a 12 GB buffer with a naive byte loop and the <em>rest</em> of the system slows measurably. What is the mechanism?</li>
+<li><strong>Cross-chapter.</strong> The DRAM burst is 64 bytes. Name the Chapter 02 structure whose size this determines, and explain what that structure transfers per miss.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>SRAM's 6-transistor cell is ~6x the area of DRAM's 1T1C cell, so all-SRAM main memory would cost tens of times more per GB; physically, SRAM needs no refresh and drives short wires at register speed, while DRAM's capacitors leak (refresh tax) and live far away (wire latency). The hierarchy exists to get SRAM speed where it counts (caches) and DRAM density where it counts (capacity).</li>
+<li>(a) Cells leak and must be refreshed — the array periodically rewrites itself, which a passive "array of bytes" never does; (b) the grid is addressed row-then-column with a row buffer — access has <em>shape</em>: row-buffer hits are much faster than row switches, and bursts deliver 64 bytes at a time, not 1.</li>
+<li><code>EF BE</code> — little-endian stores the least-significant byte first, so byte 0 of the value (0xEF) lands at the lower address, which <code>hexdump</code> prints first.</li>
+<li>24 bytes: <code>a</code> at 0 (1 byte), 7 bytes padding, <code>b</code> at 8 (8 bytes), <code>c</code> at 16, then 7 trailing padding bytes so the struct's size is a multiple of its largest alignment (8) — needed so arrays of the struct keep every <code>b</code> aligned.</li>
+<li><code>0x00007fff_ffffffff</code> — bit 47 is the highest usable bit in the low canonical half, so the top user address is 2^47 − 1.</li>
+<li>They conflated <em>tolerated</em> with <em>supported</em>: x86 chooses to handle misaligned accesses (possibly slowly) rather than fault; many ARM configurations (and strict alignment modes) raise an alignment fault. Packing removed the compiler's padding, but the hardware still wants <code>uint32_t</code> at a 4-divisible address — on x86 it's merely slow, on that ARM board it's a fault.</li>
+<li>The byte loop brings every 64-byte line of the 12 GB source into the cache and writes the destination through the same lines, evicting everything else the system had cached (caches are shared machinery — Chapter 02). The runtime's <code>memcpy</code> switches to non-temporal stores above a threshold precisely to avoid poisoning the cache with streaming data.</li>
+<li>The cache line (64 bytes). On a cache miss, the hardware fetches one full line from the next level — and ultimately the DRAM burst matches it, so one miss = one burst: the hierarchy's unit of currency at every level is the 64-byte line.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/01-memory-from-silicon.md">chapters/01-memory-from-silicon.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

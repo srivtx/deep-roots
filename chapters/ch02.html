@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 02 — The hierarchy: latency is the tax, locality is the loophole — deep-roots</title>
+<meta name="description" content="Chapter 02 of the memory-models module: Chapter 02 — The hierarchy: latency is the tax, locality is the loophole">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 02 — The hierarchy: latency is the tax, locality is the loophole — deep-roots">
+<meta property="og:description" content="Chapter 02 of the memory-models module: Chapter 02 — The hierarchy: latency is the tax, locality is the loophole">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 02 — The hierarchy: latency is the tax, locality is the loophole — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of the memory-models module: Chapter 02 — The hierarchy: latency is the tax, locality is the loophole">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part I · the machine</div>
+<h1 class="post-title">Chapter 02 — The hierarchy: latency is the tax, locality is the loophole</h1>
+<div class="post-meta">chapter 02 &middot; ~10 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Memory is a tall tower: registers at the top, L1/L2/L3 caches, DRAM, then disk — each level bigger and ~10x slower than the one above it. The tower exists because of Chapter 01's physics (fast is expensive, big is slow). What makes the tower livable is <em>locality</em>: programs reuse a small working set (temporal locality) and touch nearby bytes together (spatial locality). Nearly every performance question in this book — cache lines, false sharing, struct layout, GC behavior, why arrays beat lists, why your scroll janks — is one question: <em>how well does this code use the tower?</em></blockquote>
+<h2 id="the-tower-derived">The tower, derived</h2>
+<p>If DRAM were as fast as registers, we would not need this chapter. It is not — a DRAM trip is ~200-400 cycles (Chapter 01). But SRAM is ~6x the area per bit, so a CPU with hundreds of megabytes of register-speed memory is physically absurd. The engineering answer is a series of increasingly large, increasingly slow caches, each holding a <em>subset</em> of the level below:</p>
+<pre><code>level        typical size        typical latency (cycles)    who owns it
+─────────────────────────────────────────────────────────────────────
+registers    16-32 per core      0                           your code (compiler)
+L1 I/D       32-64 KB each       ~4 (≈1 ns)                  per-core, private
+L2           256 KB - 2 MB       ~12 (≈4 ns)                 per-core, private
+L3           8 - 64 MB           ~40 (≈13 ns)                shared across cores
+DRAM         8 - 256 GB          ~200-400 (60-100 ns)        shared, far away
+disk/SSD     TBs                 25,000 - 10,000,000         swap (Chapter 03)</code></pre>
+<p>Two properties of this table organize the rest of the module. First, the <em>ratio</em> between adjacent levels is roughly 4-10x — a miss at any level costs about a trip to the level below, so the cost of a memory access depends almost entirely on which level it stops at. Second, the numbers are the single most useful performance table in computing. Scaled to human terms, if one register access took 1 second: L1 ≈ 4 s, L2 ≈ 12 s, L3 ≈ 40 s, DRAM ≈ 200 s (3+ minutes), an SSD page ≈ 4 days, a disk seek ≈ 4 months. Programs are fast or slow not by the number of instructions but by <em>which of these delays they trigger</em>.</p>
+<h2 id="the-cache-line-the-atom-of-the-hierarchy">The cache line: the atom of the hierarchy</h2>
+<p>Caches do not store individual bytes; they store <strong>64-byte lines</strong> (matched to the DRAM burst — Chapter 01). When you read one byte, the hardware fetches the whole line and keeps it. This is why:</p>
+<ul>
+<li><strong>Array traversal is fast</strong>: touching <code>a[0]</code> pays the DRAM trip for a line, and <code>a[1]..a[15]</code> (for 4-byte ints) ride along free.</li>
+<li><strong>Row-major vs column-major matters</strong>: C stores 2D arrays row-by-row. Walking column-first touches a new line every element (64 bytes fetched, 4 used: 6% useful); walking row-first uses 100% of every line. The classic demo is in the lab below — routinely a 5-10x difference on a large matrix, with identical instruction counts.</li>
+<li><strong>One far byte is a full line</strong>: <code>x = p-&gt;flag</code> where <code>p</code> is randomly scattered pays a DRAM (or L3) round trip for 64 bytes to read 1. This is why linked lists, pointer forests, and per-node heap allocation (Chapter 05) are cache-hostile: their <em>moral</em> data size is small, their <em>physical</em> footprint is huge.</li>
+</ul>
+<h2 id="set-associativity-where-a-line-can-live">Set-associativity: where a line can live</h2>
+<p>With gigabytes below and kilobytes above, a cache must choose a mapping. If any line can go anywhere (fully associative), lookup hardware is expensive; if a line has exactly one home (direct-mapped), two hot addresses that hash to the same slot evict each other <em>endlessly</em> (conflict misses). The compromise is <strong>set-associativity</strong>: the address's middle bits pick a <em>set</em>, and within that set the line may live in any of N ways (L1 is typically 8-way, L2 8-16 way).</p>
+<pre><code>physical/virtual address of a byte:
+| tag (identifies the line) | set index (which set) | offset (byte within line, 6 bits) |</code></pre>
+<p>The lookup: index into the set, compare the tags of the N ways in parallel, hit or miss. Replacement within the set is pseudo-LRU or RRIP. The insider consequence: power of two + stride pathologies — iterating an array with stride 4096 bytes on a cache with the same set structure maps <em>every</em> access to one set: 16 lines fill it and the rest of the cache sits idle. Real bug, real production slowdowns, invisible to instruction profilers (see the lab).</p>
+<h2 id="locality-the-loophole">Locality, the loophole</h2>
+<p>The tower is bearable because programs are repetitive:</p>
+<ul>
+<li><strong>Temporal locality</strong>: the 90/10 rule — roughly 90% of accesses touch 10% of data (loops, hot structs, the same few objects). The cache keeps what you just used because you will probably use it again.</li>
+<li><strong>Spatial locality</strong>: if you touched byte N you will likely touch N+1..N+63. The line fetch banks on it.</li>
+</ul>
+<p>Every data-structure decision in this module is a locality statement. Contiguous arrays (Go slices, <code>std::vector</code>, Java arrays, NumPy buffers) have perfect spatial locality; node-based structures (linked lists, trees per-node-allocated, Python's dict-of-dicts, DOM trees — Chapter 15's leak-hunting) have perfect <em>anti</em>-locality. GC allocations (Chapters 11, 12, 15) get part of this for free: a bump allocator packs same-age objects adjacently, which is why a young-generation copy (Chapter 12) also <em>defragments the cache</em>.</p>
+<h2 id="the-tlb-is-also-a-cache-and-it-is-scarce">The TLB is also a cache (and it is scarce)</h2>
+<p>Chapter 03 translates every virtual address through page tables. The results are cached in the <strong>TLB</strong> — and the TLB is small: order 64-1536 entries, each typically covering one 4 KB page. Covering 1 GB with 4 KB pages takes ~262,144 entries: impossible. This is why <strong>huge pages</strong> (2 MB, 1 GB) exist — one TLB entry covers 2 MB, and databases, JVMs (with <code>-XX:+UseLargePages</code>), and mobile platforms (Chapter 22) all care intensely. A <em>TLB miss</em> is a page-table walk (up to 4 extra memory accesses on x86-64 — which themselves are cached in the paging-structure caches). The hierarchy is fractal: caches for your data, caches for your translations, caches for the caches.</p>
+<h2 id="prefetching-guessing-your-future">Prefetching: guessing your future</h2>
+<p>Hardware prefetchers watch your access stream, detect strides, and fetch lines <em>before</em> you ask. Sequential array scans run at near-DRAM-bandwidth not because each access is magic but because the prefetcher stays a few lines ahead. Pointer-chasing defeats it (the next address is data-dependent). Software prefetch (<code>__builtin_prefetch</code>, <code>prefetcht0</code>) exists for patterns the hardware cannot guess — mostly in database and JIT engines, and rarely worth it in application code. The discipline instead: <em>shape your data so the hardware can guess</em> — contiguous, forward, one stream at a time.</p>
+<h2 id="multicore-in-one-paragraph">Multicore, in one paragraph</h2>
+<p>Each core has private L1/L2; L3 is shared. Two cores editing <em>different variables that share a 64-byte line</em> force the line to ping-pong between their private caches under the coherence protocol (MESI — Chapter 20 takes this fully). That is <strong>false sharing</strong>, and it turns a "we added threads, it got slower" bug into a chapter of its own. The fix (pad/align hot per-thread data to 64-byte boundaries — <code>alignas(64)</code> in C/C++, <code>@Contended</code> in Java) is pure Chapter 01+02 arithmetic.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The latency table is the profession's crib sheet</strong> (sizes and cycles above; Jeff Dean's "Latency Numbers Every Programmer Should Know" popularized the human-scale version). Interviewers use it; profilers assume it.</li>
+<li><strong>Latency is not throughput</strong>: sequential streaming hits ~full DRAM bandwidth (tens of GB/s) despite ~100 ns latency, because the memory system pipelines many outstanding misses. Pointer chasing gets ~one miss at a time: ~10-100x slower for the same bytes moved.</li>
+<li><strong><code>perf stat -e cache-misses,LLC-load-misses</code></strong> is the 30-second truth serum; <code>perf c2c</code> <em>names the false-sharing line</em>.</li>
+<li><strong>Way prediction</strong>: L1 caches guess the way so a hit costs ~4 cycles despite 8-way associativity; a mispredict adds one cycle.</li>
+<li><strong>Non-temporal stores</strong> (<code>movntdq</code>, used by big <code>memset</code>/<code>memcpy</code>) write around the cache — a 4 GB memset should not evict your 256 KB working set.</li>
+<li><strong>Caches do not cache cold-to-warm, they cache warm-to-warm</strong>: the first touch of any page also pays a page fault (Chapter 03) — often the <em>real</em> cost of "touching a big buffer once."</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Two experiments, ten minutes, laptop-only. First, locality:</p>
+<pre><code class="language-c">#include &lt;stdio.h&gt;
+#include &lt;time.h&gt;
+#define N 8192
+static int m[N][N];
+int main(void) {
+    clock_t t0 = clock();
+    long s = 0;
+    for (int i = 0; i &lt; N; i++)          // row-major: consecutive bytes
+        for (int j = 0; j &lt; N; j++) s += m[i][j];
+    clock_t t1 = clock();
+    for (int j = 0; j &lt; N; j++)          // column-major: 32 KB stride
+        for (int i = 0; i &lt; N; i++) s += m[i][j];
+    clock_t t2 = clock();
+    printf("row=%ldms col=%ldms (sum=%ld)\n",
+           (t1-t0)*1000/CLOCKS_PER_SEC, (t2-t1)*1000/CLOCKS_PER_SEC, s);
+    return 0;
+}</code></pre>
+<p>Typical result on x86-64: row-major ~25 ms, column-major ~150-250 ms — 6-10x for identical work. The difference is pure Chapter 02: every column step lands in a new line. (Bonus: swap the loop order of the <em>write</em> pattern and watch <code>perf stat -e cache-misses</code> confirm the story.)</p>
+<p>Second, hardware counters:</p>
+<pre><code class="language-console">$ perf stat -e cache-references,cache-misses,L1-dcache-load-misses ./a.out</code></pre>
+<p>Find your machine's available events with <code>perf list | grep -i cache</code>. On macOS, use Instruments' Counters template instead — same underlying PMU.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Data-structure choice</strong> is now a cache decision: prefer contiguous + indexed (arrays, <code>std::vector</code>, column tables) over node-based structures for hot paths; this single rule explains most "rewrite it in C" folklore — often the rewrite just fixed locality.</li>
+<li><strong>Hot-struct design</strong>: Chapter 06 shows 20-30% struct-size (hence cache-occupancy) wins from field reordering alone.</li>
+<li><strong>Perf debugging methodology</strong>: before optimizing <em>instructions</em>, ask which tower level each hot access stops at. <code>perf stat</code> first; instruction-level tuning second.</li>
+<li><strong>GC and allocator intuition</strong>: Chapters 11/12/15's generational designs <em>are</em> locality strategies; allocation rate matters because it churns the cache and the write barriers (Chapter 20) that maintain it.</li>
+<li><strong>Mobile</strong>: Chapter 22's "allocation spikes cause jank" is this chapter — the GC's cache traffic competes with your render thread for the same shared L3 and DRAM bandwidth.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 01</strong> — the line size, alignment, and atomic-word facts this chapter builds on.</li>
+<li><strong>Chapter 03</strong> — TLB as a translation cache; page faults on first touch.</li>
+<li><strong>Chapter 05 / 19</strong> — allocator locality: bump allocation packs objects; free lists scatter them.</li>
+<li><strong>Chapter 06</strong> — struct layout, SoA vs AoS, the 64-byte budget per hot object.</li>
+<li><strong>Chapter 12 / 15</strong> — generational GC as a locality machine; V8's semispace flip compacts <em>and</em> cache-warms the survivors.</li>
+<li><strong>Chapter 20</strong> — coherence (MESI), false sharing, and the memory model.</li>
+<li><strong>Chapter 22</strong> — mobile: shared L3/DRAM bandwidth is the frame budget the GC steals.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Why does the hierarchy use ~10x steps between levels instead of two levels (registers + DRAM)?</li>
+<li><strong>Concept.</strong> Explain why a linked list traversal and an array traversal with the same number of nodes/elements can differ 10x in time despite executing a similar number of instructions.</li>
+<li><strong>Predict the output.</strong> A loop sums <code>int</code> elements of a 64 MB array with stride 64 bytes (one int per line). Roughly what fraction of fetched bytes is actually used, and what is the best-case speedup of switching to stride 4 (contiguous)?</li>
+<li><strong>Predict the number.</strong> L1 hit ≈ 4 cycles, DRAM ≈ 300 cycles. A loop makes 1,000,000 accesses, 99% L1 hits. Average cycles per access?</li>
+<li><strong>Predict the behavior.</strong> Two threads increment separate <code>long</code> counters declared side by side. Performance is <em>worse</em> than single-threaded. What is happening and what is the fix?</li>
+<li><strong>Bug diagnosis.</strong> A matrix multiply got 6x faster when the team swapped two nested loops. Explain exactly what changed in the memory system.</li>
+<li><strong>Bug diagnosis.</strong> After "upgrading" a large hash table to chained nodes, p99 latency doubled, though operation counts were unchanged. Why?</li>
+<li><strong>Cross-chapter.</strong> Why does an aligned 8-byte load never tear, and which chapter's entire discipline depends on that fact?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>Each cache level is sized/priced for its latency class; adding intermediate levels lets the common case stop high in the tower. Two levels only (registers + DRAM) means every non-register access pays the full ~300-cycle tax; with L1 catching ~95%+ of accesses, the <em>average</em> cost collapses. The 10x-step design is a cost gradient: SRAM per byte is tens of times more expensive than DRAM per byte, so you buy exactly as much of each speed as the workload's locality lets you exploit.</li>
+<li>Array elements are contiguous, so each 64-byte line delivers 16 ints and the prefetcher can stay ahead — the loop runs near bandwidth. List nodes are independently heap-allocated (Chapter 05) and pointer-chained: every <code>next</code> is a data-dependent address, likely a new line (and a new DRAM row — Chapter 01), un-guessable by the prefetcher. Same instructions, 10x the tower trips.</li>
+<li>One 4-byte int out of a 64-byte line: 4/64 = 6.25% useful. Contiguous stride 4 uses 100% (16 ints per line) — best case ~16x fewer lines, though prefetch/pipeline effects will realize somewhat less.</li>
+<li>0.99 x 4 + 0.01 x 300 = 3.96 + 3 = ~7 cycles — notice 1% misses cost as much as 99% of the hits combined. This asymmetry is the whole subject: misses dominate.</li>
+<li>False sharing: the two counters sit in the same 64-byte line; each core's write invalidates the other's copy (MESI — Chapter 20) and the line ping-pongs between private caches. Fix: pad each counter to its own line (<code>alignas(64)</code> or a 64-byte stride array; Java: <code>@Contended</code>).</li>
+<li>Loop order changed the access pattern of the inner loop from column-major to row-major (or vice versa for the language's layout): the inner operand became contiguous, so each line fetched feeds ~16 FMA operations instead of 1, and the prefetcher can stream it. Pure Chapter 02 — no algorithmic change at all.</li>
+<li>Chaining allocated each bucket entry as a separate heap node: previously the open addressing table probed <em>contiguous</em> slots (one line = several probes); now every chain hop is a new random line. Same number of operations, each one costs a trip to L3/DRAM instead of L1.</li>
+<li>Because the hardware fetches the whole aligned 64-byte line as one unit and the alignment guarantees the 8 bytes lie in exactly one line — no observer can see half of it. Chapter 20's entire lock-free discipline (and the "aligned word access is atomic" rule that C++/Rust atomics compile down to) is built on this.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/02-the-hierarchy.md">chapters/02-the-hierarchy.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 21 — Memory security: how every model fails — deep-roots</title>
+<meta name="description" content="Chapter 21 of the memory-models module: Chapter 21 — Memory security: how every model fails">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 21 — Memory security: how every model fails — deep-roots">
+<meta property="og:description" content="Chapter 21 of the memory-models module: Chapter 21 — Memory security: how every model fails">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 21 — Memory security: how every model fails — deep-roots">
+<meta name="twitter:description" content="Chapter 21 of the memory-models module: Chapter 21 — Memory security: how every model fails">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part III · the deep end</div>
+<h1 class="post-title">Chapter 21 — Memory security: how every model fails</h1>
+<div class="post-meta">chapter 21 &middot; ~24 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Every memory-model decision you have studied in this module is also an attack-surface decision. A stack frame <em>places a return address next to a local buffer</em>; a heap allocator <em>stores metadata bytes adjacent to your data</em>; an object layout <em>puts a vtable pointer at offset 0</em>; a managed runtime protects the language but is itself written in C++. That is why memory-safety bugs are roughly 70% of severe CVEs (Microsoft MSRC and Google Chromium both reported ~70% in 2019), and why the entire mitigation ladder — canaries, NX, ASLR, PIE, RELRO, CFI, MTE — exists: each rung was built <em>because the rung below it fell</em>. This chapter walks that ladder in order, then goes past it: heap metadata attacks, use-after-free, Rowhammer, and speculative side channels. It is the bridge to Module 02 (cybersecurity). Attack mechanics are shown for one reason: this is how defenders, compiler writers, and allocator authors actually think.</blockquote>
+<h2 id="1-the-stakes-four-primitive-failures">1. The stakes: four primitive failures</h2>
+<p>Strip away the CVE names and the exploit write-ups, and almost every memory-safety</p>
+<blockquote>vulnerability in history is one of four primitive failures:</blockquote>
+<div class="table-wrap"><table><thead><tr><th>Primitive failure</th><th>One-line definition</th><th>Where this module built its precondition</th></tr></thead><tbody><tr><td><strong>Overflow</strong> (write past the end)</td><td>You write more bytes than the destination owns, into whatever sits after it.</td><td>The stack buffer sitting under the saved RIP (ch04); the heap chunk with a usable-size limit (ch05, ch19).</td></tr><tr><td><strong>Out-of-bounds</strong> (read)</td><td>You read past the end and <em>exfiltrate</em> what was there.</td><td>Pointer arithmetic and array decay with no bounds knowledge (ch08).</td></tr><tr><td><strong>Dangling</strong> (lifetime error)</td><td>A pointer outlives its target; freed memory is reused.</td><td><code>free()</code> returning bytes to a bin (ch05), RAII scope vs heap lifetime (ch09).</td></tr><tr><td><strong>Type confusion</strong> (interpretation error)</td><td>Bytes are reinterpreted as the wrong type.</td><td>Object layout: vtable pointers at offset 0, no runtime tags in C++ (ch06); V8 map pointers at offset 0 (ch15).</td></tr></tbody></table></div>
+<p>The industry's bug taxonomy says the same thing with numbers. MITRE's perennial CWE Top 25 is dominated by: <strong>CWE-787</strong> (out-of-bounds write), <strong>CWE-125</strong> (out-of-bounds read — Heartbleed in 2014 was an OOB <em>read</em> that leaked TLS private keys), <strong>CWE-416</strong> (use-after-free), <strong>CWE-415</strong> (double free). Microsoft's MSRC (Matt Miller, BlueHat 2019) and Google's Chromium team (2019) each measured roughly <strong>70% of their severe vulnerabilities as memory-safety bugs</strong>. One decade of that data is why Chrome, Windows, and Android are rewriting core components in memory-safe languages — and why this chapter exists.</p>
+<p>Two things to keep in frame:</p>
+<ol>
+<li><strong>Every primitive has a chapter-number precondition.</strong> Nothing here is magic: the attack is always "the layout fact from chapter N, plus a missing check."</li>
+<li><strong>Every mitigation below was derived, not invented.</strong> Each one exists because a specific, named failure mode defeated what came before it. That derivation chain is the chapter's spine.</li>
+</ol>
+<h2 id="2-the-stack-one-overwrite-and-the-ladder-it-built">2. The stack: one overwrite, and the ladder it built</h2>
+<p>Chapter 04 gave you the frame. The classic attack is pure layout knowledge:</p>
+<pre><code>   main's frame ...                          higher addresses
+   +------------------------------------+
+   | saved RIP (return address)  8 B    |   &lt;- written by CALL; used by RET
+   +------------------------------------+
+   | saved RBP                   8 B    |   &lt;- pushed by the prologue
+   +------------------------------------+
+   | canary                      8 B    |   &lt;- only if -fstack-protector* (gcc)
+   +------------------------------------+
+   | char buf[64]                       |   &lt;- the attacker's target
+   |  "AAAA..."                         |   &lt;- strcpy writes UP, toward saved RIP
+   +------------------------------------+   &lt;- RSP points here (lower addresses)</code></pre>
+<p>The stack grows <em>down</em>, but <code>strcpy</code> copies <em>up</em>: byte 65 of the input lands on the saved RBP, byte 73 on the saved RIP. When the function returns, <code>RET</code> pops the attacker's bytes into RIP. That is "stack smashing" (Phrack 49, 1996) and it is still the first thing every security course teaches, because it is pure Chapter 04.</p>
+<pre><code class="language-c">/* VULNERABLE: the shape of every CWE-787 since 1988 */
+void greet(const char *name) {
+    char buf[64];
+    strcpy(buf, name);          /* writes strlen(name)+1 bytes; buf owns 64 */
+}
+
+/* FIXED: the destination's size is a parameter of the operation, not a hope */
+void greet_fixed(const char *name) {
+    char buf[64];
+    if (strlen(name) &gt;= sizeof buf) { fprintf(stderr, "too long\n"); return; }
+    strcpy(buf, name);          /* now provably in bounds */
+}</code></pre>
+<p>The naive 1996 payload put <em>shellcode on the stack</em> and pointed RIP at it. That is the failure that generated the entire mitigation ladder, one rung at a time:</p>
+<ol>
+<li><strong>Stack canaries / SSP</strong> (StackSmash Protection, <code>gcc -fstack-protector-strong</code>). The prologue copies a secret 8-byte value (from <code>fs:0x28</code> on Linux x86-64) into the frame above <code>buf</code>; the epilogue compares before returning. Mismatch calls <code>__stack_chk_fail</code> and the process aborts. <em>Derived from:</em> the overwrite always crosses the canary on its way to RIP. <em>Bypasses:</em> leak the canary first (an OOB <em>read</em> — the failures compose!), or corrupt locals/pointers <em>below</em> the canary without touching it (overwrite a function pointer argument), or skip the epilogue entirely (longjmp/exception paths).</li>
+<li><strong>NX / DEP</strong> (no-execute / data-execution-prevention). Mark stack and heap <code>rw-</code>, not <code>rwx</code>. OpenBSD shipped W^X in 2003; Windows XP SP2 shipped DEP in 2004. <em>Derived from:</em> shellcode on the stack is now data, so it faults. <em>Bypass:</em> <strong>ret2libc</strong> — don't inject code, <em>call existing code</em>: point RIP at <code>system()</code> with a crafted argument.</li>
+<li><strong>ASLR</strong> (address-space layout randomization). Chapter 03 built the virtual memory map; ASLR randomizes the <em>base addresses</em> of the stack, heap, and shared libraries per run. <em>Derived from:</em> ret2libc needs libc's address. <em>Bypass:</em> an info leak that reveals one pointer (then offsets are known — Chapter 03's layout is deterministic once you have one anchor), or brute-force when entropy is small (32-bit systems: ~19–24 bits of library entropy, brute-forceable; 64-bit: 47-bit VA space, not brute-forceable).</li>
+<li><strong>PIE</strong> (position-independent executable). ASLR originally randomized libraries, stack, and heap — but not the main binary. PIE makes the executable itself a loadable at a random base (default on Ubuntu since 17.10). <em>Bypass:</em> a code-pointer leak defeats it, same as above.</li>
+<li><strong>RELRO</strong> (relocation read-only). The GOT (Chapter 08's PLT/GOT dispatch) was writable so lazy binding could fill it in — which made "overwrite a GOT entry, redirect a library call" the laziest arbitrary-write target in history. <strong>Partial RELRO</strong> keeps <code>.got.plt</code> writable; <strong>full RELRO</strong> (<code>-Wl,-z,relro,-z,now</code>) resolves every symbol at startup and mprotects the whole GOT read-only. <em>Derived from:</em> the GOT overwrite. Modern folklore is blunt: <em>GOT overwrite is dead, use full RELRO and stop worrying about it.</em></li>
+</ol>
+<p>The pattern to internalize: <strong>mitigation n is always a response to the bypass of mitigation n−1.</strong> And bypasses of mitigation n compose the <em>earlier</em> primitives (canary leak = OOB read; arbitrary write = overflow + no RELRO). Attackers do not break the ladder; they climb around it.</p>
+<h2 id="3-rop-when-code-injection-died-attackers-began-quoting-the-program">3. ROP: when code injection died, attackers began quoting the program</h2>
+<p>NX + ASLR + PIE left one thing intact: the attacker still controls the saved RIP and everything on the stack <em>after</em> it. The answer — <strong>ROP</strong>, return-oriented programming — is to never inject code at all, only <em>reuse</em> fragments already in memory. A <strong>gadget</strong> is any short instruction sequence ending in <code>ret</code>. Because <code>ret</code> pops the next stack slot into RIP, a chain of gadgets is just a chain of addresses on the stack — the CPU walks it for you:</p>
+<pre><code>   ROP chain (conceptual): call system("/bin/sh") with gadgets, not injected code
+
+   new saved RIP slot -&gt;  +--------------------------------------+
+   (after overflow)       | addr of gadget:  pop rdi ; ret      |   &lt;- gadget 1
+                          +--------------------------------------+
+                          | addr of "/bin/sh" string in libc    |   &lt;- popped into RDI
+                          +--------------------------------------+
+                          | addr of gadget:  pop rsi ; ret      |   &lt;- gadget 2
+                          +--------------------------------------+
+                          | 0x0                                  |   &lt;- RSI = 0
+                          +--------------------------------------+
+                          | addr of system@libc                  |   &lt;- gadget 3 is a
+                          +--------------------------------------+      whole function</code></pre>
+<p>Why x86 is gadget-rich and RISC is not: x86 instructions are <strong>variable-length</strong> (1–15 bytes), so a gadget can start at <em>any unaligned byte</em> — the same code bytes decode into different instructions when entered mid-stream. An ARM64 instruction is a fixed 4 bytes, so gadgets exist only at instruction boundaries and the population is far sparser (ARM64 compensates with its dense <code>ret</code>/<code>blr</code> patterns and x30 register, and with gadgets that use <code>ldp</code>/<code>ldr</code> to load multiple registers before <code>ret</code>).</p>
+<p>One more concept: the <strong>stack pivot</strong>. If your overflow is in a <em>heap</em> buffer, the ROP chain must live there — so the first gadget doesn't pop an argument, it moves RSP itself (<code>pop rsp ; ret</code>, <code>leave ; ret</code>, <code>xchg eax, esp</code>). After the pivot, the CPU is executing your heap data as a ROP chain.</p>
+<p>The mitigation response, again derived: if ROP dispatches through the stack, then</p>
+<ul>
+<li><strong>CFI</strong> (control-flow integrity, <code>clang -fsanitize=cfi</code>; Linux kernel CFI) pre-computes the set of <em>legal</em> indirect targets and inserts checks so an overwritten vtable or function pointer can only land somewhere type-correct.</li>
+<li><strong>Shadow stacks</strong> (Intel CET, shipping since Tiger Lake in 2020; also <code>-fcf-protection</code>) keep a second, tamper-proof copy of every return address; <code>ret</code> compares the two and traps on mismatch — a poisoned stack alone no longer redirects control flow.</li>
+<li><strong>PAC</strong> (ARM pointer authentication, ARMv8.3, Apple A12 in 2018) <em>signs</em> return addresses with a key, so a forged address fails its signature check at <code>ret</code>.</li>
+</ul>
+<p>And the honest framing the field actually uses: this is an <strong>arms race, not a solved problem</strong>. Shadow stacks pushed attackers from ROP toward JOP/COP (jump/call-oriented programming, which dispatch through function pointers instead of the stack), and gadget sets shrink but never reach zero. Every rung raises cost; none closes the category. The endgame that actually changes the economics is the one from Part II of this module: stop shipping memory-unsafe C/C++ in the first place.</p>
+<h2 id="4-the-heap-allocator-metadata-is-the-attack-surface">4. The heap: allocator metadata is the attack surface</h2>
+<p>Chapter 19 gave you glibc's chunk anatomy. Look at it as an attacker now:</p>
+<pre><code>   in-use chunk, 64-bit glibc (2.35):  user pointer points to +0x10
+   +0x00  prev_size   8 B   | meaningful only if PREV_INUSE of THIS chunk is clear
+   +0x08  size        8 B   | size | flags: bit0 PREV_INUSE, bit1 IS_MMAPPED, bit2 NON_MAIN_ARENA
+   +0x10  user data ...     | malloc() returns this address; free() writes a tcache
+   -0x10  ...               |   `next` pointer and `key` INTO these bytes on free</code></pre>
+<p>The design truth that follows: <strong><code>free()</code> stores freelist metadata <em>inside the chunk you just gave back</em>.</strong> Metadata adjacent to (or inside) attacker-writable bytes is not a glibc bug — it is the inherent trade of in-band metadata, and it is the attack surface of nearly every classic heap exploit.</p>
+<p><strong>Unsafe unlink (historical).</strong> When adjacent free chunks consolidate, <code>malloc</code>/<code>free</code> unlinks a chunk from its doubly linked bin, which historically performed two writes through attacker-influenced pointers (<code>P-&gt;fd-&gt;bk = P-&gt;bk; P-&gt;bk-&gt;fd = P-&gt;fd</code>) — a free "write-what-where." glibc (~2.3.4, 2004) added <strong>safe unlinking</strong>, two sanity checks that must both hold before any write happens:</p>
+<pre><code class="language-c">if (P-&gt;fd-&gt;bk != P || P-&gt;bk-&gt;fd != P)   /* the two safe-unlink checks:
+    malloc_printerr("corrupted double-linked list");  /* fd and bk must point
+    /* back at P. Faking a chunk means faking BOTH links consistently. */</code></pre>
+<p>Forged <code>fd</code>/<code>bk</code> now have to cross-reference each other back to P — which neutralized the naive version and moved attackers to the fast paths.</p>
+<p><strong>Fastbin/tcache dup and poisoning.</strong> tcache (glibc 2.26+) is a per-thread cache of singly linked free chunks per size (64 bins, up to 7 chunks each, 2.31–2.35 defaults). A double free can insert the <em>same chunk twice</em>, and a corrupted <code>next</code> pointer makes the <em>next-next</em> <code>malloc</code> return an arbitrary address:</p>
+<pre><code>   tcache bin for size 0x40, glibc 2.31 (before Safe-Linking):
+
+   entries[size 0x40] --&gt; chunk A --&gt; A AGAIN --&gt; chunk B      (A freed twice)
+
+   then, with A at the head, a UAF/overflow writes A-&gt;next = TARGET-0x10:
+
+   entries[size 0x40] --&gt; chunk A --&gt; [fake "chunk" at TARGET-0x10]
+                                        malloc #2 returns TARGET
+                                        (classic target: __free_hook, pre-2.34,
+                                        or a stack canary / vtable object)</code></pre>
+<pre><code class="language-c">/* VULNERABLE: the tcache dup of every CTF, and of real CVEs */
+char *p = malloc(0x38);
+free(p);                 /* p -&gt; tcache[0x40] */
+/* ... an overflow or UAF overwrite of p's key field goes here (see below) */
+free(p);                 /* p -&gt; tcache[0x40] AGAIN: the list now has p twice */
+
+/* FIXED: nulling after free is the C idiom; unique_ptr is the C++ one */
+free(p); p = NULL;       /* a NULL double-free is an instant, safe crash */</code></pre>
+<p>glibc 2.29 (2019) added a <code>key</code> field check to catch the direct double free (<code>free(): double free detected in tcache 2</code>) — and since the key lives <em>inside the freed chunk's user bytes</em>, the era's standard bypass became: use your overflow/UAF to overwrite the key, then free again. That is the whole lesson of this section in one anecdote: <strong>the check and the bytes it guards are neighbors, so the defense is itself attack surface.</strong> glibc 2.32 (2020) added <strong>Safe-Linking</strong>: the stored <code>next</code> pointer is XOR-encoded as <code>stored = next ^ (slot_address &gt;&gt; 12)</code>. Forging a <code>next</code> pointer now requires knowing <em>where your chunk is</em> (a heap leak) — an arbitrary constant in that field decodes to garbage, and an unaligned result trips <code>malloc(): unaligned tcache chunk detected</code>.</p>
+<p>Folklore one-liners (the "House of" family — you will meet them properly in Module 02): <strong>House of Force</strong> overwrote the top chunk's size to make a later <code>malloc</code> return an arbitrary address (dead since glibc 2.29's top-chunk size check); <strong>House of Spirit</strong> frees a <em>fake</em> chunk planted on the stack or in globals so a later <code>malloc</code> hands the attacker that address; <strong>House of Einherjar</strong> uses a single NUL byte to force consolidation <em>backwards</em> into a fake chunk.</p>
+<p>That NUL byte deserves its own paragraph, because it is the purest expression of "one byte is enough":</p>
+<pre><code class="language-c">/* VULNERABLE: the "poison null byte" (off-by-one) — writes exactly one NUL too many */
+size_t req = malloc_usable_size(chunk);   /* attacker-aligned to chunk size 0x110 */
+memcpy(chunk, src, req);                  /* fills 0x108 user bytes exactly      */
+chunk[req] = '\0';                        /* the NUL lands on the NEXT chunk's size LSB */
+/* 0x111 (size 0x110 | PREV_INUSE) becomes 0x100: PREV_INUSE cleared + size shrunk.
+   The next free() now consolidates with a "previous" chunk the attacker prepared. */</code></pre>
+<p>Clearing PREV_INUSE makes <code>free()</code> trust the <em>previous</em> chunk's (forged) <code>prev_size</code> and consolidate — producing overlapping chunks, the raw material of most heap exploits. The folklore rule it earned: <strong>no NUL-byte write near chunk metadata is safe, ever.</strong> The fix is the same as section 2: the size of the write must be derived from the destination, not from the data.</p>
+<h2 id="5-use-after-free-the-modern-bug-class-and-the-managed-language-mirage">5. Use-after-free: the modern bug class — and the managed-language mirage</h2>
+<p><strong>CWE-416 use-after-free</strong> is the top of the modern bug lists, and it is a pure lifetime error: an object dies (freed to the allocator), a <em>stale reference</em> survives, and the slot gets reallocated — often with attacker-controlled content. In browsers the pattern is boringly consistent: a DOM object is freed when a tab or document tears down, an event fires later and a handler still holds the pointer.</p>
+<pre><code class="language-cpp">// VULNERABLE: the shape of a browser UAF, in five lines
+Node* cache = document-&gt;root();      // engine caches a raw pointer
+document-&gt;close();                   // frees the Node (Ch09: lifetime ended)
+// ... attacker code runs, allocator reuses those bytes for a string/typed array ...
+cache-&gt;ref();                        // executes bytes the attacker chose
+
+// FIXED: lifetime tied to ownership, not to a raw pointer (Ch09/Ch10)
+std::unique_ptr&lt;Node&gt; cache = document-&gt;takeRoot();   // ownership, not access
+// or: std::shared_ptr&lt;Node&gt; cache;  cache = document-&gt;root();  // refcount keeps it alive</code></pre>
+<p>Why does a UAF so often become <em>code execution</em> rather than a mere crash? Because of what Chapter 06 put at offset 0: <strong>the vtable pointer.</strong> The attack composes three of the four primitives:</p>
+<ol>
+<li><strong>Heap spray</strong> (an overflow-free cousin): allocate megabytes of attacker data in a predictable address range, so the <em>next</em> reallocation reuses the freed slot and the surrounding pages are yours.</li>
+<li>The stale call goes through the object's vtable pointer — which now points into your sprayed data at a fake vtable (Chapter 06's layout, used against you).</li>
+<li><strong>Type confusion</strong> finishes it: a stale pointer to type A reinterpreted as type B (V8's equivalent: a stale object whose <em>map pointer</em>, Chapter 15, has been swapped to a different hidden class — one map says "I am a float array", the other says "I am an object array"). In engines, the canonical primitive pair is exactly that: an array-of-floats/array-of-objects confusion yields <code>addrof</code> (leak an object's address) and <code>fakeobj</code> (craft an object at a chosen address) — from there, "arbitrary read/write" is a few lines.</li>
+</ol>
+<p>Now the uncomfortable part for Part II of this module. <strong>Chapters 12–15 eliminated memory corruption <em>in the language</em> — and it did not eliminate it from the system.</strong> JavaScript, Java, and C# programs are memory-safe; the <em>engine</em> under them is a multi-million-line C++ program with raw pointers, custom allocators, JITs, and FFI. The GC manages the language's objects; it does not manage the engine's internal pointers, DOM bindings, or JIT metadata. The failure modes are engine-shaped: <strong>JIT code spraying</strong> (compile attacker-influenced code into RWX JIT pages and jump into the middle of it — JIT spray), <strong>typed-array confusion</strong> (a <code>Float64Array</code> whose backing store pointer got corrupted gives arbitrary R/W from script), and FFI/native extensions that punch straight back into C. Java's <code>sun.misc.Unsafe</code> and .NET's <code>unsafe</code> blocks are the same hole, self-inflicted.</p>
+<p>The lesson, stated precisely: <strong>memory safety is a property of the whole stack — language + engine + libraries + kernel — not a checkbox a language grants.</strong> That is why the industry's actual migration target is Rust (Chapter 10): the only mainstream systems language whose <em>compile-time</em> model (ownership + borrow checker) makes the four primitive failures type errors instead of runtime behavior. Be equally precise about its limits: <code>unsafe</code> blocks, FFI boundaries, and raw-pointer code inside Rust itself (a large share of historical Rust CVEs live in <code>std</code>'s unsafe internals) remain the escape hatches — the fence is real, the gates exist.</p>
+<h2 id="6-the-defense-stack-sanitizers-hardware-tags-and-physics">6. The defense stack: sanitizers, hardware tags, and physics</h2>
+<h3>Sanitizers: finding it before the attacker does</h3>
+<p>If the attack surface is "writes near the ends of objects," then make the ends <em>loud</em>. <strong>AddressSanitizer (ASan</strong>, <code>gcc</code>/<code>clang -fsanitize=address</code>) rings every allocation — stack, heap, and global — with <strong>redzones</strong>: poisoned bytes that trap on any access. Picture Chapter 19's chunk layout with the user data unchanged but fenced: a left redzone before the header, a right redzone after the usable size. It catches section 2's overflow and section 4's poison null byte at the <em>first byte</em>, not at the crash three functions later.</p>
+<p>The machinery is elegant and worth deriving: you cannot check every byte cheaply, so ASan keeps <strong>shadow memory</strong> — a second mapping where <strong>every 8 application bytes compress to 1 shadow byte</strong>:</p>
+<pre><code>   app memory:      0x602000000010  0x...18  0x...20   (8-byte granules)
+                        |              |         |
+   shadow addr:     (addr &gt;&gt; 3) + 0x7fff8000      (Linux x86-64, clang)
+                        |              |         |
+   shadow byte:        0x00           0x03      0xfa
+                       all 8 bytes    first 3   heap left redzone (0xfa);
+                       addressable    valid     0xfb = right redzone,
+                                                0xfd = freed (quarantined)</code></pre>
+<p>Every instrumented load/store computes one shift, one add, one byte compare — cheap enough for CI, too slow (and too memory-hungry: <strong>1/8 of RAM for the shadow, plus redzones, roughly 2x–3x slowdown</strong>) for production. The <strong>UAF quarantine</strong> completes the trick: freed chunks are held (default ~256 MiB, per the ASan allocator) instead of being reused, so a stale dereference hits the <code>0xfd</code> poison instead of silently reading a reallocated object — that is how ASan turns CWE-416, the bug class that <em>usually works fine in testing</em>, into a deterministic report.</p>
+<p>Its siblings, one line each: <strong>MSan</strong> shadow-tracks <em>initializedness</em> and traps on reads of uninitialized bytes (CWE-457); <strong>UBSan</strong> traps undefined behavior itself — signed overflow, misaligned access, bad vtable dispatch — at the operation that causes it. And the delivery mechanism is <strong>fuzzing</strong>: AFL++/libFuzzer mutating inputs in a loop, ASan/UBSan instrumented, is the industry default (OSS-Fuzz runs exactly that stack against hundreds of projects). The old world found these bugs with valgrind in production, at 10–50x slowdown; the current world finds them with <strong>ASan in CI</strong> — same detection, hours earlier, before the release train instead of after the incident.</p>
+<h3>Hardware: MTE and PAC</h3>
+<p>Software checks per access are slow. <strong>ARM MTE</strong> (memory tagging extension) moves the check into the CPU: memory is tagged in <strong>4-bit tags per 16-byte granule</strong>, pointers carry a matching tag in their top byte (which ARM64 already ignored — TBI), and the hardware compares pointer tag vs. memory tag on every access. Tag mismatch = trap. UAF and OOB become detectable <em>at the instruction that commits them</em>, with near-zero software cost. Adoption: the <strong>Pixel 8 (2023) was the first consumer MTE hardware</strong>; Android enables it per-process. Why is detection <strong>~90%, not 100%</strong>? Four bits = 16 possible tags, so a freed-and-reused object has a <strong>1/16 (~6%) chance of colliding with the stale pointer's tag</strong> — a mismatched access that slips through. MTE raises the cost of every exploit and catches the sloppy majority; it does not close the category.</p>
+<p><strong>PAC</strong> gets one line here (it appeared in section 3): signed return addresses make stack-ROP fail at <code>ret</code> unless the attacker also forges signatures.</p>
+<h3>Physics: Rowhammer and the speculative side channel</h3>
+<p>The bottom of the stack bites back. <strong>Rowhammer</strong> (Kim et al., 2015) is DRAM physics as attack: a DRAM cell is a capacitor on an accessed row (Chapter 01); activating one row <em>thousands of times per second</em> leaks charge into adjacent rows and flips their bits — corruption with <strong>no software bug at all</strong>. The 2015 result flipped bits from an unprivileged userspace process; later work (VU Amsterdam's <strong>TRRespass</strong>, 2020; <strong>Blacksmith</strong>, 2022) showed the industry's defense — <strong>TRR</strong>, targeted row refresh, which refreshes neighbors of hammered rows — could itself be evaded with many-sided, non-uniform hammer patterns. Mitigations, all partial: TRR, more frequent refresh (each refresh pass costs measurable power — the phone's battery pays), and <strong>ECC as a partial fix</strong> (ECC turns silent flips into correctable-or-detected events, but ECC-bypass results exist). Rowhammer is the honest endpoint of this module: the memory <em>model</em> was never the only surface — the memory <em>physics</em> is one too.</p>
+<p>One paragraph for the class that redefined the field. <strong>Spectre/Meltdown (2018)</strong> are "memory as a side channel": speculative execution runs a branch the CPU should not have taken, transiently loads a secret byte, and uses it to touch one of two cache lines; Chapter 02's hierarchy then betrays the choice through timing (a cache hit is ~1 ns, a miss ~100 ns — the fastest yes/no oracle in computing). The architectural state is rolled back, the cache state is not. The consequence for the definition of "memory safety": a program can be <strong>fully correct, fully memory-safe, and still leak its secrets</strong> — safety of <em>writes</em> (integrity) was never enough; the industry now also has to defend <em>reads and timing</em>. Confidentiality joined the threat model, and that is Chapter 02's material becoming security physics.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>ASan's real cost</strong> is 1/8 of RAM for the shadow (plus redzones per allocation, minimum 16 B each, and a default ~256 MiB UAF quarantine), ~2–3x runtime, and — the part that bites huge C++ binaries — startup work: <code>__asan_register_globals</code> registers every global's redzone before <code>main</code>, which can add seconds to processes with hundreds of thousands of globals.</li>
+<li><strong>glibc 2.29–2.35 tcache double-free check and its standard bypass</strong>: the <code>key</code> field in the freed chunk's user bytes; overwriting it (via the same overflow that caused the bug) makes the second <code>free</code> pass. The moral insiders repeat: metadata adjacent to user data is attack surface, even when the metadata <em>is</em> the defense.</li>
+<li><strong>"GOT overwrite is dead"</strong> — under full RELRO (<code>-Wl,-z,relro,-z,now</code>) the GOT is resolved at startup and read-only; the modern write targets are function pointers in <code>.data</code>/heap objects, <code>__free_hook</code>/<code>__malloc_hook</code> (removed in glibc 2.34), and vtables.</li>
+<li><strong>The canary's first byte is 0x00 on purpose</strong>: <code>strcpy</code>-family overwrites copy until <em>their</em> terminating NUL, so an all-bytes canary would be copied by a chained strcpy and leaked back; a 0x00 low byte stops the copy mid-canary.</li>
+<li><strong>checksec output reading</strong> (pwntools or checksec.sh): four fields that summarize this chapter's ladder — <code>Canary</code> (<code>Yes</code> = SSP), <code>NX</code> (<code>Yes</code> = DEP), <code>PIE</code> (<code>Yes</code> = randomized binary), <code>RELRO</code> (<code>Full</code> beats <code>Partial</code>: writable GOT is the difference). A binary reading <code>No Canary / NX Yes / No PIE / Partial</code> is a 2004 binary wearing 2023 libraries.</li>
+<li><strong>"No NUL-byte write into chunk metadata is safe"</strong> — the poison-null-byte family: clearing PREV_INUSE (bit 0 of <code>size</code>) is one bit of corruption and has spawned three decades of consolidation exploits; safe-unlink and Safe-Linking constrain but do not repeal the rule.</li>
+<li><strong>Safe-Linking arithmetic</strong> (glibc 2.32+): <code>stored = next ^ (slot &gt;&gt; 12)</code>; decoding needs the <em>slot's own address</em>, so tcache poisoning without a heap leak lands on <code>malloc(): unaligned tcache chunk detected</code> rather than your target.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>The lab is defensive: watch each mitigation catch the same 200-byte overflow.</p>
+<pre><code class="language-bash">cat &gt; vuln.c &lt;&lt;'EOF'
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+int main(int argc, char **argv) {
+    char buf[64];
+    if (argc &gt; 1) strcpy(buf, argv[1]);   /* CWE-787: writes up to strlen+1 bytes */
+    printf("ok: %s\n", buf);
+    return 0;
+}
+EOF
+
+# 1. No protection: watch the hijack itself (gcc 12+/clang, x86-64 Linux)
+gcc -g -O0 -fno-stack-protector -no-pie -o vuln_raw vuln.c
+./vuln_raw "$(python3 -c "print('A'*200)")"
+#   Segmentation fault (core dumped)      &lt;- RIP = 0x4141414141414141
+
+# 2. Canary: the abort named in the chapter
+gcc -g -O0 -fstack-protector-strong -o vuln_ssp vuln.c
+./vuln_ssp "$(python3 -c "print('A'*200)")"
+#   *** stack smashing detected ***: terminated   (SIGABRT from __stack_chk_fail)
+#   The write itself still happened; the exit check is what caught it.
+
+# 3. ASan: the first-byte report, with the redzone decoded
+gcc -g -O0 -fsanitize=address -o vuln_asan vuln.c
+./vuln_asan "$(python3 -c "print('A'*200)")"
+#   ERROR: AddressSanitizer: stack-buffer-overflow on address ...
+#   WRITE of size 201 at ... thread T0
+#   Address ... is located in stack of thread T0 at offset 64 in frame
+#     #0 ... main ...  'buf' (64 bytes)
+#   [32, 96) 'buf'  ... [96, 144) '&lt;array frame 48 bytes&gt;' ...  &lt;- offsets into the
+#   frame; the shadow says 0x00 for [32,96) and 0xfa/0xfb redzone right after.
+
+# 4. checksec: read the ladder of the binary, not the source
+#   (pip install pwntools; or any checksec.sh)
+checksec --file=vuln_ssp
+#   RELRO:  Partial  | Canary:  Yes  | NX:  Yes  | PIE:  No ...
+#   (Partial because the default link used lazy binding; add -Wl,-z,now for Full.)
+
+# 5. gdb: the $rsp/$rip relationship that explains the whole chapter
+gdb -q ./vuln_raw
+(gdb) run AAAA...                  (paste 200 A's, or: run $(python3 -c "print('A'*200)"))
+(gdb) info registers rip rsp rbp
+#   rip  0x4141414141414141  &lt;- ret popped the attacker's bytes
+#   rsp  0x7ffc...           &lt;- points INTO the stack right below the dead RIP:
+#   (gdb) x/4gx $rsp         &lt;-  this is where a ROP chain would be sitting</code></pre>
+<p>What to notice: (2) proves the canary is an <em>exit</em> check — the corruption is already committed; (3) proves ASan reports at the <em>first</em> bad byte, with the shadow byte's meaning in the report; (5) shows control flow and the future ROP chain living at <code>$rsp</code> — one <code>RET</code> away from each other. Optional MTE note: ARM MTE can be exercised without Pixel hardware via <code>qemu-aarch64</code> (QEMU 7.2+ with <code>-machine mte=on</code> under <code>qemu-system-aarch64</code>, or user-mode with tag support) and a <code>clang -fsanitize=memtag</code> build — nice to see, not required.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Debugging any C/C++ crash</strong>: run the failing input under <code>-fsanitize=address,undefined</code> before reading a core dump — an offset-into- redzone report replaces an hour of staring at a corrupted frame (Chapter 04's gdb skills still read the frame; ASan tells you <em>which write</em> broke it).</li>
+<li><strong>Code review reflexes</strong>: any <code>strcpy</code>/<code>memcpy</code>/<code>sprintf</code> whose length comes from the <em>data</em> instead of the <em>destination</em> is section 2 waiting to happen; any <code>free</code> followed by reachable pointer use is section 5; any raw pointer cached across a callback/event is a browser-style UAF.</li>
+<li><strong>Hardening your own builds</strong>: <code>-fstack-protector-strong -D_FORTIFY_SOURCE=2 -Wl,-z,relro,-z,now -pie</code> is the four-rung ladder in flags; ASan+UBSan in CI plus a fuzzer on your parsers is the delivery mechanism. checksec the result.</li>
+<li><strong>Reading CVEs like an insider</strong>: "heap-based buffer overflow in the allocator" now decomposes into a primitive (overflow), a target (chunk metadata), and a technique (poisoned freelist → arbitrary write); "UAF in the DOM" decomposes into lifetime error + reallocation + type confusion.</li>
+<li><strong>Interview answers that land</strong>: why NX didn't end exploitation (ROP quotes existing code); why ASLR didn't (info leaks compose with the OOB-read primitive); why 70% of CVEs are memory-safety bugs (the four primitives are layout facts, not coding slips); why the field's long-term answer is language migration, not another rung on the ladder.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Ch01</strong> — the DRAM capacitor cell is the precondition for Rowhammer: physics below every abstraction.</li>
+<li><strong>Ch02</strong> — the cache hierarchy and its hit/miss timing delta is the oracle every speculative side channel speaks.</li>
+<li><strong>Ch03</strong> — virtual memory's fixed layout is what ASLR randomizes; one leaked pointer re-derives the rest deterministically.</li>
+<li><strong>Ch04</strong> — frames, prologues, and the saved RIP: the entire stack-smashing story is one chapter-04 diagram plus a missing length check.</li>
+<li><strong>Ch05 / Ch19</strong> — free lists, bins, chunk headers, tcache: the heap attack surface, defined.</li>
+<li><strong>Ch06</strong> — vtable-at-offset-0 is why UAF + heap spray becomes RIP control; padding/tag bits become confusion primitives.</li>
+<li><strong>Ch08 / Ch09</strong> — the explicit and RAII models are where all four primitive failures live unchecked; <code>unique_ptr</code>/<code>shared_ptr</code> are the lifetime fixes.</li>
+<li><strong>Ch10</strong> — Rust's borrow checker compiles sections 2–5's bug classes into type errors; its <code>unsafe</code>/FFI gates are the honest asterisk.</li>
+<li><strong>Ch12–Ch15</strong> — the managed runtimes: safe languages on unsafe engines, and the V8 map/hidden-class machinery behind engine type confusion.</li>
+<li><strong>Ch22</strong> — mobile memory in practice: MTE on Pixel 8, PAC on Apple silicon, process-level hardening as the deployment story.</li>
+<li><strong>Module 02 (cybersecurity &amp; exploitation, queued)</strong> — this chapter is its prerequisite: every primitive here becomes a lab there.</li>
+<li><strong>Module 03 (software bugs, queued)</strong> — the sanitizer/fuzzing pipeline shown here is that module's process-layer case study; <strong>Module 04 (decompilation, queued)</strong> — gadget hunting and reading stripped binaries is applied ROP.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><em>(concept)</em> The x86-64 Linux canary is 8 bytes, and its <strong>low byte is 0x00 by design</strong>. Explain the specific overwrite primitive this defeats, and name the remaining bypass that leaks the other 7 bytes anyway.</li>
+<li><em>(concept)</em> ARM MTE detects UAF and OOB in hardware at ~90% effectiveness, not 100%. Derive the number: where does the residual failure come from, and why is it probabilistic rather than a design flaw?</li>
+<li><em>(predict)</em> A binary has: canary <code>Yes</code>, NX <code>Yes</code>, ASLR+PIE <code>Yes</code>, <strong>RELRO <code>Partial</code></strong>. An attacker has one heap overflow that grants an arbitrary 8-byte write and a separate OOB <em>read</em>. Walk the exploit: which mitigation stops which step, and what is the cheapest path to code execution that this configuration leaves open?</li>
+<li><em>(predict)</em> glibc 2.35, tcache: <code>p = malloc(0x38); free(p); free(p);</code> — what exact error aborts the process, which field triggered it, and what does the attacker need to change <em>between</em> the two frees for the second one to succeed?</li>
+<li><em>(diagnose)</em> A reviewer finds: <code>Node* n = new Node; auto a = std::shared_ptr&lt;Node&gt;(n); auto b = std::shared_ptr&lt;Node&gt;(n);</code> — the object is later destroyed twice, and the second destructor runs on reallocated memory. What is the bug class (CWE number), why doesn't <code>shared_ptr</code>'s refcount save it, and what is the fix?</li>
+<li><em>(diagnose)</em> A browser crashes only under a specific sequence: close a tab (DOM node freed), run a script that allocates thousands of typed arrays, then fire a pending event whose handler touches a cached node pointer. Under ASan, the report says the access hit <code>0xfd</code> shadow. Name the bug, name the technique the script is performing, and say what the handler's virtual call would have dispatched through if ASan had not intervened.</li>
+<li><em>(cross-chapter)</em> Using Chapter 06's object layout: a UAF'ed C++ object sits at address 0x5555_5555_9000 and the attacker has sprayed the heap with controlled data. Which field of the dead object is the pivot, at which offset, and what exactly must the attacker place in the sprayed data so that <code>obj-&gt;vfunc()</code> transfers control?</li>
+<li><em>(predict, cross-chapter)</em> glibc 2.32+: the head tcache chunk's <code>next</code> field is overwritten with the constant 0x4141414141414141 (the attacker knows no addresses). Two <code>malloc</code>s of that size happen. What pointer does the allocator actually compute on the second one, and what does glibc most likely print?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The 0x00 low byte breaks strcpy-chain canary leaks.</strong> <code>strcpy</code> copies until <em>its</em> NUL; with a fully random canary, a string overwrite copies the canary into an attacker-visible buffer, and re-overflowing with the leaked value restores it — check passes, RIP still hijacked. A leading 0x00 makes the <em>canary itself</em> the terminating NUL, so the copy stops at byte 0 and never reveals bytes 1–7. The surviving bypass: a format-string or OOB-read bug elsewhere that prints raw stack memory (the primitive failures compose — an OOB read defeats a write defense), or overwriting frame locals <em>below</em> the canary (e.g., a function pointer variable) and never touching it, or avoiding the checked epilogue via longjmp.</li>
+<li><strong>Tag collision, 4 bits wide.</strong> MTE assigns a 4-bit tag per 16-byte granule — 16 possible values. On free, the runtime re-randomizes the memory tag; a stale pointer retains the old tag. The stale access is caught iff the new tag differs — a <strong>1/16 (~6%) chance the tags collide</strong> and the access slips through as a false negative. It is probabilistic because tags are hints, not identities: with 16 tags there is no way to make every live object globally unique. ~90%+ detection is the aggregate over randomized reuse, hence MTE is a cost-raiser, not a category-killer.</li>
+<li><strong>Nothing stops the write; the write is redirected.</strong> The canary does <em>not</em> fire — this is a <em>heap</em> overflow, not a stack frame overwrite. NX stops "jump to injected shellcode." ASLR+PIE stop <em>guessing</em> code addresses — but the OOB read leaks one pointer, which re-derives libc's base deterministically (Ch03: fixed offsets from any anchor). The cheapest open path: <strong>Partial RELRO leaves <code>.got.plt</code> writable</strong>, so the arbitrary 8-byte write overwrites a GOT entry (say, <code>free@got</code> or <code>exit@got</code>) with <code>system@libc</code> (address derived from the leak). The next call through that PLT slot becomes <code>system(attacker_string)</code>. Full RELRO (<code>-z now</code>) would close exactly this step; the next-cheapest paths are <code>__free_hook</code> (gone in 2.34) or a vtable in a heap object.</li>
+<li><strong><code>free(): double free detected in tcache 2</code>.</strong> Trigger: glibc 2.29+ stores a per-thread <code>key</code> pointer in the freed chunk's user area; on the second free, <code>e-&gt;key == tcache</code> (and the chunk is found in the bin) aborts. Between the frees the attacker must <strong>overwrite that key field</strong> (via the original overflow/UAF — the bytes are user-addressable, which is the point of the moral) so the check no longer recognizes the chunk as tcache-resident. The chunk then enters the bin twice → dup → poisoning candidate.</li>
+<li><strong>CWE-425-adjacent misuse producing CWE-415 (double free) / CWE-416 (UAF).</strong> Two independent <code>shared_ptr</code> control blocks for one object = refcount 1 + 1, not 2: each control block believes it owns the object exclusively, so both destructors call <code>delete n</code> — the second delete is a <strong>double free</strong>, and the memory reallocated in between (the "destroyed on reallocated memory" symptom) makes it a UAF corruption too. <code>shared_ptr</code>'s refcount cannot save it because there is no shared control block — the count was never shared. Fix: construct once and copy — <code>auto a = std::make_shared&lt;Node&gt;(); auto b = a;</code> — or hand out <code>weak_ptr</code> for non-owning observers.</li>
+<li><strong>UAF (CWE-416) + heap spray.</strong> The freed DOM node's slot is reallocated by the typed-array allocations (the spray's job is to make the <em>reused content</em> attacker-chosen and the neighborhood predictable). ASan's <code>0xfd</code> shadow byte means the freed region was in the <strong>quarantine</strong> — held, poisoned, not yet reused — which is why the crash is deterministic and diagnosable. Without ASan, the reallocation succeeds and the handler's virtual call would dispatch through the <strong>vtable pointer at offset 0</strong> of the dead object — now pointing into sprayed data, i.e., a fake vtable (Ch06) under attacker control.</li>
+<li><strong>The vptr, offset 0, pivots to the sprayed fake vtable.</strong> Ch06: the first 8 bytes of a polymorphic C++ object are the vtable pointer. The attacker needs: (a) at a chosen spray address <code>T</code>, a fake vtable — an array of function pointers where the <em>index of the called virtual function</em> (fixed by the class layout, computed at compile time) holds the desired target (e.g., a stack- pivot gadget); and (b) a way to write <code>T</code> into the dead object's offset 0 — which the heap spray/reallocation itself provides (the freed object's bytes are re-filled by attacker data). Then <code>obj-&gt;vfunc()</code> loads vptr = T, loads <code>T[2]</code> (say), and calls it: control transferred without touching the stack.</li>
+<li><strong>A garbage address, then an abort.</strong> Safe-Linking (glibc 2.32+) stores <code>stored = next ^ (slot &gt;&gt; 12)</code>. On <code>malloc</code> #1 the corrupted head is popped; on #2 the allocator decodes the attacker's constant as <code>next = 0x4141414141414141 ^ (slot &gt;&gt; 12)</code> — the XOR of the constant with the <em>unknown</em> high bits of the chunk's own address. Without knowing where the chunk lives, the result is an address the attacker did not choose; if it is not 16-byte-aligned, glibc prints <strong><code>malloc(): unaligned tcache chunk detected</code></strong> (the check shipped with Safe-Linking) and aborts. If it happens to be aligned, <code>malloc</code> returns a wild pointer that crashes on use. Either way: the constant alone is not a poisoning primitive — this check plus encoding is what moved the price of tcache poisoning up to "requires a heap leak first."</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch20.html"><span class="cn-label">previous</span><span class="cn-title">Ch 20</span></a>
+<a class="next" href="ch22.html"><span class="cn-label">next</span><span class="cn-title">Ch 22</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/21-memory-security.md">chapters/21-memory-security.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

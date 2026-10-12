@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 20 — The hardware memory model: why cores disagree about memory — deep-roots</title>
+<meta name="description" content="Chapter 20 of the memory-models module: Chapter 20 — The hardware memory model: why cores disagree about memory">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 20 — The hardware memory model: why cores disagree about memory — deep-roots">
+<meta property="og:description" content="Chapter 20 of the memory-models module: Chapter 20 — The hardware memory model: why cores disagree about memory">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 20 — The hardware memory model: why cores disagree about memory — deep-roots">
+<meta name="twitter:description" content="Chapter 20 of the memory-models module: Chapter 20 — The hardware memory model: why cores disagree about memory">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part III · the deep end</div>
+<h1 class="post-title">Chapter 20 — The hardware memory model: why cores disagree about memory</h1>
+<div class="post-meta">chapter 20 &middot; ~23 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Chapter 02 promised that caches keep their copies of memory <em>coherent</em>. That promise is true — and far weaker than it sounds. Between each core and its cache sits a <strong>store buffer</strong> (plus other reordering machinery) whose job is to keep the core fed while writes drain. The consequence: two cores can observe the same two writes in opposite orders, and the classic two-thread handshake can end with both sides reading 0. That is not a malfunction — it is the documented contract between hardware and software, the <em>memory model</em> of the machine. x86-64 makes one narrow promise (TSO: stores become visible in order, but loads may pass them); ARM and POWER make almost none, trading ordering for power. Software rebuilds the order it needs with fences and acquire/release atomics, and the <strong>DRF-SC theorem</strong> is what makes every program from Chapters 08–18 portable across both worlds. This chapter is the hardware truth underneath every "memory model" those languages promised you.</blockquote>
+<h2 id="1-the-store-buffer-where-sequential-consistency-dies">1. The store buffer: where sequential consistency dies</h2>
+<p>Chapter 02 ended with MESI: a coherence protocol that guarantees no core ever sees a stale or torn view of <em>one address</em>. So how can two threads disagree about the order of two writes? Derive it, one performance decision at a time.</p>
+<p>A store is not a single event. To write one byte, the core's cache must own the whole 64-byte line in Modified state (Chapter 02), which may mean invalidating every other copy and waiting ~100 cycles for acknowledgments. A core issuing stores at one per cycle would stall constantly. So hardware splits the store in two: the core appends the write to a small FIFO <strong>store buffer</strong> (56 entries on a Skylake-client core, per Agner Fog's tables) and marches on; the buffer drains to L1 asynchronously. Here is the fateful optimization: <strong>a load may execute while the core's own older stores are still parked in the buffer</strong> — the alternative, draining the buffer before every load, would serialize the pipeline.</p>
+<p>Now the famous litmus test, <strong>Store Buffering (SB)</strong> — two threads, two flags, each writes its own and reads the other's:</p>
+<pre><code class="language-c">// SB litmus test — C11 relaxed atomics (atomicity, no ordering)
+// Thread 0                          // Thread 1
+x = 1;   // relaxed atomic store     y = 1;   // relaxed atomic store
+r1 = y;  // relaxed atomic load      r2 = x;  // relaxed atomic load
+// Question: can the program end with r1 == 0 AND r2 == 0?
+// x86-64: YES.  ARMv8-A: YES.  Sequential consistency would say: impossible.</code></pre>
+<pre><code>       Thread 0                             Thread 1
+  +-------------------+               +-------------------+
+  | store x = 1       |               | store y = 1       |
+  | load  y           |               | load  x           |
+  +---------+---------+               +---------+---------+
+            |                                   |
+            v                                   v
+  +-------------------+               +-------------------+
+  | store buffer of   |  x=1 parked   | store buffer of   |  y=1 parked
+  | core 0            |  (not drained)| core 1            |  (not drained)
+  +---------+---------+               +---------+---------+
+            |                                   |
+            v                                   v
+     load y -&gt; asks caches: y == 0      load x -&gt; asks caches: x == 0
+            |                                   |
+            +------- both loads outran --------&gt;+
+              both cores' own buffered stores
+
+  Result: r1 == 0 and r2 == 0. No line was ever incoherent; the ORDER
+  of visibility across two lines disagreed. If this were a mutual-
+  exclusion handshake (Dekker's algorithm, precisely), both threads
+  would now enter the critical section.</code></pre>
+<p>Each thread's load races ahead of its own parked store, asks the caches, and gets 0.</p>
+<p><strong>This is not a bug.</strong> It is the <em>architectural contract</em>: the vendor documents which reorderings may be observed — the hardware memory model — and everything else here is software holding up its end. It took decades to formalize: x86-TSO was only rigorously specified in 2010 (Sewell et al.), long after the chips shipped.</p>
+<p><strong>Coherence vs. consistency — the distinction that unlocks this chapter:</strong></p>
+<ul>
+<li><strong>Coherence</strong> (Chapter 02, MESI) is a <em>per-location</em> property: for one address, all cores agree on the order of writes to it. No torn values, no stale copies. SB's loads returned 0 because the stores had not <em>happened</em> globally yet — nobody saw a stale <code>y</code>.</li>
+<li><strong>The memory model</strong> (consistency) is about <em>order across locations</em>: does everyone agree that <code>x=1</code> became visible before <code>y=1</code>? MESI says nothing about this, because all the interesting reordering happens <strong>on the core's side of the cache</strong> — in the store buffer, the load pipeline, speculation. The cache faithfully reports the order in which writes <em>arrive</em> at it; the core decides when they leave.</li>
+</ul>
+<p>That is why "we have coherent caches" and "we have sequential consistency" (one global interleaved order of all operations) are different claims, and why no coherence protocol, however fancy, buys you the second one for free.</p>
+<h2 id="2-mesi-per-location-truth-and-nothing-more">2. MESI: per-location truth, and nothing more</h2>
+<p>One honest paragraph, then the table. MESI (the "Illinois" protocol, Papamarcou &amp; Patel, 1984) tags every line with one of four states and enforces one invariant: <em>if any cache holds the line Modified, all others hold it Invalid</em>. Reads, writes, and snoops push the state machines around over a shared interconnect — that is Chapter 02's coherence, delivered. What MESI is <em>not</em>: a memory ordering mechanism. It has no notion of "the store to line A happened before the store to line B" — different state machines, different cores, fed by different store buffers.</p>
+<pre><code class="language-text">MESI — the four states of one cache line, per core (x86-64 &amp; ARMv8-A, 64-B lines):
+
++-----------+-------+-----------------------------------------------------------+
+| State     | line  | Meaning / what the core may do                           |
+|           | clean?|                                                           |
++-----------+-------+-----------------------------------------------------------+
+| Modified  | dirty | I own it exclusively; MAIN MEMORY IS STALE; on eviction  |
+|           |       | I must write it back; a snoop read forces the writeback. |
+| Exclusive | clean | I own it exclusively and memory matches; a store here    |
+|           |       | upgrades to Modified SILENTLY (no bus traffic at all).   |
+| Shared    | clean | Others may also hold copies; a store must first          |
+|           |       | invalidate them all (write-with-invalidation round trip).|
+| Invalid   |   -   | I hold nothing; any access starts with a miss.           |
++-----------+-------+-----------------------------------------------------------+
+
+The transitions that matter:
+  I --read miss--&gt;  S (if another cache has it) or E (if I am the only owner)
+  I --write miss--&gt; M (all other copies invalidated first)
+  S --write--&gt;      I broadcast to others, then M   (the expensive store)
+  E --write--&gt;      M with ZERO bus messages         (the free store)
+  M --snoop read--&gt; S (line forwarded or written back; I lose dirtiness)
+  M/E --eviction--&gt; I (M writes back to memory first)</code></pre>
+<p>Notice <strong>Exclusive</strong>: it is why single-threaded code never notices MESI. Your line arrives in E, stores upgrade to M silently, the interconnect stays quiet — until a second core writes the <em>same</em> line and it starts ping-ponging M → I → M → I between them. That is the engine of false sharing in Section 6.</p>
+<p><strong>MOESI</strong> adds an <strong>O</strong>wned state: one cache may hold the dirty line and <em>forward</em> it to snoopers without writing it back first (AMD lineage). <strong>MESIF</strong> (Intel) adds a <strong>F</strong>orward state: exactly one Shared copy is designated to answer snoops so the rest stay silent. Both are bandwidth optimizations of the same skeleton — neither changes anything about memory <em>ordering</em>.</p>
+<h2 id="3-the-two-poles-x86-tso-and-the-weak-arm-power-world">3. The two poles: x86-TSO and the weak ARM/POWER world</h2>
+<p>Formally: a machine can preserve four orderings between two accesses A-before-B in program order — load→load, load→store, store→load, store→store. <strong>Sequential consistency</strong> preserves all four. Every real machine preserves fewer.</p>
+<p><strong>x86-TSO</strong> (the contract behind every x86-64 you'll touch; Sewell et al. 2010, matching Intel SDM Vol. 3 Ch. 8) preserves three:</p>
+<ul>
+<li>Loads are not reordered with loads; stores are not reordered with stores; the store buffer drains in FIFO order.</li>
+<li>The one reordering: <strong>a load may be satisfied before an older store drains</strong> — Section 1's store buffer. That is the <em>entire</em> gap between TSO and SC, and it is exactly enough to break SB/Dekker.</li>
+<li>Locked instructions (<code>lock cmpxchg</code>, <code>xchg</code> with memory) and <code>mfence</code> are full barriers.</li>
+</ul>
+<p><strong>ARMv8-A / POWER</strong> (weak models; the AArch64 model formalized by Alglave, Maranget, Tautschnig 2014, in Arm ARM DDI 0487) preserve none by default:</p>
+<ul>
+<li>Loads can be satisfied <em>early</em> by speculation and re-checked later; stores can be merged and held in write queues until an arbitrary visibility point — two stores to different lines can become visible in either order, differently per core.</li>
+<li>What they <em>do</em> honor: <strong>dependencies</strong>. An address dependency (load a pointer, then dereference it) orders the two loads in the architecture, on both ARMv8 and POWER. That gift is load-bearing for lock-free code, as Section 4's MP test shows.</li>
+<li>Ordering is opt-in, per instruction: <code>ldar</code>/<code>stlr</code> (acquire/release), <code>dmb</code>/<code>dsb</code> barriers, POWER's <code>.acq</code>/<code>.rel</code> suffixed accesses.</li>
+</ul>
+<p>Why the split? <strong>Physics, power, and complexity budget — not malice.</strong> A strong model constrains every future microarchitecture forever: global store order costs ordering checkpoints and a little serialization on every memory op. In a 150-watt server core that is a rounding error next to the out-of-order engine it feeds; in a 3-watt phone core it is a direct tax on performance-per-watt, and letting stores coalesce and loads fire speculatively wins battery life. History compounds it: x86's contract froze in the 1980s when "lock" was literally a bus lock, and Intel pays to keep that promise; ARM is licensed into everything from in-order microcontrollers to Apple's M-series, and a weak contract leaves every licensee free to build whatever is cheapest. Strong models are backwards compatibility you can bill for; weak models are freedom.</p>
+<h2 id="4-litmus-tests-interrogating-the-machine">4. Litmus tests: interrogating the machine</h2>
+<p>You cannot interview a CPU about its beliefs, so the field invented <strong>litmus tests</strong>: tiny two-thread programs plus a question — "is this final state allowed?" Run the program millions of times with both threads released at once; if the "impossible" outcome appears, the architecture allows the reordering. That is how the formal models were validated against real chips. Tools: <code>herd7</code> explores outcomes <em>symbolically</em> against a formal model; <code>litmus7</code> (herdtools7/diy7, Alglave–Maranget–McKenna) runs them on real hardware; and a plain C loop catches the big ones yourself (lab below).</p>
+<p>Three canonical tests, three verdicts:</p>
+<pre><code class="language-c">// (a) SB — Store Buffering: ALLOWED on x86-64, ALLOWED on ARMv8-A
+//     (the Section 1 test; both threads can read 0).
+//     THE reason Dekker's algorithm needs a fence even on Intel.
+
+// (b) MP — Message Passing, the pattern of ALL concurrent code:
+// Thread 0                      // Thread 1
+msg = 42;                       while (flag == 0) ;   // spin
+flag = 1;                       r = msg;              // read AFTER flag
+// Can r == 0 while flag == 1?
+//   x86-64: FORBIDDEN — TSO orders the two stores AND the two loads,
+//           so msg's store must be visible before flag's.
+//   ARMv8-A plain version: ALLOWED — the loads can reorder, the
+//           consumer can see flag==1 with msg==0. This is the exact
+//           shape of "worked on my x86 box, fails on the ARM server."
+//   ARMv8-A with an address dependency (flag HOLDS the pointer:
+//           r1 = flag; r2 = *(int **)r1) — FORBIDDEN, same as x86.
+//   With release/acquire atomics (Section 5) — FORBIDDEN on both.
+
+// (c) WO — Write Ordering (two stores, one observer):
+// Thread 0                      // Thread 1
+x = 1;                           r1 = y;
+y = 1;                           r2 = x;
+// Can r1 == 1 &amp;&amp; r2 == 0 (y visible, x not yet)?
+//   x86-64: FORBIDDEN — the store buffer is FIFO, x drains before y.
+//   ARMv8-A: ALLOWED — stores to different lines can become visible
+//           in either order per observer.</code></pre>
+<pre><code class="language-text">+--------------------------------+--------------------+--------------------+
+| Litmus test                    | x86-64 (TSO)       | ARMv8-A (weak)     |
++--------------------------------+--------------------+--------------------+
+| SB  (store;load, 2 cores)      | ALLOWED            | ALLOWED            |
+| MP  plain (store;load, 2)      | forbidden          | ALLOWED            |
+| MP  with address dependency    | forbidden          | forbidden          |
+| MP  with acquire/release       | forbidden          | forbidden          |
+| WO  (store;store, observer)    | forbidden          | ALLOWED            |
++--------------------------------+--------------------+--------------------+</code></pre>
+<p>Read the MP rows twice — they carry the chapter. Message passing is <em>the</em> pattern of concurrent programming (every channel, every flag, every RCU read), and the plain version is what "works on x86, fails on Graviton" looks like. The two <em>forbidden on both</em> rows are how the world actually programs around it: <strong>address dependencies</strong> (publish a pointer, consume by dereferencing — the ordering rides the data, zero instructions) and <strong>acquire/release atomics</strong> (Section 5). That "forbidden on both" is why data-dependency programming works everywhere — and why Linux's RCU is built almost entirely out of pointers.</p>
+<p>A minimal harness, so the method is concrete:</p>
+<pre><code class="language-c">// how litmus results are actually gathered (schematic)
+for (long i = 0; i &lt; N; i++) {                 // N = 1e6..1e9
+    x = 0; y = 0;                             // reset both locations
+    spawn(thread0); spawn(thread1);            // each spins on a start flag
+    go = 1;                                   // release both at once
+    join(); join();
+    violations += (r1 == 0 &amp;&amp; r2 == 0);        // count the "impossible"
+}
+// violations &gt; 0          =&gt; the architecture allows the reordering.
+// violations == 0 after 1e9 =&gt; strong evidence, not proof — only the
+//   vendor's contract proves a "forbidden". litmus7 tightens the odds
+//   thousands-fold by keeping both threads spinning (no spawn/join
+//   per round), which is why it catches what naive loops miss.</code></pre>
+<h2 id="5-the-fixes-fences-atomics-happens-before">5. The fixes: fences, atomics, happens-before</h2>
+<p><strong>Hardware's own patch: the fence (barrier).</strong> A fence tells the core: <em>nothing after me becomes visible until everything before me has.</em> On x86-64 (where you'll least need it): <code>mfence</code> is the full fence — it closes the store→load hole that SB exploits; <code>sfence</code> orders stores only (needed after non-temporal/WC stores — insiders); <code>lfence</code> orders loads and mostly appears serializing <code>rdtsc</code> pairs. On ARMv8-A: <code>dmb</code> (data memory barrier; <code>dmb ish</code> is the kernel's system-wide flavor) is the general fence; <code>dsb</code> waits for <em>completion</em> (cache ops, WFI — far more expensive); <code>isb</code> flushes the instruction pipeline. <strong>Cost:</strong> a fence is a pipeline drain, order 10–100+ cycles; a locked RMW (<code>lock cmpxchg</code>) is ~20 cycles uncontended and is itself a full barrier. Rule of thumb: a fence in a hot loop can cost more than the work around it — which is why compilers and libraries go to absurd lengths to emit none. The software contract below formalizes exactly those lengths.</p>
+<p><strong>The software contract: C11/C++11 atomics.</strong> C11 (N1570) and C++11 (N3337), built on Boehm–Adve 2008, gave the languages a memory model with three everyday strengths:</p>
+<pre><code class="language-c">// The workhorse: release-store PUBLISHES, acquire-load SUBSCRIBES (C11)
+_Atomic int flag = 0;        // the data itself can stay a plain variable
+int msg = 0;                // ONE producer, ONE consumer: no race, by contract
+
+// Producer                                    // Consumer
+msg = 42;  // plain write                      while (atomic_load_explicit(
+atomic_store_explicit(&amp;flag, 1,                  &amp;flag, memory_order_acquire) == 0)
+    memory_order_release);                       ;
+                                              r = msg;  // GUARANTEED 42 on
+                                                        // x86, ARM, POWER, all</code></pre>
+<p>Derive it from MP: the pattern <em>is</em> the MP test. The release store forbids the producer's earlier <code>msg</code> write from being reordered after the flag — it "releases" everything before it when it becomes visible. The acquire load forbids the consumer's later reads from being satisfied before it — it "acquires" everything the release published. Two instructions meet in the middle and create a guaranteed channel; this is the memory-model half of every mutex, channel, and <code>Once</code> in Chapters 08–18. The idiom to burn in: <strong>lock-guard shape</strong> — release when you leave the private section, acquire when you enter it.</p>
+<p>The three strengths, as costs:</p>
+<ul>
+<li><code>memory_order_seq_cst</code> — the default, and the expensive one: all seq_cst operations agree on one global order. Costs one <code>mfence</code> or locked <code>xchg</code> per store on x86-64 (~20+ cycles); <code>ldar</code>/<code>stlr</code> on ARMv8. Needed only when threads <em>compare notes</em> about ordering they didn't synchronize over (Dekker/Peterson, the IRIW family — two observers must agree on the order of two independent writers).</li>
+<li><code>memory_order_acquire</code> / <code>release</code> — the workhorse: one-directional pairing (above); compiles to <strong>plain <code>mov</code> on x86-64</strong> and <code>ldar</code>/<code>stlr</code> on ARMv8.</li>
+<li><code>memory_order_relaxed</code> — atomicity only, no order: the SB and WO tests above used it, and it is legal on both poles. (<code>memory_order_consume</code> was designed for POWER dependency tracking; compilers broke it so thoroughly that everyone treats it as <code>acquire</code> — avoid it.)</li>
+</ul>
+<p><strong>The volatile trap (Chapter 08, now with teeth).</strong> C's <code>volatile</code> means <em>don't cache this access in a register, don't elide it</em> — nothing more. It is <strong>not atomic</strong> and <strong>orders nothing</strong>: a plain store after a volatile store can still be reordered past it by compiler or CPU, and a 64-bit read can tear on a 32-bit core. Using it for inter-thread flags is a data race — undefined behavior (Chapter 08) with a track record of working until it doesn't. <strong>Java's <code>volatile</code></strong> (Chapter 12) is the opposite extreme: since JSR-133 (Manson–Pugh–Adve, 2004, JDK 1.5) it means sequentially consistent visibility. Same keyword, opposite contracts, because both languages reached for the C keyword in the 1990s before anyone knew what threads require, and C# (Chapter 13) split the difference at acquire/release. Three languages, one keyword, three models — check the language before you trust the word.</p>
+<p><strong>Happens-before: the portable abstraction.</strong> All of this compiles down to one relation (Lamport, 1978): <strong>A happens-before B</strong> if A precedes B in program order on one thread, or A synchronizes-with B across threads (mutex release → mutex acquire, thread <code>join</code>, atomic release-store → acquire-load that reads it, channel send → receive — Chapter 11 built Go's version of exactly this). The rule: <em>if A happens-before B, then B is guaranteed to observe A's writes.</em> Fences and acquire/release are the machinery; happens-before is the interface every language model sells you (Rust Ch. 10, Go Ch. 11, Java's JMM Ch. 12).</p>
+<p>On top of it sits <strong>the theorem that makes Chapters 08–18 portable</strong>:</p>
+<blockquote><strong>DRF-SC (data-race-free sequential consistency).</strong> If a program has no data races, it executes as if sequentially consistent — on x86, on ARM, on POWER. Adve–Hill 1990 (hardware level), Boehm–Adve 2008 (C/C++), and the JMM guarantees it for Java.</blockquote>
+<p>A <em>data race</em> is two accesses to the same location, at least one a write, on different threads, with no happens-before edge between them. In C/C++/Rust a data race is <strong>undefined behavior</strong> (Chapter 08's license for the optimizer; Chapter 10's safe Rust outlaws it at compile time via <code>Send</code>/<code>Sync</code>, which is why the borrow checker is so obsessed with sharing). In Java it is <em>defined but evil</em>: accesses stay atomic (no tearing), but the compiler and CPU may keep serving a stale value indefinitely. Write race-free code and you never think about TSO or ARMv8 — your language's locks and atomics carry the DRF-SC warranty. Break it and you are back in Section 1, reading store-buffer diagrams to explain a production incident.</p>
+<p><strong>How you will actually meet this.</strong> Almost nobody writes fences. The Linux kernel does — <code>Documentation/memory-barriers.txt</code> (Howells, McKenney) is the canonical field manual, and its crown jewel is the bounded-queue pattern: the producer owns <code>head</code>, the consumer owns <code>tail</code>, each index published with release semantics, so the other side's reads of the ring entries are ordered for free — this chapter's MP pairing in a kernel costume, and the same shape lives in every channel, mutex, and RCU read path. Most programmers meet the memory model pre-paid: <strong>a mutex is a seq_cst-shaped pair of barriers</strong> (release on unlock, acquire on lock, plus an atomic RMW on the lock word) — which is why lock-protected code is simply correct everywhere, and why "add more locks" fixes ordering bugs without anyone knowing why. Low-latency programming (Chapter 19's allocator fast paths, lock-free queues) is the art of deleting locks while keeping exactly the release→acquire edges the queue pattern proves you need.</p>
+<h2 id="6-false-sharing-mesi-s-revenge-on-your-data-layout">6. False sharing: MESI's revenge on your data layout</h2>
+<p>Ordering is not the only way cores disagree about memory. Section 2's state machine is <em>per-line</em>, and a line is 64 bytes (<code>getconf LEVEL1_DCACHE_LINESIZE</code>; Apple M-series uses 128). Two <em>different</em> variables in one line are, to MESI, <strong>the same line</strong> — so two threads writing two different variables fight over cache state as if they were writing one variable:</p>
+<pre><code class="language-c">// pad.c — the false-sharing benchmark
+// gcc -O2 -pthread pad.c &amp;&amp; ./a.out
+struct plain  { long a, b; };              // 16 B: a and b share ONE 64-B line
+struct padded {                             // two lines, two private states
+    alignas(64) long a;                    // C11/C++11: place at a 64-B boundary
+    alignas(64) long b;
+};
+// Thread A: 200,000,000 increments of .a   Thread B: same on .b
+// Typical result on a 4-core x86-64, threads pinned to different physical
+// cores (taskset -c 0,2): plain runs ~3-6x SLOWER than padded.
+// Nothing in the C memory model is violated — the race is on MESI's turf.</code></pre>
+<pre><code>False sharing: two INDEPENDENT variables, one 64-byte line, two cores
+
+  t0: line X [ a | b ] = Modified on core 0
+  t1: core 1 stores b -&gt; snoop -&gt; line X invalidated on core 0
+      line X = Modified on core 1 ... core 0's next a-store invalidates it
+  t2: line X bounces M -&gt; I -&gt; M -&gt; I, ~100+ cycles per bounce,
+      for variables that NEVER touch each other
+
+  Both threads queue at the MESI window; throughput collapses while
+  the caches stay perfectly coherent the whole time.</code></pre>
+<p>Each bounce is a cross-core round trip on the order of 100 cycles (Chapter 02's latency table: ~40 cycles to another core's L1, worse across sockets). The program is data-race-free, correct, and slow — a pure performance bug one level below the language. This is the standard answer to "my concurrent queue is slow and it's not the locks": head and tail indexes sitting in the same line (Chapter 02 warned you the line is the unit of transfer; this is that warning with two writers attached).</p>
+<p>Fixes, per language: <code>alignas(64)</code> in C/C++ (or <code>std::hardware_destructive_interference_size</code>, C++17 — 64 on mainstream x86); <code>@Contended</code> in Java (JEP 142; pads 128 bytes by default, user classes need <code>-XX:-RestrictContended</code>); a manual <code>[64]byte</code> pad field in Go; padded slots in a <code>SharedArrayBuffer</code> in JS (Chapter 15's Atomics users do exactly this). Note the Java/LMAX-Disruptor habit of padding to <em>128</em> bytes: hyperthread siblings share an L1, so adjacent-line effects outlive the 64-byte rule.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>x86 is TSO, not SC — and the corners are where it bites.</strong> (a) SB itself: Dekker/Peterson fail without <code>mfence</code>, and that is <em>allowed</em> on x86. (b) Non-temporal stores (<code>movntdq</code> to write-combining memory) are <strong>outside TSO</strong> — unordered with ordinary stores, which is why every memcpy using NT stores ends in <code>sfence</code>. (c) Self- and cross-modifying code: Intel SDM 8.1.3 prescribes a fences-plus-serializing-instruction ritual, and the kernel's <code>text_poke</code> + <code>sync_core</code> exists because instruction fetch doesn't play by the store-buffer rules.</li>
+<li><strong>On x86-64, acquire loads and release stores compile to plain <code>mov</code></strong> — the lock-free fast path costs nothing beyond the compiler barrier. The heavyweights are seq_cst <em>stores</em> (<code>xchg</code> with implicit lock, ~20 cycles — compilers switched from <code>mov+mfence</code> to <code>xchg</code> because it was faster) and locked RMWs. The folklore "atomics are slow" comes from measuring only locked RMWs.</li>
+<li><strong>On ARMv8-A, <code>ldar</code>/<code>stlr</code> are SC-strength</strong>: all LDAR/STLR accesses are mutually totally ordered — <em>stronger</em> than release/acquire needs. ARMv8.3-RCPC added <code>ldapr</code> specifically to let hardware relax it: a whole instruction invented to claw back performance the C++ abstraction over-specified.</li>
+<li><strong>Dekker's algorithm (attributed to T. J. Dekker, ~1962; written up in Dijkstra's 1965 "Cooperating Sequential Processes") and Peterson's (1981) are SC-era algorithms.</strong> They need a full fence on weak models and an <code>mfence</code> even on x86. On Intel parts the store-buffer drain window is so narrow that unfenced builds can run <em>years</em> without losing — then the code is ported to an ARM phone or recompiled so the flag lives in a register, and it fails in an afternoon. "Works on my Intel" is a portability trap with a five-decade track record.</li>
+<li><strong>Memory-ordering bugs are heisenbugs with known cures.</strong> <code>printf</code> is a barrier-heavy, lock-owning syscall that orders and flushes far more than your bug needs — add one and the symptom vanishes; <code>-O0</code> removes the register caching that was half the bug. Debug with ThreadSanitizer (<code>-fsanitize=thread</code>, expect 5–10x slowdown) and litmus tools, never with prints.</li>
+<li><strong>In the Linux kernel, <code>smp_store_release</code>/<code>smp_load_acquire</code> are plain <code>mov</code> on x86</strong> — the hardware barrier there is only a compiler barrier, because TSO already provides release/acquire. <code>smp_mb()</code> is <code>mfence</code> on x86-64, <code>dmb ish</code> on ARM64. <code>Documentation/memory-barriers.txt</code> names the store-buffer, invalidation-queue, and snoop culprits explicitly — this chapter, 10,000 words longer, in a kernel tree.</li>
+<li><strong>The <code>volatile</code> collision is an interview three-for-one.</strong> C <code>volatile</code>: no ordering, no atomicity (Chapter 08). Java <code>volatile</code>: sequentially consistent visibility, JSR-133, 2004 (Chapter 12). C# <code>volatile</code>: acquire/release only — <em>not</em> SC — so an SB pattern in C# is broken even though the keyword "sounded strongest." Same word, three contracts, one 1990s naming accident.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>Lab 1 — run the SB litmus test (C, pthreads, atomic vs. volatile).</strong></p>
+<pre><code class="language-c">// sb.c — Store Buffering litmus, two variants
+// gcc -O2 -std=c11 -pthread sb.c -o sb &amp;&amp; ./sb
+#include &lt;stdio.h&gt;
+#include &lt;stdatomic.h&gt;
+#include &lt;pthread.h&gt;
+
+static _Atomic int x, y, go;
+static volatile int vx, vy;          // C volatile: atomic? no. ordered? no.
+static int r1a, r2a, r1v, r2v;       // results: atomic / volatile
+
+static void *t0(void *_) {
+    while (!atomic_load_explicit(&amp;go, memory_order_acquire)) ; // spin till GO
+    atomic_store_explicit(&amp;x, 1, memory_order_relaxed);
+    r1a = atomic_load_explicit(&amp;y, memory_order_relaxed);
+    vx = 1;                          // volatile pair: still no ordering —
+    r1v = vy;                        // and technically a data race (UB)
+    return 0;
+}
+static void *t1(void *_) {
+    while (!atomic_load_explicit(&amp;go, memory_order_acquire)) ;
+    atomic_store_explicit(&amp;y, 1, memory_order_relaxed);
+    r2a = atomic_load_explicit(&amp;x, memory_order_relaxed);
+    vy = 1;
+    r2v = vx;
+    return 0;
+}
+
+int main(void) {
+    long sb_a = 0, sb_v = 0;
+    const long N = 100000;
+    for (long i = 0; i &lt; N; i++) {
+        x = 0; y = 0; vx = 0; vy = 0; atomic_store(&amp;go, 0);
+        pthread_t a, b;
+        pthread_create(&amp;a, 0, t0, 0); pthread_create(&amp;b, 0, t1, 0);
+        atomic_store(&amp;go, 1);        // release both threads together
+        pthread_join(a, 0); pthread_join(b, 0);
+        sb_a += (r1a == 0 &amp;&amp; r2a == 0);   // SB outcome with atomics
+        sb_v += (r1v == 0 &amp;&amp; r2v == 0);   // SB outcome with volatile
+    }
+    printf("SB (relaxed atomics): %ld / %ld\n", sb_a, N);
+    printf("SB (volatile)       : %ld / %ld\n", sb_v, N);
+    return 0;
+}</code></pre>
+<p>What to expect, honestly: on x86-64 the SB outcome is <em>architecturally allowed</em> but the window is a handful of cycles — you may see 0 hits in 100k rounds or a burst of them; pin to physical cores (<code>taskset -c 0,2 ./sb</code>) and raise N. The MP and WO tests will <strong>never</strong> fire on x86 — the contract forbids them. For those you genuinely need weak hardware: a Raspberry Pi 4/5, an AWS Graviton or Oracle Ampere free-tier VM, or a phone via Termux — there, plain loads reorder and the volatile variant lights up immediately. On x86-only hardware the honest statement is: SB may show itself, the rest will not, and "didn't fire" is evidence, never proof (Section 4). For serious work, <code>litmus7</code> runs the same test with persistent spinning threads and proper round counting.</p>
+<p><strong>Lab 2 — false sharing, before and after.</strong> Build <code>pad.c</code> from Section 6 with both structs; time each with <code>perf stat -e task-clock,cycles ./a.out</code>. Then let the kernel point at the culprit: <code>sudo perf c2c record -- ./a.out</code> followed by <code>perf c2c report --stdio</code> (perf from Linux 4.14+); look for the <strong>HITM</strong> column — "loads that hit a line Modified in another core's cache" — one address, two hot 8-byte offsets. Check your line size first: <code>getconf LEVEL1_DCACHE_LINESIZE</code> (64 on mainstream x86-64/ARMv8-A; Apple M-series prints 128 — pad accordingly).</p>
+<p><strong>Lab 3 — watch the compiler hold up its end.</strong> <code>gcc -O2 -S</code> the MP snippet with the acquire spin loop and read the assembly (Chapter 07 skills): on x86-64 you will find plain <code>mov</code> everywhere — no fences, because TSO plus the C11 contract already suffice. Compile the same file for <code>-arch arm64</code> (or on the Pi) and the loads become <code>ldar</code>. The abstraction is exactly one instruction thick — that is the whole design.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Bug triage with a new eye.</strong> "Thread B saw the flag set but read stale data" is no longer mysterious: it is the plain-MP outcome, and the fix is one release store plus one acquire load — or a mutex, which is those two things plus an RMW.</li>
+<li><strong>Performance review.</strong> <code>seq_cst</code> everywhere in a hot path pays ~20 cycles per store on x86 for order nobody consumes; downgrade publish sites to release/acquire, leave seq_cst to the algorithms that compare notes. Before blaming locks for a slow queue, run <code>perf c2c</code> and check the line layout of head and tail.</li>
+<li><strong>Portability audits.</strong> Lock-free code validated only on x86 was validated against TSO, not reality; run it on a Graviton instance and under ThreadSanitizer before you believe it.</li>
+<li><strong>Interview answers with teeth.</strong> "Why is C's volatile not a synchronization primitive, and what is it in Java?" — you can now answer with the three contracts, the JSR-133 date, and the SB test.</li>
+<li><strong>Reading kernel and runtime sources.</strong> <code>smp_store_release</code>, the <code>head</code>/<code>tail</code> dance in every ring buffer, RCU's pointer publication — you now recognize all of it as Section 5's acquire/release pairing in costume.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 02</strong> — the coherence MESI implements, and the 64-byte line both false sharing and cache behavior live on.</li>
+<li><strong>Chapter 07</strong> — disassembly fluency: seeing <code>mfence</code>, <code>lock cmpxchg</code>, <code>ldar</code>, and plain <code>mov</code> in compiler output is the fastest way to trust Sections 4–5.</li>
+<li><strong>Chapter 08 (C)</strong> — UB as optimizer license; the volatile trap is UB's most common concurrent disguise, and C11 atomics are the repair kit.</li>
+<li><strong>Chapter 09 (C++)</strong> — <code>std::atomic</code> and <code>hardware_destructive_interference_size</code> are this chapter's contract in library clothing.</li>
+<li><strong>Chapter 10 (Rust)</strong> — <code>Send</code>/<code>Sync</code> as compile-time DRF-SC enforcement: safe Rust refuses to compile the data race the theorem requires you not to have.</li>
+<li><strong>Chapter 11 (Go)</strong> — happens-before edges around channels, and the padding Go queue authors use; one memory model, same hardware underneath.</li>
+<li><strong>Chapter 12 (Java)</strong> — JSR-133 and the JMM: the language-level formalization this chapter's happens-before section describes, plus <code>@Contended</code>.</li>
+<li><strong>Chapter 13 (C#)</strong> — the third <code>volatile</code> contract (acquire/release only): same keyword, weaker promise than Java's.</li>
+<li><strong>Chapter 15 (JavaScript)</strong> — <code>SharedArrayBuffer</code> + <code>Atomics</code>: the web grew a C11-shaped memory model in 2017; <code>Atomics</code> acquire loads are Section 5 verbatim.</li>
+<li><strong>Chapter 19 (allocators)</strong> — per-thread caches dodge false sharing by giving each core its own lines; the fast path is an Exclusive-state free lunch.</li>
+<li><strong>Chapter 22 (mobile)</strong> — why every phone is a weak-model machine, and why cross-platform apps feel this chapter first.</li>
+<li><strong>Queued security module</strong> — TOCTOU races and Rowhammer are "cores disagree about memory" turned into an attack instead of a bug.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><em>(concept)</em> A machine has perfect cache coherence — every core agrees on the order of writes to any single address. Explain, in terms of <em>where the reordering hardware lives</em>, why such a machine can still allow the SB outcome (both threads read 0). What exactly did MESI never promise?</li>
+</ol>
+<ol>
+<li><em>(predict)</em> The SB test from Section 1 (relaxed atomics; each thread writes its own flag, then reads the other's). Which of the four final outcomes <code>(r1, r2) ∈ {(0,0), (0,1), (1,0), (1,1)}</code> are architecturally allowed on (a) x86-64 and (b) ARMv8-A?</li>
+</ol>
+<ol>
+<li><em>(predict)</em> The WO test: Thread 0 does <code>x=1; y=1;</code> (relaxed); Thread 1 does <code>r1=y; r2=x;</code> (relaxed). Can Thread 1 end with <code>r1==1 &amp;&amp; r2==0</code> on x86-64? On ARMv8-A? Name the one-line change to <code>y</code>'s store and load that makes the outcome impossible on both, and what instructions that change compiles to on each architecture.</li>
+</ol>
+<ol>
+<li><em>(bug diagnosis)</em> A C programmer shares a flag between threads like this: <code>volatile int ready; ... data = 42; ready = 1;</code> (producer) and <code>while (!ready) ; r = data;</code> (consumer). Diagnose <em>two independent defects</em> — one the compiler can cause even on a single-threaded-looking core, one the hardware causes on ARM — plus the standard's verdict on the whole program.</li>
+</ol>
+<ol>
+<li><em>(bug diagnosis)</em> A single-producer/single-consumer ring queue stores the item, then increments its <code>tail</code> index with <code>memory_order_relaxed</code>; the consumer reads <code>tail</code> with <code>relaxed</code>, then reads the item. It passed a week of testing on an x86-64 build server and fails about once per 10^8 operations on an ARMv8 cloud instance. Explain precisely why x86 saved it, what ARM did, and the minimal fix.</li>
+</ol>
+<ol>
+<li><em>(bug diagnosis)</em> <code>struct stats { long hits; long misses; };</code> — two threads increment <code>hits</code> and <code>misses</code> respectively, 200M times each, on different cores. The padded version runs 4x faster, TSAN reports nothing, there is no data race. What is the machine doing with the cache line, in MESI terms, and what does <code>perf c2c</code> show that proves it?</li>
+</ol>
+<ol>
+<li><em>(concept)</em> Why is <code>memory_order_seq_cst</code> called "the expensive default" on x86-64 — what does a seq_cst store cost relative to a release store, and why is plain publish/subscribe (MP) perfectly correct <em>without</em> it? Name one class of algorithm that genuinely needs the full seq_cst guarantee.</li>
+</ol>
+<ol>
+<li><em>(cross-chapter)</em> Chapters 08, 12, and 13 each define a keyword spelled <code>volatile</code>. State what each guarantees for cross-thread visibility, name the standardization effort that fixed Java's version, and explain what Java still does <em>not</em> guarantee about a racing read, despite its strong <code>volatile</code>.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>MESI is per-location; the memory model is cross-location.</strong> The reordering hardware — store buffers, the load pipeline, speculation — sits <em>between the core and its cache</em>, on the core's side of the coherence protocol. In SB, each store parks in its own core's store buffer while the thread's load bypasses it and asks the caches; the caches answer honestly (0) because the stores have not <em>reached</em> the cache system yet. MESI guarantees no core ever sees a stale or torn copy of <em>one address</em> (coherence); it never promised any ordering between writes to <em>different</em> addresses (consistency). Two variables means you have left MESI's jurisdiction and entered the memory model's.</li>
+</ol>
+<ol>
+<li>All four outcomes are allowed on <strong>both</strong> architectures. <code>(0,1)</code> and <code>(1,0)</code> are the ordinary serial interleavings; <code>(1,1)</code> happens if both writes drain before both loads run; and <code>(0,0)</code> — the outcome sequential consistency would forbid — is allowed because a load passing the core's own older store is TSO's one reordering (and one of many on ARMv8). Relaxed atomics give atomicity per location, never ordering across locations; only seq_cst or fences remove <code>(0,0)</code>.</li>
+</ol>
+<ol>
+<li><strong>x86-64: forbidden. ARMv8-A: allowed.</strong> On x86 the store buffer is FIFO, so <code>x=1</code> is globally visible before <code>y=1</code>; if Thread 1 saw <code>y==1</code>, then <code>x==1</code> was already visible, and its loads are not reordered with each other. On ARM, the two stores can become visible in either order, so Thread 1 can read the newer <code>y</code> and the older <code>x</code>. The fix: store <code>y</code> with <code>memory_order_release</code> and load <code>y</code> with <code>memory_order_acquire</code> — on x86-64 both compile to plain <code>mov</code> (TSO already forbids the reordering; the annotation is free insurance), on ARMv8 they become <code>stlr</code>/<code>ldar</code>.</li>
+</ol>
+<ol>
+<li>Defect one, <strong>compiler</strong>: <code>volatile</code> only orders accesses <em>to volatile objects</em>; the plain <code>data = 42</code> store can be sunk below <code>ready = 1</code> (or <code>r = data</code> hoisted out of the loop) — <code>-O2</code> will do this, and the program breaks even on one core. Defect two, <strong>hardware</strong>: even compiled as written, ARMv8 may reorder the two stores (WO is allowed) and the consumer's two loads, so the consumer can see <code>ready == 1</code> with <code>data == 0</code> — the plain-MP allowed outcome. The standard's verdict: a data race on <code>data</code> → <strong>undefined behavior</strong> in C11. The repair is C11 atomics: <code>atomic_store(&amp;ready, 1, memory_order_release)</code> and an acquire load, leaving <code>data</code> plain — exactly the Section 5 idiom.</li>
+</ol>
+<ol>
+<li>This is plain MP with <code>tail</code> playing the flag. On <strong>x86-64</strong>, TSO orders the producer's store→store (item before <code>tail</code>) and the consumer's load→load (<code>tail</code> before item), so the broken outcome is architecturally impossible — the x86 test could not have failed even though the code was wrong. On <strong>ARMv8</strong>, all four orderings are negotiable: the <code>tail</code> store can become visible before the item store, and the item load can be satisfied before the <code>tail</code> load — a tiny window both ways, hence ~1 in 10^8. Fix: producer's <code>tail</code> store → <code>release</code> (publishes the item), consumer's <code>tail</code> load → <code>acquire</code> (subscribes). Cost on x86: zero extra instructions; on ARM: <code>stlr</code>/<code>ldar</code>.</li>
+</ol>
+<ol>
+<li><code>hits</code> and <code>misses</code> are 8 bytes each inside one 64-byte line. Each thread's store requires the line in Modified state, so MESI invalidates the other core's copy on every increment and the line ping-pongs <strong>M → I → M → I</strong> once per write, each bounce a ~100-cycle cross-core round trip — while the <em>program</em> is perfectly race-free, so TSAN is correctly silent: this is a cache-level bug, invisible to the language. <code>perf c2c</code> reports it as <strong>HITM</strong> events (hits on a line Modified in another cache) concentrated on one address with two hot 8-byte offsets. The fix is <code>alignas(64)</code> (or C++17's <code>hardware_destructive_interference_size</code>): each counter gets a private line and each core a stable Exclusive/Modified state.</li>
+</ol>
+<ol>
+<li>A seq_cst store on x86-64 compiles to <code>xchg</code> (implicit <code>lock</code>) or <code>mov + mfence</code> — roughly 20+ cycles, with a store-buffer drain — while a release store is a plain <code>mov</code>, because TSO already orders stores. MP doesn't need a total order: producer and consumer <em>synchronize directly</em> (release→acquire edge), so a happens-before chain already proves the consumer sees the data. What needs seq_cst is any algorithm where threads reason about ordering they did <strong>not</strong> synchronize over: mutual exclusion by symmetric flags (Dekker/Peterson) and the IRIW family, where two observers must agree on the order of two independent writers. No pairwise acquire/release edge can express "everyone sees the same order"; only the total order or explicit fences can.</li>
+</ol>
+<ol>
+<li><strong>C (Chapter 08)</strong>: <code>volatile</code> guarantees only that accesses are not elided or cached in registers — no atomicity, no cross-thread ordering, no memory-model standing. <strong>Java (Chapter 12)</strong>: <code>volatile</code> is sequentially consistent — a write synchronizes-with every later read; fixed by <strong>JSR-133</strong> (Manson, Pugh, Adve; JDK 1.5, 2004), which rebuilt the JMM on happens-before. <strong>C# (Chapter 13)</strong>: acquire/release only — half of Java's promise, and still enough to be an SB trap. What Java still does not guarantee: <em>liveness/fairness</em> — the spec lets a racing read stay stale indefinitely (it must eventually make writes visible but never bounds <em>when</em>, and a tight loop on a non-volatile variable may never re-read memory at all). In practice HotSpot volatiles are plain loads/stores on x86 (free via TSO) and barrier-backed on ARM, so unbounded staleness is vanishingly rare — permitted, not observed.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch19.html"><span class="cn-label">previous</span><span class="cn-title">Ch 19</span></a>
+<a class="next" href="ch21.html"><span class="cn-label">next</span><span class="cn-title">Ch 21</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/20-hardware-memory-model.md">chapters/20-hardware-memory-model.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

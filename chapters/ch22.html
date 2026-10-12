@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 22 — Mobile memory: Android and iOS, where the OS is the GC — deep-roots</title>
+<meta name="description" content="Chapter 22 of the memory-models module: Chapter 22 — Mobile memory: Android and iOS, where the OS is the GC">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 22 — Mobile memory: Android and iOS, where the OS is the GC — deep-roots">
+<meta property="og:description" content="Chapter 22 of the memory-models module: Chapter 22 — Mobile memory: Android and iOS, where the OS is the GC">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 22 — Mobile memory: Android and iOS, where the OS is the GC — deep-roots">
+<meta name="twitter:description" content="Chapter 22 of the memory-models module: Chapter 22 — Mobile memory: Android and iOS, where the OS is the GC">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part III · the deep end</div>
+<h1 class="post-title">Chapter 22 — Mobile memory: Android and iOS, where the OS is the GC</h1>
+<div class="post-meta">chapter 22 &middot; ~24 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A phone has no disk swap, a few gigabytes of RAM shared with the OS and dozens of background processes, and a battery that pays for every page moved. So the mobile platforms made the decision desktops never had to: when memory runs short, don't reclaim pages — <strong>evict processes</strong>. Android ranks every process in importance bands (<code>lmkd</code>, <code>oom_score_adj</code>) and kills from the bottom; iOS ranks every process in Jetsam priority bands and does the same. Eviction replaces reclamation: <strong>the OS is the GC</strong>, liveness is measured in foreground seconds, and <code>SIGKILL</code> is the sweep. Above that killer sit two very different heaps — Android's ART (a JVM cousin, Chapter 12) with a concurrent copying collector over a fork-shared boot image, and iOS's ARC (Chapter 16) whose deterministic frees keep <em>dirty pages</em> — the one number Jetsam actually counts — low. Learn the two contracts and you can predict which process dies, when, and why your bug report says "killed, not crashed."</blockquote>
+<h2 id="the-contract-derived-no-swap-shared-ram-and-joules">The contract, derived: no swap, shared RAM, and joules</h2>
+<p>Chapter 03 ended with the desktop bargain: RAM runs out, the OS evicts a page and writes it to swap, and the process never knows. Phones break all three preconditions at once.</p>
+<ol>
+<li><strong>No backing store.</strong> Historically, Android and iOS shipped with no swap partition at all — internal flash is small, a page write costs flash wear (Chapter 21's NAND endurance, same physics), and a 4 KB page out to flash costs ~100 microsecond-class latency plus a wear tick. Paging a phone hard would drain its battery and age its storage in weeks. (Honesty, as promised: modern Android <em>does</em> run <code>zram</code> — swap to a compressed block <em>in RAM</em>, covered below — and iOS compresses instead of swapping. Neither writes dirty pages to disk. "No swap" survives as "no disk swap"; compression is the honest asterisk.)</li>
+<li><strong>Little RAM, heavily shared.</strong> A 2024 phone has 4–8 GB (Android 8–14 era, 64-bit). The system UI, the launcher, the camera daemon, and 30–50 <em>cached</em> app processes live in that same physical pool. Your app is one tenant among dozens.</li>
+<li><strong>Every page costs joules.</strong> A collector that touches a 200 MB heap pays DRAM traffic (Chapter 02's latency ladder); a compacting collector <em>copies</em> megabytes. On battery power, memory traffic is a first-order energy cost, not just a latency cost.</li>
+</ol>
+<p>Derive the consequence. With no disk to page to, "reclaim memory" has only three meanings: <strong>drop clean pages</strong> (they can be re-read from the file they map), <strong>compress dirty pages</strong> (zram on Android, the iOS compressor), or <strong>evict a whole process</strong> and take <em>all</em> of its pages at once — clean, dirty, everything — with one <code>SIGKILL</code>. The first two buy time; when they run out, only the third is left. So memory management stops being reclamation and becomes <strong>scheduling</strong>: the OS ranks processes by importance and kills the cheapest one to lose. That is why this chapter's title says the OS is the GC — a garbage collector answers "which objects are dead?" from a root set; lmkd and Jetsam answer "which <em>processes</em> are dead?" from a root set of foreground-ness and perceptibility. The sweep is a kill. Chapter 12's collector would recognize the shape.</p>
+<h2 id="android-the-zygote-one-parent-a-thousand-forks">Android: the zygote — one parent, a thousand forks</h2>
+<p>Every Android app process is born the same unusual way: it is a <code>fork()</code> of one pre-existing process called <strong>zygote</strong>. At boot, <code>init</code> starts the zygote; ART loads and verifies the framework classes, preloads common resources, and then the zygote <em>sleeps on a socket</em>. Launching an app is: <code>fork()</code> the zygote, never <code>exec()</code>, and specialize the child. The child inherits the entire preloaded address space.</p>
+<p>Why this design? A cold app start would mean: map the ~100–200 MB boot image (framework classes, pre-verified, AOT/JIT-warmed code), verify classes, initialize the runtime — hundreds of milliseconds of pure setup, per app, per launch, competing for the same shared RAM across 50 processes. Fork-sharing amortizes it to near zero, using Chapter 03's copy-on-write:</p>
+<pre><code>              ZYGOTE (one process, started at boot, parent of every app)
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ image space   boot.art: ~100-200 MB of framework classes, mapped    │
+  │               read-mostly ---- these pages get SHARED with children │
+  │ zygote space  runtime objects PRELOADED and pre-compacted here      │
+  │               by the "zygote GC" so they too will be shared         │
+  │ alloc space   the zygote's own scratch heap: mostly garbage at      │
+  │               fork time; the forked copy reclaims it lazily        │
+  └─────────────────────────────────────────────────────────────────────┘
+         │ fork()             │ fork()             │ fork()     (no exec —
+         ▼                    ▼                    ▼            the warm
+    ┌─────────┐         ┌─────────┐          ┌─────────┐       image rides
+    │ App A   │         │ App B   │          │ App C   │       along)
+    │ shared: SAME physical frames, mapped read-only in every child      │
+    │ private: the child's own alloc space, born empty                  │
+    └─────────┘         └─────────┘          └─────────┘
+       first WRITE to a shared page → page fault → the kernel copies
+       4 KB (16 KB on the new page size, see below) → page turns private</code></pre>
+<p>The economics: all apps share one physical copy of the framework image. If the boot image is 150 MB and 40 processes are alive, the <em>unique</em> RAM cost is still ~150 MB, not 6 GB. Chapter 03's COW is the whole trick: pages stay shared exactly as long as nobody writes them, which is why ART goes out of its way to keep image-space pages read-only and to run a <strong>zygote GC</strong> in the parent — a collection that compacts live preloaded objects into the zygote space and clears the scratch alloc space <em>before</em> forking, so children inherit maximal sharing, minimal garbage, and no per-child COW faults waiting to happen.</p>
+<p>Two honest caveats. First, the per-app heap is entirely private — the sharing is the <em>image</em>, never your objects; a Kotlin object created after fork is yours alone. Second, zygote forking has security costs (all children start with identical address layouts; mitigated because the boot-time layout randomization is per-boot, not per-app — a fact Chapter 21's exploit writers know well).</p>
+<h2 id="art-s-heap-a-jvm-cousin-rebuilt-for-pockets">ART's heap: a JVM cousin rebuilt for pockets</h2>
+<p>The child process runs <strong>ART</strong> (Android Runtime) — Dalvik's successor, and Chapter 12's cousin. It is a bytecode VM with a tracing GC, but shaped by this chapter's contract: concurrent, compacting, and fork-friendly. The heap is split into spaces:</p>
+<pre><code>  ART heap of one app process (Android 8-14 / ART, 64-bit)
+  ┌───────────────────────────────────────────────────────────────────┐
+  │ image space   boot.art, SHARED (COW from zygote), read-only-ish    │
+  │ zygote space  preloaded objects, SHARED                            │
+  ├───────────────────────────────────────────────────────────────────┤
+  │ alloc space   PRIVATE, "region space": bump-pointer allocation    │
+  │               into fresh regions — this is where your objects     │
+  │               are born (a few nanoseconds per object)             │
+  │ LOS           PRIVATE, "large object space": objects above the     │
+  │               large-object threshold (~3 pages ≈ 12 KB in ART's    │
+  │               default config), page-backed, never moved            │
+  │ LOS-zygote    SHARED, large boot-image objects, so bitmaps and     │
+  │               tables in the image share pages too                  │
+  └───────────────────────────────────────────────────────────────────┘</code></pre>
+<p>The collector that defines modern ART (Android 8.0, 2017, and still the backbone through Android 14) is the <strong>concurrent copying collector (CC)</strong>. It is Chapter 12's semispace idea done concurrently: Cheney-style evacuation (Chapter 12's scavenger, Chapter 15's V8 cousin) moves live objects out of "from" regions into "to" regions while the app keeps running. To make that safe without stopping the world, every heap read goes through a <strong>read barrier</strong>: each object header carries a forwarding pointer (Brooks-style), and any thread that touches an object during evacuation may be handed the moved copy transparently. The app never pauses for the copy; it pays a small toll per read instead — the same trade Go made in Chapter 11. Since Android 10, ART layers a <strong>young generation</strong> on top: bump-pointer allocation into fresh regions, and young collections that evacuate only recently-allocated regions. That is the modern ART shape — regions + concurrent evacuation, not Eden/Survivor/Old. On top of it run the <strong>sticky collections</strong>: a "sticky" GC traces only objects allocated <em>since the last GC</em> (age 0), which catches the die-young distribution (Chapter 12's weak generational hypothesis) at a fraction of a full collection's cost.</p>
+<p><strong>The two heaps, and the cap.</strong> The Java/Kotlin heap has a hard per-app limit: the <code>dalvik.vm.heapgrowthlimit</code> property, historically 16 MB on 2010 devices, typically 128–256 MB on 2020s flagships (Android 8–14). <code>ActivityManager.getMemoryClass()</code> tells you yours; <code>android:largeHeap="true"</code> in the manifest switches you to the full <code>heapsize</code> (often 2–4x larger, via <code>getLargeMemoryClass()</code>). The limit exists for fairness under the killer: lmkd needs each app's <em>potential</em> Java-heap footprint to be bounded so that N cached apps can coexist predictably. The insider truth: <strong>the native heap is separate and uncapped</strong> — <code>malloc</code> via jemalloc (since Android 5.0) or scudo (Android 11+; Chapter 19's allocator taxonomy) has no manifest limit, only address space. But lmkd watches whole-process RSS, not the Java heap, so "uncapped" means "the kill comes from a different ledger."</p>
+<p>This boundary has moved historically, and the history is the lesson. Bitmaps, pre-Android 3.0 (API ≤ 10): pixel data in native memory, freed by a manual <code>recycle()</code> call, not by GC — leak city. Android 3.0–7.1: pixel data moved <em>onto</em> the Java heap so GC could manage lifetimes — apps that loaded a few full-res photos hit the 32–64 MB heap limits of that era and died. Android 8.0+ (2017): pixel data moved back to the native heap, cleaned up automatically via <code>NativeAllocationRegistry</code> (a finalizer-ish bridge — Chapter 12's caveat applies) with the pixels in ashmem/native buffers. Three regimes, and the platform moved the boundary each time while app code survived by calling the same <code>BitmapFactory.decode...</code> API. <strong>Platforms move the boundary; code survives by not assuming where it lies.</strong></p>
+<p><strong>JNI and verification.</strong> Objects referenced from C++ via JNI are tracked in reference tables: local references per-frame, global references explicit. The classic failure is a loop creating thousands of local references without <code>PushLocalFrame</code>/<code>PopLocalFrame</code> — the local table overflows (logcat: "local reference table overflow", capacity on the order of hundreds-to-thousands of entries). <code>CheckJNI</code> (enabled by default in debuggable builds, <code>-Xcheck:jni</code>) validates reference misuse and type confusion, and ART's <code>-Xverify-heap</code> style heap verification re-checks heap invariants during GC in debug builds — the same "make the runtime police the contract" philosophy as Chapter 12's JVM tooling.</p>
+<p><strong>The measurement tools.</strong> Android Studio's Memory Profiler graphs the Java heap (allocations, GC events, and — the number that predicts jank — the <em>allocation rate</em>). <code>adb shell dumpsys meminfo &lt;pkg&gt;</code> is the field tool; its columns deserve real definitions:</p>
+<ul>
+<li><strong>RSS</strong> (resident set size): every physical page mapped into the process — double-counts shared pages across processes.</li>
+<li><strong>USS</strong> (unique set size): private pages only; what the process would free if killed right now.</li>
+<li><strong>PSS</strong> (proportional set size): private pages <em>plus</em> each shared page charged 1/N to each of its N sharers. The fair-share number, and the one Android reports — sum PSS over all processes and you get total RAM used without double counting, which is why it's the accounting system uses for rankings.</li>
+<li><strong>Private Dirty vs Private Clean</strong>: dirty pages (written, must be re-created if evicted — anonymous heap, stacks) vs clean pages (file-backed, unmodified — code, can be dropped and re-read).</li>
+</ul>
+<p><code>meminfo</code> also reports <code>SwapPss</code> — your pages currently sitting <em>compressed inside zram</em>. On modern Android, zram is a real device (<code>/dev/block/zram0</code>, typically sized 50–100% of RAM on Pixels) trading CPU and memory bandwidth for effective capacity; the honest way to say the no-swap story is: Android doesn't page to disk, it pages to <em>a smaller RAM inside RAM</em>.</p>
+<h2 id="lmkd-killing-as-scheduling">lmkd: killing as scheduling</h2>
+<p>Android's reclaimer-of-last-resort has a lineage. The original <strong>lowmemorykiller</strong> was an in-kernel driver: it watched free memory against a threshold array (<code>minfree[]</code>) and killed the process with the worst <code>oom_adj</code>. It was deprecated and eventually removed from staging (Android 8–9 era); its replacement, <strong>lmkd</strong>, runs in userspace and kills with the kernel's normal OOM machinery. Modern lmkd (Android 10+) is driven by <strong>PSI (pressure stall information)</strong>: instead of sampling free memory, the kernel reports how long tasks have actually <em>stalled</em> on memory (<code>/proc/pressure/memory</code> — "some" and "full" stall percentages over 10s/60s/300s windows). lmkd subscribes and kills <em>before</em> the system thrashes, which is the right signal to act on: stall time is the symptom users feel.</p>
+<p>The ranking is <code>oom_score_adj</code> bands set by ActivityManager as process state changes (Android 8–14 values, approximate):</p>
+<ul>
+<li><strong>Foreground</strong> (the app the user is touching): adj 0 — dies last.</li>
+<li><strong>Visible / perceptible</strong> (visible activity, playing audio): adj 100–200.</li>
+<li><strong>Backup, services, heavy weight</strong>: adj ~300s.</li>
+<li><strong>Previous / home</strong>: adj ~400–700.</li>
+<li><strong>Cached</strong> (backgrounded, kept warm for fast task-switching): adj 916–999 — dies first, biggest-footprint first within the band.</li>
+</ul>
+<p>That last band is the one every Android developer must internalize, because it is a <strong>memory-model statement</strong>: a cached app can be killed at any moment, at zero notice, with no callback. The platform's promise is <em>process death and restoration</em>, not process survival:</p>
+<pre><code class="language-kotlin">object SessionCache {                     // a Kotlin `object` = static singleton
+    var lastResults: List&lt;Result&gt;? = null // this field DIES WITH THE PROCESS
+}
+
+override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    val results = SessionCache.lastResults                 // null after a kill+restore:
+        ?: savedInstanceState?.getParcelableArrayList(KEY) // the Bundle survives in the
+        ?: emptyList()                                     // system's memory, not yours
+}</code></pre>
+<p>"Don't rely on statics surviving" is not advice about hygiene — it is the contract: your statics live in your heap, your heap lives in a killable process, and the OS reclaims processes. The polite warning system is <code>onTrimMemory</code> (delivered <em>before</em> you become a kill candidate, unlike everything above):</p>
+<pre><code class="language-kotlin">// ComponentCallbacks2 levels (Android 8-14): the escalation ladder
+override fun onTrimMemory(level: Int) {
+    when (level) {
+        TRIM_MEMORY_RUNNING_MODERATE,   //  5: device memory getting low, we run
+        TRIM_MEMORY_RUNNING_LOW,        // 10: we run, pressure real
+        TRIM_MEMORY_RUNNING_CRITICAL    // 15: about to get ugly — release now
+            -&gt; cache.resize(16 * 1024 * 1024)
+        TRIM_MEMORY_UI_HIDDEN,          // 20: our UI is hidden — trim caches
+            -&gt; cache.resize(32 * 1024 * 1024)
+        TRIM_MEMORY_BACKGROUND,         // 40: we are a CACHED process now
+        TRIM_MEMORY_MODERATE,           // 60: mid kill-queue
+        TRIM_MEMORY_COMPLETE            // 80: back of the queue — free everything
+            -&gt; cache.evictAll()         // release it before lmkd releases us
+    }
+}</code></pre>
+<p>It is a hint, not a guarantee: lmkd can still kill you without ever trimming you.</p>
+<h2 id="ios-jetsam-the-compressor-and-the-dirty-page-economy">iOS: Jetsam, the compressor, and the dirty-page economy</h2>
+<p>iOS runs the same derivation to a different answer. There is no GC (Chapter 16's ARC, always), no zram, no swap to disk — and one process killer, <strong>Jetsam</strong> (the user-visible name; the kernel subsystem is <code>memorystatus</code>). Every process gets a <strong>footprint limit assigned by its Jetsam priority band</strong> (iOS as of 17-era, 64-bit): the foreground app's limit is generous (apps routinely hold 3–5 GB on 6 GB devices); <strong>app extensions get hard limits in the tens of MB</strong> — a fraction of their containing app's, because the OS assumes extensions are small and short-lived. When pages run short, the kernel walks the band table from the lowest priority upward and kills until pressure clears, largest footprint first within a band. There is <strong>no OOM exception, no callback, no <code>didReceiveMemoryWarning</code> that saves you</strong> — the memory warning (also real, also polite, also ignorable) is your <em>last</em> chance; the kill itself is <code>SIGKILL</code> (signal 9), and your code never executes again. From your app's perspective it looks like a crash with no stack; from the kernel's perspective it was Tuesday.</p>
+<p>What Jetsam counts is the <strong>footprint</strong>, and the accounting is the whole game on iOS:</p>
+<pre><code>  pages of ONE iOS process                        counts in footprint?
+  ┌─────────────────────────────────────────────────┐
+  │ DIRTY  40 MB   written anonymous pages: ARC      │  YES
+  │               objects, stacks, decompressed      │  (must stay or die —
+  │               images, Swift arrays               │   cannot be evicted)
+  ├─────────────────────────────────────────────────┤
+  │ COMPRESSED 8 MB  was 30 MB of cold dirty pages   │  YES
+  │               the compressor pager squeezed       │  (at compressed size:
+  │               them and parked them in RAM         │   RAM still spent)
+  ├─────────────────────────────────────────────────┤
+  │ CLEAN  80 MB   mmapped read-only code + assets,  │  NO
+  │               never-written file pages, purgeable│  (evictable: re-read
+  │               memory                            │   from NAND on next
+  │                                                  │   touch — ~free)
+  └─────────────────────────────────────────────────┘
+  footprint = dirty + compressed = 48 MB   ← the number Jetsam watches</code></pre>
+<p><strong>The VM compressor</strong> (iOS 7 / macOS 10.9, 2013, still the design) is the honest answer to "no swap": when dirty pages go cold, the kernel compresses the least-recently-used of them — a fast integer dictionary coder (WKdm in xnu) — into a compressed pool <em>in RAM</em>, typically 2–3x reduction. Compressing a page costs microseconds of CPU; swapping it to flash costs a write tick of wear plus milliseconds of latency on both ends. On a phone, compression beats disk swap on joules, on wear, and on worst-case latency at the same time. But read the diagram's lesson: the compressed pages <strong>still count in footprint</strong>. Compression defers; it does not cancel. It converts 30 MB of cold dirty memory into 8 MB of still-spent memory, and buys you headroom — until your next 40 MB of allocations erases it. <strong>Compression is a buffer, not a solution.</strong> That law is why iOS engineering culture obsesses over <em>dirty pages</em> rather than "memory used."</p>
+<p><strong>ARC's role</strong> (Chapter 16) slots precisely into this economy: deterministic frees mean a released object's pages go back to the kernel <em>now</em> — dirty memory actually shrinks, unlike a GC'd heap that holds capacity until the next collection (or never compacts). The cultural rules that follow are footprint rules:</p>
+<pre><code class="language-swift">// Rule 1: autoreleasepool in tight loops. Foundation/ObjC-returning APIs
+// hand you autoreleased temporaries; without a pool, their releases are
+// deferred to the runloop drain — i.e., after the ENTIRE loop. Dirty
+// pages pile up 10,000 iterations deep.
+var total = 0
+for path in paths {
+    autoreleasepool {                    // drain here, every iteration
+        let text = try String(contentsOfFile: path, encoding: .utf8)
+        total += text.filter { $0.isPunctuation }.count
+    }                                    // temporaries released NOW,
+}                                        // pages returned immediately
+
+// Rule 2: weak references break cycles (Chapter 16): a cycle is dirty
+// pages that ARC will never free — footprint grows monotonically.
+manager.onUpdate = { [weak self] in self?.refresh() }</code></pre>
+<p>And the real insider lever — <strong>memory-map your assets.</strong> Dirty is what kills you; clean is ~free; <code>mmap</code> makes files clean:</p>
+<pre><code class="language-swift">let eager = try Data(contentsOf: fileURL)
+// ^ slurps 200 MB into the heap: DIRTY. Footprint +200 MB. Jetfood.
+
+let mapped = try Data(contentsOf: fileURL, options: .mappedIfSafe)
+// ^ vm_remap: the file's pages are mapped into your address space, CLEAN.
+//   Touch a page → read fault → page in from NAND. Memory pressure →
+//   kernel evicts them silently → re-read on next touch. Footprint ~0.
+//   (Requires read-only, safely-file-backed data — hence .mappedIfSafe.)</code></pre>
+<p><strong>The tools.</strong> Xcode's memory gauge shows your live footprint split into dirty + compressed — watch that number, not "resident." The <strong>Memory Graph</strong> debugger snapshots every heap object and its references, flagging retain cycles (Chapter 16's blind spot made visible). <strong>Instruments'</strong> Allocations template gives live bytes by call stack, and VM Tracker breaks the address space into Dirty / Compressed ("swapped" in its column naming) / Clean categories. <strong>MetricKit</strong> (<code>MXAppMemoryMetric</code>, iOS 14+) delivers daily peak and average footprint to Xcode Organizer, and <code>MXAppExitMetric</code> records the jetsam exits with their limit fields — your production telemetry for "the OS GC'd us."</p>
+<h2 id="the-two-answers-side-by-side-and-what-is-coming">The two answers side by side — and what is coming</h2>
+<div class="table-wrap"><table><thead><tr><th></th><th>Android (8–14 / ART)</th><th>iOS (17-era)</th></tr></thead><tbody><tr><td>app object memory</td><td>ART: tracing GC, concurrent copying + young gen</td><td>ARC: compiler-inserted refcounts, no collector</td></tr><tr><td>frees</td><td>eventually, in bulk, concurrently</td><td>deterministically, per-object</td></tr><tr><td>sharing trick</td><td>zygote <code>fork()</code> + COW boot image, per boot</td><td>dyld shared cache: &gt;1 GB of system frameworks mapped clean into every process at build time — the biggest shared-memory artifact on the device, sharing without ever forking</td></tr><tr><td>reclaim under pressure</td><td>zram (compress RAM into RAM) + clean eviction</td><td>the compressor pager (compress dirty) + clean eviction</td></tr><tr><td>the killer</td><td>lmkd, PSI-driven, <code>oom_score_adj</code> bands</td><td>Jetsam / memorystatus, priority bands</td></tr><tr><td>per-app cap</td><td>Java heap growth limit (128–256 MB typical) + <em>uncapped</em> native heap</td><td>footprint limit per band (GBs foreground, tens of MB for extensions)</td></tr><tr><td>what it buys</td><td>process warmth: cached apps relaunch instantly; generous per-process ceilings</td><td>smallest possible dirty footprint per app; no GC pauses on the UI thread</td></tr><tr><td>what it costs</td><td>cached processes die arbitrarily; GC costs jank if allocation rate spikes</td><td>retain cycles are fatal; extensions are tiny; ARC costs per-pointer instructions</td></tr></tbody></table></div>
+<p>Neither platform "swaps" like the desktop of Chapter 07: both concluded that on flash + battery, dirty pages should be <em>compressed in RAM or taken by force</em>, never written to storage. Android spends its complexity budget on sharing and warmth (one image, N forks, cached processes as a relaunch cache); iOS spends it on accounting precision (dirty vs clean as the single metric that matters).</p>
+<p>One paragraph on the future. <strong>MTE</strong> (Arm Memory Tagging Extension) is rolling out on Android — Pixel 8 and 8 Pro with Android 14 are the first consumer devices — tagging every 16-byte granule with a 4-bit key checked on access, turning Chapter 21's use-after-free and overflow bugs into synchronous crashes instead of silent corruption; it costs tag memory, which is exactly a memory-model decision (5/64 bytes overhead on tagged regions). Android is also mid-transition to <strong>16 KB pages</strong> (Android 15-era), which changes every constant this module taught — COW granularity (Chapter 03), allocator bin geometry (Chapter 19), ART's large-object threshold (3 pages = 48 KB now). On the Apple side, iPhones keep growing RAM and per-process limits grow with it, while <strong>Apple Silicon's unified memory</strong> (one pool, CPU + GPU + Neural Engine, no dedicated GPU VRAM) makes the "shared physical pool" premise of this chapter literal at the hardware level. The contract — kill, don't page — has not changed; only the numbers do.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>PSS vs RSS vs USS is an interview trap with one clean answer:</strong> RSS double-counts shared pages, USS is private-only (what killing frees <em>now</em>), PSS is private + shared/N — and the killer property: sum of PSS over all processes ≈ total RAM used, which is why Android reports PSS everywhere and ranks blame with it.</li>
+<li><strong>"GC is concurrent but your frame budget isn't."</strong> ART's CC never pauses you for a whole collection, but it burns CPU on the same cores your render thread needs, and its read-barrier traffic scales with allocation rate. A scrolling screen allocating ~300 KB/frame (decoded temporaries, lists, lambdas) produces GC activity every few hundred ms and Choreographer "Skipped 120 frames" logs — at 120 Hz you own 8.3 ms per frame, and the allocation-rate graph in Memory Profiler is the diagnostic, not the pause log.</li>
+<li><strong>Jetsam bands are sorted by priority, and "foreground" ≠ "focused":</strong> the top, user-focused app sits in a band above merely-foreground processes, with the largest limit; kills walk lowest bands first and biggest footprint first <em>within</em> a band. So the 600 MB focused app survives while a 100 MB foreground-support extension dies — band beats size, every time.</li>
+<li><strong>Dirty vs clean is THE iOS metric.</strong> A 500 MB read-only file mapped with <code>mmap</code>/<code>.mappedIfSafe</code> costs ~0 footprint; the same data slurped into a <code>Data</code> costs 500 MB of dirty and a jetsam kill in an extension. "Memory-map your assets" is not folklore, it is the accounting rule.</li>
+<li><strong>zram's live compression ratio is readable on device:</strong> <code>cat /sys/block/zram0/mm_stat</code> — the first two fields are <code>orig_data_size</code> and <code>compr_data_size</code>; on real Pixel workloads expect ~2.5–3.5x. Your "swap" is RAM, and its ratio is your real memory multiplier.</li>
+<li><strong>Read logcat GC lines like a perf trace:</strong> lines like <code>Background concurrent copying GC freed 123456 (12MB) AllocSpace objects, 8 (32MB) LOS objects, 49% free, 96MB/192MB, pausing 0.5ms</code> give you freed bytes, LOS traffic, heap occupancy against the growth limit, and pause time in one line — free total / occupancy tells you if you're riding the limit.</li>
+<li><strong>The 16 KB page transition is a memory-model change rippling through every allocator</strong> (Chapter 19): page-backed large-object thresholds, <code>mmap</code> alignment requirements, and COW granularity all move at once; native libraries with 4 KB alignment assumptions break. Android moved from 4 KB assumptions the way it once moved bitmaps — the platform shifts the boundary, the code has to follow.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>Android — the ledger and the trim callback.</strong> With a device attached and any app running:</p>
+<pre><code class="language-text">$ adb shell dumpsys meminfo com.example.app   # abridged; numbers vary per device
+              Pss  Private  Private  SwapPss      Rss
+                    Dirty    Clean    (zram)
+  Heap      24312    24000      312      614    24624
+  Native    88104    88000      104        0    88200
+  ...
+  TOTAL    152000   150300     1692      614   189400
+  App Summary:  Java Heap 24624  Native Heap 88000  Code 12100  ...</code></pre>
+<p>Notice: <code>Heap</code> (the ART Java heap, capped by the growth limit) and <code>Native</code> (malloc — here 3.6x bigger, uncapped) are separate lines; <code>SwapPss</code> is your zram residency; <code>Pss</code> is the fair-share number, <code>Private Dirty</code> the kill-frees-now number. Now poke the warning system without waiting for real pressure:</p>
+<pre><code class="language-text">$ adb shell am send-trim-memory com.example.app 15   # = RUNNING_CRITICAL
+$ adb shell am send-trim-memory com.example.app 80   # = COMPLETE</code></pre>
+<p>Log your callback: level 15 arrives while running; level 80 means you are a cached process at the back of the queue. Bonus, on Pixels: <code>adb shell cat /sys/block/zram0/mm_stat</code> — divide field 2 by field 1 for the live compression ratio.</p>
+<p><strong>iOS — find your jetsam ceiling empirically.</strong> Create a trivial app-extension target (Share or Action extension), attach the debugger, run this in its <code>viewDidLoad</code> (Xcode: watch the memory gauge's footprint number climb):</p>
+<pre><code class="language-swift">var payloads: [Data] = []
+for i in 0..&lt;500 {                          // 500 MB ceiling, way over the band
+    payloads.append(Data(count: 1_000_000)) // malloc + zero-fill = 1 MB DIRTY
+    print("iteration \(i): footprint ~\(i + 1) MB")
+}</code></pre>
+<p>What happens: the loop prints up to some iteration in the tens of MB, then <em>silence</em> — no exception, no error path, the debugger detaches with "Terminated due to signal 9". The same 500 MB loop in the containing app finishes fine. Afterwards: Xcode Organizer → Crashes/Metrics shows either an <code>EXC_RESOURCE (RESOURCE_TYPE_MEMORY)</code> report with the limit, or a jetsam exit recorded by <code>MXAppExitMetric</code>/<code>MXAppMemoryMetric</code>. You have just measured, in one run, the band your process lives in — and proven "killed, not crashed."</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Android OOM triage:</strong> "OutOfMemoryError: Failed to allocate" inside <code>decodeStream</code> means the Java-heap growth limit; a silent background death with no stack means lmkd and the RSS ledger. Different heaps, different fixes (downsample bitmaps vs. free native caches / split work into a foreground service).</li>
+<li><strong>Scroll jank war stories:</strong> you can now read a "Skipped N frames" + frequent-GC trace as an <em>allocation-rate</em> bug and defend it: the GC is concurrent, the frame budget is not.</li>
+<li><strong>iOS extension crash triage:</strong> a crash at 70 MB in an extension that "runs fine at 600 MB" in the app is not proof of a leak — check dirty vs clean in VM Tracker, check the band limit, reproduce with the 1 MB loop before hunting retain cycles.</li>
+<li><strong>Design decisions:</strong> cache sizing per <code>getMemoryClass()</code>, <code>mmap</code> for read-only lookup tables and assets, <code>autoreleasepool</code> in parse loops, <code>weak</code> in every long-lived callback — each one is a footprint or fairness rule, not style.</li>
+<li><strong>Interview answers:</strong> "why doesn't my phone swap?" (joules + wear + latency, then compression instead), "why does Android have a zygote?" (COW amortizes the boot image — Chapter 03's mechanism as an OS architecture), and "what happens when an iOS app exceeds its memory limit?" (no exception — signal 9, and why).</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 03</strong> — copy-on-write and demand paging are the zygote's engine and the "clean page = re-read from file" rule behind dirty/clean accounting.</li>
+<li><strong>Chapter 07</strong> — the desktop swap model this chapter deliberately abandons; the contrast defines both platforms.</li>
+<li><strong>Chapter 11 / 12 / 15</strong> — Go's concurrent GC, the JVM's generational scavenger, V8's read barriers: ART's CC is their close cousin (Cheney evacuation + Brooks-style read barrier, restated for fork-shared heaps).</li>
+<li><strong>Chapter 16</strong> — ARC, weak references, autorelease pools: the machinery whose <em>footprint</em> consequences this chapter cashes in.</li>
+<li><strong>Chapter 19</strong> — jemalloc/scudo: the uncapped native heap under every Android app, and the allocator geometry the 16 KB page transition reshuffles.</li>
+<li><strong>Chapter 21</strong> — memory corruption and MTE: the security module's defenses landing on Android first (Pixel 8+), with a memory cost that is itself a memory-model trade.</li>
+<li><strong>Chapter 23</strong> — the unification table places "eviction as reclamation" as the third reclamation strategy alongside manual free and tracing.</li>
+<li><strong>ROADMAP</strong> — the mobile-internals and security modules both start here: app-kill forensics, zram tuning, and exploit mitigations all assume this chapter's contracts.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>(concept)</strong> Phones have no disk swap. Derive in three steps why this forces <em>kill</em> as the primary reclamation strategy, and explain why zram and the iOS compressor do not break the argument.</li>
+<li><strong>(predict)</strong> Three Android processes are alive: A — the foreground app, <code>oom_score_adj 0</code>, RSS 400 MB; B — a cached app, adj 916, RSS 80 MB; C — a visible, perceptible service, adj 200, RSS 150 MB. Pressure rises until something dies. Which dies first, which dies last, and why doesn't B's small size save it?</li>
+<li><strong>(predict the number)</strong> An app's <code>dumpsys meminfo</code> shows Private Dirty 40 MB, Private Clean 10 MB, and a 60 MB shared library mapped equally by 6 processes. Compute RSS, USS, and PSS, and state which number lmkd's fairness accounting effectively uses.</li>
+<li><strong>(predict)</strong> An iOS process has 80 MB of mmapped read-only asset pages resident, 30 MB of dirty pages, and 20 MB of formerly-dirty pages now compressed to 8 MB. What is its footprint? Which of the three quantities is ~free under memory pressure?</li>
+<li><strong>(bug)</strong> An Android photo-grid app logs <code>Skipped 120 frames</code> on scroll. Memory Profiler shows "concurrent copying" GC events every ~200 ms, each freeing ~8 MB; the native heap is flat. Diagnose the root cause and name two fixes that attack it.</li>
+<li><strong>(bug)</strong> A share extension is killed at 70 MB footprint while its containing app runs at 600 MB without complaint. The team concludes "the extension leaks." What is wrong with that diagnosis, and how do you prove where the actual ceiling is?</li>
+<li><strong>(cross-chapter, Ch 16)</strong> ARC frees objects deterministically — so why does an iOS app whose long-lived manager holds a self-capturing closure still get jetsammed? Connect ARC's blind spot to this chapter's footprint accounting, and name the tool that shows you the cycle.</li>
+<li><strong>(cross-chapter, Ch 03)</strong> Describe exactly what the kernel does on the first write by a forked app to a shared zygote boot-image page, why ART's "zygote GC" exists to maximize how rarely that happens, and why Apple's dyld shared cache achieves sharing without any fork at all.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The derivation.</strong> (1) With no backing store, reclamation can only mean dropping clean pages, compressing dirty pages, or destroying the process that owns them. (2) Clean-page eviction is bounded by how much file-backed memory exists; compression buys 2–3x, not infinity, and costs CPU/joules each time. (3) When both are exhausted, the only remaining lever is taking an entire process's pages at once — dirty, clean, and compressed together. zram and the compressor don't break the argument because they are the <em>second</em> lever, not the third: zram is swap into RAM (finite, ratio-bounded), and compressed pages still occupy RAM and still count in footprint. They defer the kill; they never repeal it.</li>
+<li><strong>B dies first; A dies last.</strong> lmkd kills from the worst <code>oom_score_adj</code> upward: B (cached, 916) is first, then C (perceptible, 200) would go before A ever does. B's 80 MB doesn't save it because band beats size — the point of cached apps is that they are <em>supposed</em> to be disposable (the platform will re-fork the process and restore state), so killing B reclaims 80 MB at near-zero user-visible cost, while killing A would be visible instantly. Within a band, size matters (biggest first); across bands, it doesn't.</li>
+<li><strong>RSS = 40 + 10 + 60 = 110 MB</strong> (every resident page, shared pages counted in full). <strong>USS = 40 + 10 = 50 MB</strong> (private only — what killing the process frees <em>right now</em>). <strong>PSS = 40 + 10 + 60/6 = 60 MB</strong> (private plus each shared page split over its 6 sharers). PSS is the fairness number: summing PSS across all processes yields total RAM without double counting, so it's the metric the platform's accounting (and your blame attribution) is built on. Note Private Clean counts in PSS/USS but is cheap to lose — it's re-readable file data.</li>
+<li><strong>Footprint = 30 + 8 = 38 MB.</strong> Dirty always counts; compressed counts at its compressed size (that's the RAM it actually occupies); clean mapped file pages don't count at all. The 80 MB of mapped assets is the ~free part — under pressure the kernel evicts those pages and re-reads them from NAND on next touch, which is why memory-mapping read-only assets is the single biggest footprint lever on iOS. (Caveat as taught: <code>mappedIfSafe</code> requires read-only, safely file-backed data.)</li>
+<li><strong>It's an allocation-rate bug, not a heap-size bug.</strong> The GC is working (each event frees ~8 MB — the objects <em>do</em> die) but the scroll path allocates so much per frame (decoded temporaries, adapter lists, boxed values — commonly hundreds of KB per <code>onBindViewHolder</code>) that CC runs every ~200 ms, burning CPU on cores the render thread needs and adding read-barrier traffic. At 60/120 Hz the frame budget is 16.6/8.3 ms; the GC never "pauses" you long, it steals the budget continuously. Fixes: cache the decoded thumbnails (an <code>LruCache</code> sized to <code>getMemoryClass()</code>), decode once at display size rather than full-res plus downsample, and reuse objects/arrays in the bind path — the goal is allocation-rate near zero per frame.</li>
+<li><strong>The diagnosis confuses two ceilings.</strong> Extensions live in tighter Jetsam bands with hard footprint limits independent of (and far below) their containing app's; 70 MB may simply be that band's limit, reached by <em>correct</em> code. Proof: run the 1 MB-dirty-per-iteration loop in the extension and watch which iteration the process dies at (signal 9, no exception) — if it dies at the same 70 MB with no leak in your code, the ceiling is the band, not a bug. Then look at dirty vs clean in Instruments' VM Tracker: if "correct" data is being slurped eagerly instead of mmapped, you can cut footprint without removing features. (If it dies <em>earlier</em> with your real workload than with the loop, <em>then</em> go hunt the leak.)</li>
+<li><strong>ARC has no cycle detector (Chapter 16's price), and this chapter supplies the consequence.</strong> The closure captures <code>self</code> strongly; the manager strongly holds the closure → a cycle: neither object's refcount can reach zero, so their pages are never released. Freed ARC objects return dirty pages to the kernel immediately, but never-freed objects keep them forever — so footprint grows monotonically as the cycle accumulates state, and Jetsam eventually kills the process (signal 9) regardless of how deterministic the rest of your frees are. The fix is <code>[weak self]</code> in the capture list (the memory warning arrives <em>before</em> the kill; it is your last chance, not a rescue). The tool: Xcode's <strong>Memory Graph</strong> debugger — it snapshots the object graph and flags the retain cycle explicitly.</li>
+<li><strong>The write.</strong> The forked child shares the boot-image page via a read-only PTE pointing at the same physical frame (Chapter 03's COW). The first store traps: the kernel allocates a fresh physical page (4 KB, or 16 KB on the new page size), copies the frame, remaps it private-and-writable in the child, and restarts the faulting store. From then on that page is private RAM paid by one app. The <strong>zygote GC</strong> exists to minimize how often this happens: it compacts the zygote's live preloaded objects together (and clears garbage) before forks, so pointer-dense, frequently-touched data is either genuinely read-only (shared) or packed — reducing the surface of pages any child will dirty. The <strong>dyld shared cache</strong> shares without forking: at OS-build time, all system frameworks are merged and pre-relocated into one file, and every process <em>maps</em> those clean, file-backed, read-only pages directly — sharing achieved by construction (identical clean mappings), no COW machinery needed and nothing to write, because it never contains mutable process state. The zygote shares <em>mutable runtime state</em> via fork; the shared cache shares <em>immutable code and data</em> via mapping.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch21.html"><span class="cn-label">previous</span><span class="cn-title">Ch 21</span></a>
+<a class="next" href="ch23.html"><span class="cn-label">next</span><span class="cn-title">Ch 23</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/22-mobile-memory.md">chapters/22-mobile-memory.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

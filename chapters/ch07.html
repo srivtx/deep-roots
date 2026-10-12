@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 07 — Assembly: the reference model — deep-roots</title>
+<meta name="description" content="Chapter 07 of the memory-models module: Chapter 07 — Assembly: the reference model">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 07 — Assembly: the reference model — deep-roots">
+<meta property="og:description" content="Chapter 07 of the memory-models module: Chapter 07 — Assembly: the reference model">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 07 — Assembly: the reference model — deep-roots">
+<meta name="twitter:description" content="Chapter 07 of the memory-models module: Chapter 07 — Assembly: the reference model">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part I · the machine</div>
+<h1 class="post-title">Chapter 07 — Assembly: the reference model</h1>
+<div class="post-meta">chapter 07 &middot; ~9 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Every memory model in this module — from C's naked pointers to V8's hidden classes — compiles down to the same thing: instructions moving bytes between registers and stack slots. If you can read that final layer, no language can hide memory from you, and a whole profession unlocks: reading crashes, verifying what the compiler did, and eventually decompilation (Module 04). This chapter is the minimal complete grammar: registers, the call sequence, a real frame, and the conventions that make binaries <em>legible</em>.</blockquote>
+<h2 id="the-register-file-your-only-workspace">The register file: your only workspace</h2>
+<p>x86-64 gives the compiler 16 general registers. Learn them by <em>role</em>, not name —</p>
+<pre><code>rsp    stack pointer — the Chapter 04 machine, in hardware
+rbp    frame pointer (when used) — the stable origin for locals
+rdi rsi rdx rcx r8 r9     argument registers (SysV: args 1-6)
+rax     return value; rdx:rdx pair for 16-byte returns
+rbx r12 r13 r14 r15 rbp   callee-saved — a function must give these back unchanged</code></pre>
+<p>ARM64 (the phone world — and increasingly the server world) is <em>cleaner</em>: <code>x0-x7</code> arguments, <code>x0</code> return, <code>x29</code> frame pointer, <code>x30</code> (LR) the return-address register, <code>sp</code> with a hard rule that it stays 16-byte aligned. Notice what ARM64 <em>lacks</em>: no red zone, and pushes/pops move two registers at a time (<code>stp x29, x30, [sp, -16]!</code> — the entire prologue in one instruction).</p>
+<p>The deep point: registers are Chapter 02's tower top — the only storage with zero memory latency. Compilers are register allocators first and instruction schedulers second; "spilling" (a local living in <code>[rbp-8]</code> instead of a register) is the fallback, not the plan. The number of registers is thus a language-design fact: ARM64's 31 registers are why its calling convention passes more arguments in registers, which is why deep call chains spill less, which is... the whole tower participating in the ABI.</p>
+<h2 id="one-call-end-to-end">One call, end to end</h2>
+<pre><code class="language-c">int add3(int a, int b, int c) { return a + b + c; }
+int caller(void)              { return add3(10, 20, 30); }</code></pre>
+<p>Compiled x86-64 (gcc, -O1, SysV):</p>
+<pre><code class="language-asm">add3:
+        lea     eax, [rdi+rsi]      ; a + b            — one instruction, no memory
+        add     eax, edx            ; + c → eax (return reg)
+        ret                         ; rip ← [rsp], rsp += 8
+
+caller:
+        mov     edi, 10             ; arg1
+        mov     esi, 20             ; arg2
+        mov     edx, 30             ; arg3
+        call    add3                ; push return addr; rip ← add3
+        ret                         ; result already in eax</code></pre>
+<p>Read <code>call</code> and <code>ret</code> as pure Chapter 04 machinery: <code>call</code> pushes the return address and jumps; <code>ret</code> pops it into the instruction pointer. The stack's <em>only</em> obligatory role in every ABI is carrying that one word per call. A leaf function (one that calls nothing) needs <em>zero</em> stack — no frame, no prologue: <code>add3</code> above never touched <code>rsp</code> beyond the hardware's implicit return-address push. This is why leaf-heavy code (math kernels, lexers) runs at astonishing stack efficiency, and why the red zone (Chapter 04) exists — leaf scratch <em>below</em> rsp, free.</p>
+<h2 id="a-real-frame-with-locals-and-a-spill">A real frame, with locals and a spill</h2>
+<pre><code class="language-c">int scale_sum(int x, int k, int n) {
+    int t = x * k;
+    int acc = 0;
+    for (int i = 0; i &lt; n; i++) acc += t + i;
+    return acc;
+}</code></pre>
+<pre><code class="language-asm">scale_sum:
+        push    rbp                     ; ── prologue ──
+        mov     rbp, rsp
+        ; (at -O0) sub rsp, 16          ; claim locals: t=[rbp-4], acc=[rbp-8], i=[rbp-12]
+        mov     eax, edi                ; x
+        imul    eax, esi                ; t = x*k
+        mov     DWORD PTR [rbp-4], eax  ; "t" = a named stack slot
+        mov     DWORD PTR [rbp-8], 0    ; acc = 0
+        mov     DWORD PTR [rbp-12], 0   ; i = 0
+.loop:  mov     eax, [rbp-12]           ; load i
+        cmp     eax, edx                ; i &lt; n ?
+        jge     .done
+        mov     eax, [rbp-4]            ; load t
+        add     eax, [rbp-12]           ; t + i
+        add     DWORD PTR [rbp-8], eax  ; acc +=
+        add     DWORD PTR [rbp-12], 1   ; i++
+        jmp     .loop
+.done:  mov     eax, [rbp-8]            ; return acc
+        leave                           ; ── epilogue: rsp=rbp; pop rbp
+        ret</code></pre>
+<p>Everything Chapter 04 promised is on screen: one <code>sub</code> claims all locals; every variable is <code>[rbp − k]</code>; <code>leave</code> releases the frame in one stroke. Now compile the <em>same function</em> with <code>-O2</code> and watch the locals disappear into registers (i in a register, acc in eax, the frame gone entirely — <code>ret</code> from a stackless leaf). That gap <em>is</em> the optimizer, and <code>-O0</code> "debuggability" is literally "please store everything in memory so debuggers can find it."</p>
+<h2 id="where-the-abi-s-corners-show">Where the ABI's corners show</h2>
+<ul>
+<li><strong>Structs too big for rax</strong>: return a 40-byte struct and the caller passes a <em>hidden first argument</em> — a pointer to caller-reserved space (x86-64 SysV: RDI; ARM64: x8). The callee writes the result there and returns the pointer; the convention is called <strong>sret</strong>. You see it in disassembly as the callee treating <code>rdi</code> as an output pointer it never read arguments from.</li>
+<li><strong>More than 6 arguments</strong>: args 7+ travel on the <em>caller's</em> stack — the caller writes <code>[rsp+0], [rsp+8]...</code> <em>before</em> <code>call</code>; the callee addresses them as <code>[rbp+16]</code> (past saved rbp and the return address). The frame diagram in Chapter 04 is the map of exactly this.</li>
+<li><strong>Varargs (<code>printf</code>)</strong>: the caller sets <code>al</code> to the number of vector registers used (so the callee can save the xmm state cheaply). Reading a <code>printf</code> call site and seeing <code>mov al, 2</code> is this corner — the ABI refusing to make the common case pay for the rare one.</li>
+<li><strong>The canary, in the flesh</strong> (Chapter 21's full story, here as layout): a function with a local buffer gets <code>mov rax, QWORD PTR fs:0x28</code> in the prologue, the value stored just above the saved registers, and a check + <code>__stack_chk_fail</code> in the epilogue. <code>fs</code> is the <em>thread-local storage base</em> — itself a Chapter 03 page-table/MMU story (the kernel maps a per-thread TLS region and sets the segment base). The "stack canary" is thus <em>three chapters in four instructions</em>.</li>
+</ul>
+<h2 id="reading-binaries-like-text">Reading binaries like text</h2>
+<p>The professional loop, which Module 04 turns into a full discipline:</p>
+<pre><code class="language-console">$ objdump -d --no-show-raw-insn /bin/true | head -40    # any binary reads like this
+$ gcc -O2 -c api.c &amp;&amp; objdump -d api.o | less            # your own code, check it
+   ; questions you can now answer:
+   ;  - did it inline my call?        (no `call` — the body is right there)
+   ;  - did it vectorize my loop?     (ymm/zmm registers, vmovdqu)
+   ;  - where's my bounds check?      (cmp + jae before the indexed load)
+   ;  - is this a leaf?               (no frame, no push chain)
+$ gdb ./a.out
+   (gdb) disas scale_sum        # same view, but with symbols
+   (gdb) info registers rdi rsi rdx
+   (gdb) x/8gx $rsp             # the frame as raw words — Chapter 04's diagram, live</code></pre>
+<p>Symbols are the reason source-level debugging works at all: <code>-g</code> embeds the compiler's own map (which slot is <code>t</code>, where the prologue ends). Strip it and you are doing Module 04's job — recovering names from conventions (prologues are signatures; <code>fs:0x28</code> means "has a canary"; <code>endbr64</code> means CET is enabled — Chapter 21's hardware mitigations, visible as one instruction).</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>-O0</code> is a <em>mode</em>, not a baseline</strong>: it deliberately stores every variable to memory (that's the "optimized out" debugger pain — Chapter 04) and disables the inlining/vectorizing that shapes production behavior. Never performance-test <code>-O0</code>; never debug <code>Release -O2</code> without the ABI grammar of this chapter.</li>
+<li><strong>Tail calls read as <code>jmp</code></strong>: a <code>call</code> followed immediately by nothing vs a <code>jmp</code> into another function's entry = constant-stack recursion (Chapter 04/18). Scheme compilers emit nothing <em>but</em> this shape for loops.</li>
+<li><strong><code>endbr64</code></strong> at function entries is Intel CET's shadow-stack landing pad — Chapter 21's ROP mitigation, visible at the top of nearly every modern disassembly.</li>
+<li><strong>PLT/GOT</strong>: calls to shared libraries bounce through a stub (PLT) and a patchable function-pointer table (GOT) — the memory <em>and</em> the security story (RELRO hardens exactly this table — Chapter 21) of dynamic linking.</li>
+<li><strong>Calling convention as fingerprint</strong>: decompilers infer function signatures from register usage (who reads rdi first = takes arg1); exploit writers find <code>sret</code> and varargs sites the same way. The ABI is the interface between this chapter and Module 04.</li>
+<li><strong><code>lea</code> is free arithmetic</strong>: <code>lea rax, [rbp-24]</code> is "address-of" — the compiler also uses it as a 3-operand add machine. When you see <code>lea</code> with no memory access intent, that's not a pointer, it's fused arithmetic — a hint you're reading optimized code.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>The complete lab is ten minutes:</p>
+<pre><code class="language-console">$ cat &gt; tiny.c &lt;&lt;'EOF'
+int scale(int x, int k) { return x * k + 1; }
+int framey(int a, int b) { int t[16]; t[0]=a; t[1]=b; return t[0]+t[1]; }
+EOF
+$ gcc -O0 -S tiny.c -o - | sed -n '/scale:/,/ret/p'    # the frame, fully built
+$ gcc -O2 -S tiny.c -o - | sed -n '/scale:/,/ret/p'    # the frame, gone</code></pre>
+<p>Then in gdb: <code>break framey</code>, <code>run</code>, <code>disas</code>, <code>info frame</code>, <code>x/4gx $rsp</code> — and match what you see against Chapter 04's frame diagram, slot by slot. Do this once and you have permanently de-mystified "what the compiler did to my code."</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Verify, don't believe</strong>: does the compiler inline your hot getter? Did the bounds check survive? Is the struct passed by value (copied per call) or by pointer? The disassembly answers in 30 seconds, without benchmarks.</li>
+<li><strong>Crash triage fluency</strong>: any SIGSEGV report is now readable — <code>rip</code> pointing into unmapped space, <code>rsp</code> near the guard page (Chapter 04), <code>fs:0x28</code> aborts (canary hit — Chapter 21, you are being <em>attacked or corrupted</em>).</li>
+<li><strong>Performance work</strong>: the inner-loop grammar (registers vs spills, vector width, unrolling) is the only ground truth about hot code; profilers approximate, this is the code.</li>
+<li><strong>The on-ramp to reversing</strong>: Module 04's decompilation discipline is this chapter scaled up with tools (Ghidra/IDA) — the ABI, prologues, and calling conventions you just learned are exactly what those tools automate.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 02</strong> — registers as the tower's top; spills as tower trips.</li>
+<li><strong>Chapter 04</strong> — every <code>push</code>/<code>sub</code>/<code>leave</code>/<code>ret</code> here is that chapter's diagram.</li>
+<li><strong>Chapter 03</strong> — <code>fs</code> base, guard-page faults, vdso: the virtual-memory features the assembly names.</li>
+<li><strong>Chapter 08</strong> — UB observed at machine level (the deleted overflow check).</li>
+<li><strong>Chapter 09</strong> — vtables in the flesh; <code>sret</code> as the return-of-big-object rule.</li>
+<li><strong>Chapter 21</strong> — canaries (<code>fs:0x28</code>), ROP (every <code>ret</code> is a gadget), <code>endbr64</code>, GOT/RELRO.</li>
+<li><strong>Module 04 (queued)</strong> — decompilation = this chapter, industrialized.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Why does a leaf function need no stack frame at all? Which instruction still implicitly uses the stack?</li>
+<li><strong>Concept.</strong> What is <code>sret</code>, and what problem does it solve for 40-byte return values?</li>
+<li><strong>Predict the output.</strong> In the <code>scale_sum</code> disassembly above, where is the variable <code>t</code> at <code>-O0</code>, and what is it at <code>-O2</code>?</li>
+<li><strong>Predict the behavior.</strong> A function's prologue contains <code>mov rax, QWORD PTR fs:0x28</code> and its epilogue <code>xor</code>s something before <code>leave</code>. What language-level feature is being protected, and what is at <code>fs:0x28</code>?</li>
+<li><strong>Predict the number.</strong> On x86-64 SysV, <code>int f(struct Big b)</code> where Big is 48 bytes: how is <code>b</code> passed? Now <code>int g(struct Sml s)</code> where Sml is 16 bytes (two ints)?</li>
+<li><strong>Bug diagnosis.</strong> A crash shows <code>rip = 0x4141414141414141</code>. What happened, in terms of this chapter's instructions, and which Chapter 04 diagram did the attacker overwrite?</li>
+<li><strong>Bug diagnosis.</strong> Recursion that "should" run in constant stack (a <code>return g(...)</code> tail call) blows the stack anyway. What did the compiler emit instead of <code>jmp</code>, and what would you check in the disassembly?</li>
+<li><strong>Cross-chapter.</strong> Why can ARM64's <code>stp x29, x30, [sp,#-16]!</code> be the whole prologue while x86-64 needs multiple instructions for the same frame — and which chapter's property of the ISA (register count, push/pop design) explains it?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>A leaf calls nobody, so it never needs to save a return address for anyone else or pass outgoing stack arguments; its locals can live in registers (or the red zone). The <code>call</code> that <em>invoked</em> it still pushed its return address — <code>ret</code> always pops one word of stack. Stack usage: exactly 8 bytes, imposed by the caller.</li>
+<li>The System V return-value convention handles at most two registers (rax:rdx, 16 bytes). For anything bigger, the caller <em>pre-allocates</em> space and passes its address as a hidden first argument (rdi / x8); the callee writes the struct there and returns the pointer. It solves "return by value" without copying through a temp the callee can't address — the caller owns the destination, so the copy happens directly into the caller's frame.</li>
+<li>At <code>-O0</code>: <code>[rbp-4]</code> — a named stack slot (memory). At <code>-O2</code>: a register (eax or wherever the allocator puts it), possibly never existing as a location at all — computed and consumed in flight. Same source, different <em>existence</em>: this is the "optimized out" debugger phenomenon.</li>
+<li>The stack canary: the function has a local array (likely) whose overflow toward the saved return address must be detected. <code>fs:0x28</code> is the per-thread canary value in thread-local storage (the <code>fs</code> segment base — a virtual-memory/thread feature from Chapter 03); the epilogue re-reads and compares, and a mismatch jumps to <code>__stack_chk_fail</code> (abort). Chapter 21: the canary's low byte is 0x00.</li>
+<li><code>Big</code> (48B): too large for registers → the caller copies it to its <em>outgoing stack area</em> and passes a pointer (by-value semantics, memory mechanism). <code>Sml</code> (16B): fits the two-register rule → passed in rdi:rsi (each 8-byte half in a register) — no memory touch at all.</li>
+<li><code>0x41</code> is ASCII 'A': a buffer of user input overwrote the saved return address (the <code>[rbp+8]</code> slot from Chapter 04's frame diagram) with attacker bytes; <code>ret</code> popped it into <code>rip</code> and the CPU fetched an instruction from 0x4141... — unmapped, so the <em>fetch</em> faults. The classic stack-smashing signature, and the moment the canary from Q4 was supposed to catch it.</li>
+<li>It emitted <code>call</code> (pushing return addresses: linear stack growth) — or added work after the call preventing tail-call optimization. Check the disassembly for <code>jmp</code> at the tail vs <code>call</code>, and for instructions that still read locals after the recursive call (the optimizer cannot tail-call if the frame must stay alive). Stack-use analysis: Chapter 04's quota arithmetic on the emitted shape.</li>
+<li>ARM64's paired <code>stp</code> with writeback stores <em>two registers</em> (frame pointer and return address) and adjusts <code>sp</code> in one instruction — the ISA was designed (RISC, 31 registers, load/store architecture) so frames are one or two instructions; x86-64 inherits one-push-at-a-time semantics and CISC history, needing <code>push rbp; mov rbp,rsp; sub rsp,N</code> (three). ISA register/push design (Chapter 02's register-file economics) is what makes the frame cost visible at instruction granularity.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch06.html"><span class="cn-label">previous</span><span class="cn-title">Ch 06</span></a>
+<a class="next" href="ch08.html"><span class="cn-label">next</span><span class="cn-title">Ch 08</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/07-assembly-reference-model.md">chapters/07-assembly-reference-model.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

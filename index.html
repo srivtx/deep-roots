@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>deep-roots — computer science from first principles</title>
+<meta name="description" content="The deep root knowledge each field of computer science keeps to itself, rebuilt from first principles. Module 01: the memory models of programming languages — 23 chapters, 16 languages, labs, quizzes, one final exam.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="deep-roots — computer science from first principles">
+<meta property="og:description" content="The deep root knowledge each field of computer science keeps to itself, rebuilt from first principles. Module 01: the memory models of programming languages — 23 chapters, 16 languages, labs, quizzes, one final exam.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="deep-roots — computer science from first principles">
+<meta name="twitter:description" content="The deep root knowledge each field of computer science keeps to itself, rebuilt from first principles. Module 01: the memory models of programming languages — 23 chapters, 16 languages, labs, quizzes, one final exam.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="index.html#module-01">Module 01</a><a href="quiz.html">Quiz</a><a href="roadmap.html">Roadmap</a><a href="index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<section class="hero">
+  <div class="kicker">a learning program, from first principles</div>
+  <h1>Computer science from the <em>roots</em>, upward.</h1>
+  <p class="lede">
+    Every technical field has a root layer its practitioners know and everyone else waves away.
+    deep-roots goes down and stays there: each module rebuilds one field from the physics up,
+    so that what others memorize, we <strong>derive</strong>. Module 01 — live now — is the root of
+    them all: the memory models of programming languages, from silicon to GC, C to COBOL,
+    stack frames to heap exploits. <strong>What insiders know, written down.</strong>
+  </p>
+  <div class="hero-facts"><div class="fact"><div class="n">23</div><div class="l">chapters</div></div><div class="fact"><div class="n">16</div><div class="l">languages</div></div><div class="fact"><div class="n">~83k</div><div class="l">words</div></div><div class="fact"><div class="n">30</div><div class="l">final exam</div></div></div>
+</section>
+
+<section class="section" id="module-01">
+  <div class="section-head"><h2>Module 01 — memory models</h2><div class="rule"></div></div>
+  <p class="section-intro">
+    Twenty-three chapters in four parts. Every chapter ends with <em>What insiders know</em>,
+    a <em>See it yourself</em> lab with real commands, the connections to every other chapter,
+    and a quiz with worked answers. The whole module lands on one comparison table: sixteen
+    languages, four questions, sixty years of design decisions.
+  </p>
+  <div class="arc-label">Part I · the machine</div>
+<p class="section-intro" style="margin-bottom:20px">Where every abstraction is derived, not asserted: the physics, the tower, the illusion, and the two machines every language divides labor between. Read in order — the rest of the module is this argument.</p>
+<div class="chapter-list">
+<div class="chapter-row"><div class="cr-num">01</div><div class="cr-body"><h3><a href="chapters/ch01.html">Memory from silicon</a></h3><p>DRAM cells, addresses, alignment, endianness — why memory is shaped the way it is.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">02</div><div class="cr-body"><h3><a href="chapters/ch02.html">The hierarchy: latency is the tax, locality is the loophole</a></h3><p>The latency tower, the 64-byte line, locality — the physics behind all performance.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">03</div><div class="cr-body"><h3><a href="chapters/ch03.html">Virtual memory: the grand illusion</a></h3><p>Page tables, TLB, demand paging, COW, ASLR, swap — the OS grand illusion.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">04</div><div class="cr-body"><h3><a href="chapters/ch04.html">The stack: the shape of call lifetimes</a></h3><p>Frames, prologues, calling conventions — why local variables are free.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">05</div><div class="cr-body"><h3><a href="chapters/ch05.html">The heap: the everything-else machine</a></h3><p>The everything-else machine: metadata, the three taxes, fragmentation.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">06</div><div class="cr-body"><h3><a href="chapters/ch06.html">Object layout: what a "value" really looks like in RAM</a></h3><p>Unboxed/boxed/tagged, headers, vtables, fat pointers — what a value really is.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">07</div><div class="cr-body"><h3><a href="chapters/ch07.html">Assembly: the reference model</a></h3><p>x86-64 and ARM64 ground truth — the layer no language can hide.</p></div><div class="cr-arrow">&rarr;</div></div>
+</div>
+<div class="arc-label">Part II · the languages</div>
+<p class="section-intro" style="margin-bottom:20px">Sixteen memory models, each positioned by the four questions: what is a value, who owns it, who frees it, what safety. From C’s explicit contract to COBOL’s radical alternative.</p>
+<div class="chapter-list">
+<div class="chapter-row"><div class="cr-num">08</div><div class="cr-body"><h3><a href="chapters/ch08.html">C: the explicit model</a></h3><p>The explicit model: you own it, you free it, the language promises nothing.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">09</div><div class="cr-body"><h3><a href="chapters/ch09.html">C++: lifetime is scope (RAII)</a></h3><p>RAII: lifetime is scope; smart pointers as ownership arithmetic.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">10</div><div class="cr-body"><h3><a href="chapters/ch10.html">Rust: ownership, borrows, and the third way</a></h3><p>Ownership and borrows: safety at compile time — the third way.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">11</div><div class="cr-body"><h3><a href="chapters/ch11.html">Go: escape analysis and the concurrent GC</a></h3><p>Escape analysis, moving goroutine stacks, the concurrent GC.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">12</div><div class="cr-body"><h3><a href="chapters/ch12.html">Java: the generational heap of the JVM</a></h3><p>The generational JVM heap: headers, TLABs, collectors, the 32 GB cliff.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">13</div><div class="cr-body"><h3><a href="chapters/ch13.html">C# and .NET: value types on a GC heap</a></h3><p>Value types on a GC heap: boxing, LOH, spans.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">14</div><div class="cr-body"><h3><a href="chapters/ch14.html">Python: everything is a PyObject</a></h3><p>Everything is a PyObject: refcounts, the cycle detector, pymalloc.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">15</div><div class="cr-body"><h3><a href="chapters/ch15.html">JavaScript: V8's hidden classes and the scavenger</a></h3><p>Hidden classes, the scavenger, the leak-hunting heap graph.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">16</div><div class="cr-body"><h3><a href="chapters/ch16.html">Swift and Objective-C: the compiler counts (ARC)</a></h3><p>ARC: the compiler counts; side tables, COW, no swap.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">17</div><div class="cr-body"><h3><a href="chapters/ch17.html">COBOL: the memory model with no heap</a></h3><p>The memory model with no heap: PICTURE bytes, fixed records, why banking runs on it.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">18</div><div class="cr-body"><h3><a href="chapters/ch18.html">The elders: where every memory idea was invented</a></h3><p>Fortran, Lisp, Haskell, Erlang, Ada, Zig — where every idea was invented.</p></div><div class="cr-arrow">&rarr;</div></div>
+</div>
+<div class="arc-label">Part III · the deep end</div>
+<p class="section-intro" style="margin-bottom:20px">The machinery under malloc, the physics of multicore disagreement, the security consequences of every design decision, and the platforms that made memory a scheduled resource.</p>
+<div class="chapter-list">
+<div class="chapter-row"><div class="cr-num">19</div><div class="cr-body"><h3><a href="chapters/ch19.html">Allocators: the machinery under malloc</a></h3><p>dlmalloc bins, tcache, tcmalloc, jemalloc, slab — the machinery under malloc.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">20</div><div class="cr-body"><h3><a href="chapters/ch20.html">The hardware memory model: why cores disagree about memory</a></h3><p>MESI, store buffers, atomics, fences — why cores disagree about memory.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">21</div><div class="cr-body"><h3><a href="chapters/ch21.html">Memory security: how every model fails</a></h3><p>Overflows, UAF, heap attacks, ROP, Rowhammer — how every model fails.</p></div><div class="cr-arrow">&rarr;</div></div>
+<div class="chapter-row"><div class="cr-num">22</div><div class="cr-body"><h3><a href="chapters/ch22.html">Mobile memory: Android and iOS, where the OS is the GC</a></h3><p>Zygote, ART GC, Jetsam, compression — where the OS is the GC.</p></div><div class="cr-arrow">&rarr;</div></div>
+</div>
+<div class="arc-label">Part IV · the payoffs</div>
+<p class="section-intro" style="margin-bottom:20px">One table for every language, the instrument for every question, the practice path, and the exam.</p>
+<div class="chapter-list">
+<div class="chapter-row"><div class="cr-num">23</div><div class="cr-body"><h3><a href="chapters/ch23.html">The unification: one table, every language, every payoff</a></h3><p>One table for every language, the toolkit, the practice path.</p></div><div class="cr-arrow">&rarr;</div></div>
+</div>
+<div class="arc-label">the exam</div>
+<div class="chapter-list">
+<div class="chapter-row"><div class="cr-num">fin</div><div class="cr-body"><h3><a href="chapters/final-exam.html">Module 01 final exam</a></h3><p>Thirty questions across all twenty-three chapters, worked answers behind the fold — or take the <a href="quiz.html">interactive quiz</a>.</p></div><div class="cr-arrow">&rarr;</div></div>
+</div>
+
+</section>
+
+<section class="section" id="roadmap">
+  <div class="section-head"><h2>The roadmap</h2><div class="rule"></div></div>
+  <p class="section-intro">
+    Memory first because everything else is a consequence: security bugs are memory bugs,
+    decompilation reads stack frames and vtables, mobile OSes are memory-driven schedulers,
+    COBOL is a memory model, distributed consistency is the memory model at scale.
+    Eleven more modules are specified on <a href="roadmap.html">the roadmap page</a>.
+  </p>
+  <div class="module-grid">
+<article class="module-card live"><span class="mc-id">M02</span><h3>Memory security &amp; exploitation</h3><p>The dark mirror of module 01: canaries, tcache poisoning, ROP, MTE, Rowhammer — every design decision as attack surface.</p><span class="mc-status">QUEUED</span></article><article class="module-card"><span class="mc-id">M03</span><h3>Software bugs: the taxonomy of failure</h3><p>The bug classes senior engineers know by scar: memory, race, numeric, state — and how fuzzing and sanitizers actually find them.</p><span class="mc-status">QUEUED</span></article><article class="module-card"><span class="mc-id">M04</span><h3>Decompilation &amp; reverse engineering</h3><p>Reading what compilers leave behind: file formats from bytes up, calling conventions, vtable reconstruction, Ghidra/IDA.</p><span class="mc-status">QUEUED</span></article><article class="module-card"><span class="mc-id">M05</span><h3>Android internals</h3><p>Zygote and COW, ART object model and GC, Binder, lmkd, OTA — an OS designed by memory constraints.</p><span class="mc-status">QUEUED</span></article><article class="module-card"><span class="mc-id">M06</span><h3>iOS internals</h3><p>XNU VM, Jetsam bands, the compressor, Mach ports, DYLD shared cache, code signing as memory trust.</p><span class="mc-status">QUEUED</span></article><article class="module-card"><span class="mc-id">M07</span><h3>Desktop OS internals</h3><p>Windows (TEB/PEB, heap manager, LFH), Linux (ELF, vdso, slab, OOM), macOS (Mach VM, shared cache) — three concrete pagetable worlds.</p><span class="mc-status">QUEUED</span></article><article class="module-card"><span class="mc-id">M08</span><h3>COBOL &amp; the mainframe world</h3><p>The fixed-record universe deep dive: storage sections, PICTURE, CICS, AMODE — why the world’s money runs on no heap.</p><span class="mc-status">QUEUED</span></article><article class="module-card"><span class="mc-id">M09</span><h3>Concurrency &amp; distributed memory</h3><p>From the hardware memory model to happens-before at scale: lock-free, RCU, CRDTs — memory and network converge.</p><span class="mc-status">QUEUED</span></article><article class="module-card"><span class="mc-id">M10</span><h3>Compilers &amp; runtime internals</h3><p>Where memory models are manufactured: register allocation, escape analysis, barrier insertion, layout choices.</p><span class="mc-status">QUEUED</span></article><article class="module-card"><span class="mc-id">M11</span><h3>Database storage engines</h3><p>The disk is the new heap: B-trees, LSM, buffer pools as hierarchy, MVCC as copy-on-write.</p><span class="mc-status">QUEUED</span></article><article class="module-card"><span class="mc-id">M12</span><h3>GPU &amp; AI accelerator memory</h3><p>HBM, the CUDA hierarchy, coalescing as cache lines, allocator arenas in training — a new level of the tower.</p><span class="mc-status">QUEUED</span></article>
+  </div>
+</section>
+
+<section class="section" id="method">
+  <div class="section-head"><h2>The method</h2><div class="rule"></div></div>
+  <div class="about-body">
+    <p><strong>First principles, downward.</strong> Each module starts at the physical layer and builds
+    up — no fact is allowed to be memorized if it can be derived. Where a number matters, the
+    number is stated and the platform named; where a simplification is made, it is flagged.</p>
+    <p><strong>The insider test.</strong> Every chapter has a <em>What insiders know</em> section — the
+    sizes, thresholds, flags, failure modes, and folklore that people inside the field use daily.
+    <strong>See it yourself</strong> labs make every claim reproducible on a laptop: /proc, gdb,
+    perf, ASan, heap snapshots, dumpsys. Research that nobody can check is a diary.</p>
+    <p><strong>Quizzes with teeth, connections or it didn't happen.</strong> Questions predict
+    output, diagnose bugs, and attack false intuitions — with worked answers. Every chapter
+    ends by naming exactly what transfers to the other chapters and to the queued modules:
+    one root, twelve trees.</p>
+  </div>
+</section>
+
+<section class="section" id="about">
+  <div class="section-head"><h2>About</h2><div class="rule"></div></div>
+  <div class="about-body">
+    <p>
+      <strong>deep-roots is a learning program, not a tutorial dump.</strong> It is the education
+      program of the srivtx line of work — a sibling of
+      <a href="https://github.com/srivtx/p-rick">srivtx/p-rick</a>, the research program on
+      missing software. Where p-rick specifies software the world lacks, deep-roots rebuilds
+      the knowledge most engineers lack. Both run the same discipline: work tracked in an
+      automatic session ledger (<a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>),
+      sources open, claims checkable.
+    </p>
+    <p>
+      Everything here is open: markdown sources, this site (GitHub Pages, dark and light),
+      the <a href="quiz.html">interactive quiz</a>, and the
+      <a href="https://github.com/srivtx/deep-roots/blob/main/ROADMAP.md">full roadmap</a>.
+      MIT-licensed — use it, teach it, fork it.
+    </p>
+  </div>
+</section>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="index.html">Home</a>
+      <a href="index.html#module-01">Module 01</a>
+      <a href="quiz.html">Quiz</a>
+      <a href="roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="assets/theme.js"></script>
+</body>
+</html>

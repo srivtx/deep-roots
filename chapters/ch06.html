@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 06 — Object layout: what a "value" really looks like in RAM — deep-roots</title>
+<meta name="description" content="Chapter 06 of the memory-models module: Chapter 06 — Object layout: what a "value" really looks like in RAM">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 06 — Object layout: what a "value" really looks like in RAM — deep-roots">
+<meta property="og:description" content="Chapter 06 of the memory-models module: Chapter 06 — Object layout: what a "value" really looks like in RAM">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 06 — Object layout: what a "value" really looks like in RAM — deep-roots">
+<meta name="twitter:description" content="Chapter 06 of the memory-models module: Chapter 06 — Object layout: what a "value" really looks like in RAM">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part I · the machine</div>
+<h1 class="post-title">Chapter 06 — Object layout: what a "value" really looks like in RAM</h1>
+<div class="post-meta">chapter 06 &middot; ~10 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Every language answers "what are the bytes of a value?" with one of three moves: <strong>unboxed</strong> (the bytes <em>are</em> the value — a C struct, a Rust struct, a C# struct), <strong>boxed</strong> (a heap block with a header plus payload, reached by pointer — every Java object, every Python object), or <strong>tagged</strong> (bits of the word itself say what it is — V8's Smis, NaN-boxing). Padding, vtables, headers, fat pointers, and the length-of-array problem all live on this map. Learn the three moves once, and every language in Part II is a local dialect.</blockquote>
+<h2 id="the-three-representations">The three representations</h2>
+<p>Take the humble value <code>42</code>. Depending on the language, it may be:</p>
+<pre><code>unboxed (C, C++, Rust, C# struct)      boxed (Java, C#, Python, JS object)
+ ┌──────────────┐                       ┌─────────┐     ┌──────────────────┐
+ │  42          │ 4 bytes on stack/     │ ref ────┼────▶│ header │ 42      │ heap
+ └──────────────┘ anywhere              └─────────┘     └──────────────────┘
+ no header, no pointer, no metadata                     header = identity+GC bits
+                                                 
+tagged (V8 Smi, NaN-boxing, classic Lisp)
+ ┌───────────────────────┐
+ │ 42 &lt;&lt; 1  │ tag=0      │  one word: value+type-in-bits (bit 0 clear = Smi)
+ └───────────────────────┘  31-bit payload on 32-bit V8 (see Chapter 15)</code></pre>
+<p>Unboxed is the machine's native language: zero overhead, but no identity (you cannot ask "is this the <em>same</em> 42"), no runtime type, no GC. Boxed buys identity, dynamic type, and collector integration, at the price of one heap block, one header, and one pointer dereference per access (a Chapter 02 locality event). Tagged is the compromise dialects invent when they want unboxed speed and dynamic typing at once: <em>steal bits from the pointer or the double</em> (the pointer tagging and spare-bits material from Chapter 01).</p>
+<h2 id="padding-computed-by-hand">Padding, computed by hand</h2>
+<p>Natural alignment (Chapter 01) plus one extra rule — a struct's own alignment is the largest alignment of its members, so arrays of structs stay aligned — gives you the complete layout algorithm. Compute it once by hand and you own it forever:</p>
+<pre><code class="language-c">struct A { char c; int i; char c2; };   // offsets: c@0, pad 1-3, i@4, c2@8, pad 9-11
+struct B { int i; char c; char c2; };   // offsets: i@0, c@4, c2@5, pad 6-7
+// sizeof(A) = 12,  sizeof(B) = 8 — same fields, 33% waste from ordering alone</code></pre>
+<p>The compiler is your ally here in C (it may not reorder — the standard fixes member order for compatibility — but it <em>inserts</em> the padding); C++ adds the famous complication that members are laid out in <em>declaration order per access-control group</em>, and Rust simply fixes order too. Chapter 01's lab proved the numbers on real hardware; the practice takeaway is Chapter 02's: a struct that fits in one 64-byte line is a different animal from one that straddles two. Sorting members largest-alignment-first is the classic 20-30% layout win.</p>
+<h2 id="the-header-the-price-of-identity">The header: the price of identity</h2>
+<p>What does a boxed object carry before your first field? Per language, drawn to scale (64-bit unless noted):</p>
+<pre><code>Java (HotSpot, compressed oops):   [ mark word 8B ][ klass ptr 4B ][ fields... ]
+                                     hash/lock bits    type          12B header, 8B-align
+Python (CPython 3.11):             [ refcnt 8B ][ type ptr 8B ][ payload... ]
+                                     → a plain int is 28 bytes total
+V8 (Node, no ptr-compression):     [ map word 8B ][ properties ][ elements ][ in-object fields ]
+                                     the map IS the hidden class (Chapter 15)
+Objective-C/Swift class instance:  [ isa 8B (arm64: packed with refcount!) ][ fields ]
+                                     Chapter 16's non-pointer-isa
+C++ class with virtuals:           [ vptr 8B ][ fields... ]     no other header!
+C# class:                          [ obj header 8B (sync+method table) ][ fields ]</code></pre>
+<p>Same idea, different contents — the header carries whichever of these the runtime needs: <em>type identity</em> (klass/map/isa/vtable), <em>GC bookkeeping</em> (mark bits, age — the JVM's 4-bit GC age lives in the mark word, Chapter 12), <em>lock/hash state</em> (the same JVM mark word moonlights as a thin lock), and <em>reference counts</em> (Python, Objective-C, Swift). Note the one honest exception: <strong>C++ has no per-object GC or type header — a polymorphic object carries exactly one pointer, the vptr.</strong> That is the zero-overhead principle (Chapter 09) drawn at byte scale.</p>
+<h2 id="vtables-virtual-dispatch-at-byte-level">Vtables: virtual dispatch at byte level</h2>
+<pre><code class="language-c++">struct Shape { virtual double area(); int id; };
+// object:      [ vptr (8B) ][ id (4B) ]
+//                    │
+//                    ▼  (one indirect load)
+//              vtable: [ &amp;Shape::area ][ typeinfo* ]   (layout: ABI-defined, Itanium ABI
+//                                                       puts typeinfo at offset −2 words)</code></pre>
+<p>A virtual call: load vptr, load slot, call indirect — two dependent loads (Chapter 02 says: two potential misses) and no inlining across the call site, which is the real cost (the <em>missed</em> specialization, not the instructions). Multiple inheritance adds offset thunks; the details are Module 04 material (decompilers reconstruct classes from exactly these vtable shapes — and Chapter 21's attackers target them: overwrite a vptr, own the call). Rust and Go compile the same idea into their tagged enums and fat interfaces (below).</p>
+<h2 id="fat-pointers-one-pointer-is-not-always-one-word">Fat pointers: one pointer is not always one word</h2>
+<p>Some values need more than an address to be useful:</p>
+<pre><code>Go slice            [ data ptr ][ len ][ cap ]          3 words — the length rides WITH
+Rust &amp;[T] slice     [ data ptr ][ len ]                 2 words
+Go interface        [ itab (type+methods) ][ data ptr ] 2 words — the type rides WITH
+std::string_view    [ data ptr ][ size ]                2 words
+Swift String        (small-string: inline bytes, 16B total — Chapter 16)</code></pre>
+<p>The pattern: <strong>the pair (pointer, length/type) travels together in registers/stack slots</strong> — "fat pointer." This solves the C plague at its root: a Go slice cannot forget its length; every indexing compiles to a bounds check against the <code>len</code> riding along. Chapter 21's entire "CWE-787: out-of-bounds write" industry exists because C arrays are naked pointers with the length <em>forgotten at decay</em> — the single most consequential layout decision in this book.</p>
+<h2 id="the-length-of-array-problem-the-master-example">The length-of-array problem, the master example</h2>
+<p>Who knows how long the array is?</p>
+<ul>
+<li><strong>C</strong>: nobody. <code>int a[10]</code> knows its length only in the declaring scope; <code>sizeof(a)</code> works there, but passing <code>a</code> decays to a bare pointer (Chapter 08) and the length is gone. Every overflow bug (Chapter 21) is this table's first row.</li>
+<li><strong>Java / C# / JS</strong>: the header carries it — <code>array.length</code> reads a field 8 bytes from the object start; the runtime enforces it (every indexing = one compare and branch).</li>
+<li><strong>Go</strong>: the 3-word slice header carries it; compiler inserts the check.</li>
+<li><strong>C++ <code>std::vector</code> / Rust <code>Vec</code></strong>: the container object (3 pointers/words: begin/end/capacity) carries it.</li>
+</ul>
+<p>Four layouts, four safety regimes — one problem. When you meet a new language in Part II, ask this question first; it predicts the language's whole error personality.</p>
+<h2 id="tagging-and-nan-boxing-stealing-spare-bits">Tagging and NaN-boxing: stealing spare bits</h2>
+<p>Chapter 01 left us spare bits: a 48-bit canonical address leaves the top 16 bits of every pointer unused; IEEE-754 quiet NaNs leave 51 bits of payload unused.</p>
+<ul>
+<li><strong>V8 Smi</strong>: bit 0 = 0 means "31/32-bit integer in the remaining bits" — integers up to 2^31−1 need <em>no allocation at all</em> (Chapter 15 makes this a whole world).</li>
+<li><strong>NaN-boxing</strong> (JavaScriptCore, SpiderMonkey heritage): stuff a pointer or an int32 into the payload of a double whose exponent is all-ones. One 64-bit register holds <em>any</em> JS value unboxed — the reason those engines avoid V8's split representation.</li>
+<li><strong>Lisp/McCarthy</strong>: the original — every word's low bits tagged (Chapter 18's cons cells).</li>
+</ul>
+<p>The trade is always the same: you buy "no allocation for half the values" with "a mask/shift on every operation" — and the tagging <em>IS</em> the type system at runtime.</p>
+<h2 id="boxing-when-it-leaks-into-your-perf-profile">Boxing, when it leaks into your perf profile</h2>
+<p>Value-language code that quietly heap-allocates: C# <code>struct → interface</code> cast (Chapter 13's 24-byte box), Java <code>int → Integer</code> autoboxing into collections (Chapter 12's classic p99 killer), OCaml's polymorphic compare... The detector is a heap profile that shows small, identical-size allocations at a hot call site. The fixes form a family: generics (parametric types make the box unnecessary — this is <em>why</em> Java generics and C# generics exist at the memory level), spans/slices over raw arrays, and unboxed fields on the containing object.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>SoA vs AoS</strong>: array-of-structs pays for fields you never touch (every line fetch drags all fields along — Chapter 02); struct-of-arrays fetches only the hot field. Game ECS engines and vectorized ML kernels are SoA <em>because of cache lines, not aesthetics</em>.</li>
+<li><strong>EBO / niche optimization</strong> (Chapters 09, 10): empty base classes and null- pointer patterns fold into zero bytes — <code>sizeof(std::unique_ptr&lt;T&gt;) == sizeof(T*)</code>, <code>sizeof(Option&lt;&amp;T&gt;) == sizeof(&amp;T)</code>. Layout engines <em>hunt</em> for legally-unused bit patterns.</li>
+<li><strong>Strings are the polymorphism stress test</strong>: every runtime invents multiple representations (SSO in libstdc++/libc++ — Chapter 09; compact strings in the JVM; cons/rope/sliced in V8 — Chapter 15's 24-byte <code>SlicedString</code> that can pin a 100 MB parent; small-string in Swift). Read a string's layout and you have read the runtime's priorities.</li>
+<li><strong>Alignment of atomics</strong>: a lock-free <code>std::atomic&lt;uint64_t&gt;</code> that straddles a cache line is either illegal or catastrophically slow (x86's split lock #AC detection made this <em>audible</em> — Chapter 20).</li>
+<li><strong><code>offsetof</code> is a layout debugger</strong> you already own; CTFU trivia: the zero-size trailing flexible array member (Chapter 08) exists purely to make one-allocation header+payload layouts expressible.</li>
+<li><strong>Headers vs cache lines is a real design axis</strong>: why Python is slow for small ints <em>per operation</em> (28-byte boxed objects, header traffic) while V8 Smis fly — the representation choice is the performance story, not "interpreted vs compiled."</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>One C program prints the whole chapter; run it on x86-64:</p>
+<pre><code class="language-c">#include &lt;stdio.h&gt;
+#include &lt;stddef.h&gt;
+struct A { char c; int i; char c2; };
+struct B { int i; char c; char c2; };
+struct V { int (*fp)(void); int id; };       /* hand-rolled "vptr" first member */
+int main(void) {
+    printf("A: size=%zu c@%zu i@%zu c2@%zu\n", sizeof(struct A),
+           offsetof(struct A, c), offsetof(struct A, i), offsetof(struct A, c2));
+    printf("B: size=%zu i@%zu c@%zu c2@%zu\n", sizeof(struct B),
+           offsetof(struct B, i), offsetof(struct B, c), offsetof(struct B, c2));
+    printf("ptr=%zu  V: size=%zu\n", sizeof(void*), sizeof(struct V));
+    struct V obj = { NULL, 7 };
+    printf("V obj bytes: fp=%p id=%d — the 'vptr' is just member 0\n", obj.fp, obj.id);
+    return 0;
+}</code></pre>
+<p>Then the boxed-size ladder (Python): <code>python3 -c "import sys; print(sys.getsizeof(0), sys.getsizeof(1), sys.getsizeof(10**30), sys.getsizeof(''), sys.getsizeof('a'))"</code> — 28, 28, (grows), 49, 50 on CPython 3.11: the header <em>is</em> the floor (Chapter 14 dissects it). And Rust: <code>println!("{}", std::mem::size_of::&lt;Option&lt;&amp;u8&gt;&gt;())</code> → 8 — the niche optimization, live.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Shrink hot structs</strong>: reorder by alignment (compute it — you now can), convert AoS→SoA on hot fields, pack hot flags into one word. 20-30% on layout alone is common; more when line-straddling stops.</li>
+<li><strong>Read any object like a native</strong>: core dumps, COBOL storage dumps (Chapter 17), V8 <code>%DebugPrint</code> output, exploit development (Chapter 21) — all the same skill: header, then fields, at offsets you can derive.</li>
+<li><strong>Pick representations deliberately</strong> in APIs: fat-pointer slices instead of pointer+length pairs; value types (C#) for short-lived small data; arenas of unboxed records (Chapter 05) for batches.</li>
+<li><strong>Diagnose "mystery allocation" profiles</strong> in one glance: boxing sites (interface casts, autoboxing) look like identical-size blocks at one call site.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 01</strong> — alignment, spare pointer bits, endianness of every field.</li>
+<li><strong>Chapter 02</strong> — the 64-byte line as the budget every layout negotiates with.</li>
+<li><strong>Chapter 08 / 09 / 10</strong> — C's naked arrays, C++'s vptr-and-nothing-else, Rust's niche-packed tagged unions.</li>
+<li><strong>Chapter 12 / 13 / 14 / 15 / 16</strong> — each header decoded: mark word, method table, PyObject, map word, non-pointer isa.</li>
+<li><strong>Chapter 17</strong> — COBOL: the whole language as layout-without-header (PIC bytes, no padding, layout as external contract).</li>
+<li><strong>Chapter 21</strong> — vtable/vptr overwrite, type confusion (two layouts disagreeing), overflow (length forgotten) — every attack in that chapter is a <em>layout</em> fact.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Why does a boxed value cost a pointer dereference even when the payload is already in cache? Trace the two-step access.</li>
+<li><strong>Concept.</strong> Why must a struct's total size be padded to its largest member's alignment? What breaks in <em>arrays of that struct</em> otherwise?</li>
+<li><strong>Predict the number.</strong> x86-64: <code>struct {char a; double b; char c;}</code> — size and every offset?</li>
+<li><strong>Predict the number.</strong> A C# class holding an <code>int</code> and a <code>char</code> (auto layout): minimum object size on x64? And the same fields as a <code>struct</code> (unboxed)?</li>
+<li><strong>Predict the behavior.</strong> Java: <code>Integer a = 127, b = 127; Integer c = 200, d = 200;</code> — what do <code>a == b</code> and <code>c == d</code> print, and what does it have to do with boxing?</li>
+<li><strong>Bug diagnosis.</strong> A Go function's <code>for _, v := range bigSlice</code> is fast, but the same loop over <code>[]interface{}</code> is 10x slower with heavy GC. Explain with representations.</li>
+<li><strong>Bug diagnosis.</strong> A C++ profiler shows a hot virtual call missing constantly at L1. Two objects of the same class are being called alternately. What is the layout-level mechanism?</li>
+<li><strong>Cross-chapter.</strong> Chapter 21 says "CWE-787 is the #1 CWE." Which table in this chapter explains why that bug class cannot exist in Java, and by what mechanism (two words)?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>The variable holds a <em>reference</em>: first access loads the pointer itself (usually register/stack — cheap), then dereferences to the heap block where the payload sits. Even with the block cached, you pay the dependent load latency and — for scattered objects — the line/row locality costs of Chapter 01/02. Unboxed reads the bytes directly from the variable's own slot.</li>
+<li>Arrays compute element addresses as base + i × sizeof(struct): if sizeof weren't a multiple of the largest alignment, element 1's <code>double</code> would land misaligned — every element after the first breaks the Chapter 01 alignment contract, and atomics (Chapter 20) could tear.</li>
+<li>size = 24: a@0, pad 1-7, b@8 (8B), c@16, pad 17-23 (trailing pad to multiple of 8).</li>
+<li>Class: 8B object header + 4B int + 2B char + pad to 8 → 16 bytes minimum. Unboxed struct: 4 + 2 → 8 bytes with packing (or 8 with default sequential layout — the point: no header, no pointer; the class costs the header forever, the struct costs nothing beyond its fields).</li>
+<li><code>a == b</code> → true (reference equality, but Integer caches −128..127 — both 127s are the <em>same object</em>); <code>c == d</code> → false (two distinct boxed 200s). This is boxing + a small cache — Chapter 12 and 14's small-int singletons, and the reason the rule "never == wrappers" exists.</li>
+<li><code>[]T</code> holds unboxed records contiguous in memory — range iteration streams lines (Chapter 02). <code>[]interface{}</code> boxes every element: each is a separate heap object (map/itab + payload — fat pointer to a boxed value), so iteration pointer-chases, allocation rate explodes, and GC pressure (Chapter 11/05's allocation tax) dominates. Representation, not the loop, is the cost.</li>
+<li>Two objects → likely two vtables, and worse, two vptr <em>values</em> alternating at one call site: the vptr load and the vtable slot load (two dependent loads, Chapter 02/09) can't stay predicted in the L1 (branch target + data caches both thrash); inlining is impossible (unknown target). Megamorphism at machine level — the Chapter 15 lesson, visible in C++ clothes.</li>
+<li>The length-of-array table: Java arrays carry their length in the header, and the runtime <em>bounds-checks</em> every indexing — "length field + enforced check," the two-word answer to why CWE-787 is a C-family disease.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch05.html"><span class="cn-label">previous</span><span class="cn-title">Ch 05</span></a>
+<a class="next" href="ch07.html"><span class="cn-label">next</span><span class="cn-title">Ch 07</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/06-object-layout.md">chapters/06-object-layout.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

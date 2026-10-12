@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 01 final exam — deep-roots</title>
+<meta name="description" content="Thirty questions across all twenty-three chapters, with worked answers.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 01 final exam — deep-roots">
+<meta property="og:description" content="Thirty questions across all twenty-three chapters, with worked answers.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 01 final exam — deep-roots">
+<meta name="twitter:description" content="Thirty questions across all twenty-three chapters, with worked answers.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; final exam</div>
+<h1 class="post-title">Module 01 final exam</h1>
+<div class="post-meta">30 questions &middot; every chapter &middot; worked answers behind the fold</div>
+<p>Thirty questions across all twenty-three chapters. Closed book. Every answer is worked, not just stated — the explanations are the point. Scoring: 26+ = you own this module; 20-25 = solid, revisit the flagged chapters; &lt;20 = the quiz answers below each chapter are the study path.</p>
+<p><strong>Part I — the machine (chapters 01-07)</strong></p>
+<ol>
+<li>Why does the DRAM burst size determine the cache line size?</li>
+<li><code>struct { char a; long b; char c; }</code> on x86-64: size and padding map?</li>
+<li>A 3 GHz CPU, DRAM 100 ns: how many cycles is one miss? Why does sequential streaming still run near bandwidth?</li>
+<li>Page fault → SIGSEGV: what decides it, and name two fault outcomes that are <em>not</em> errors.</li>
+<li>fork() copies what, and what does the child's first write cost?</li>
+<li>Why is stack allocation one instruction, and what exactly does <code>leave</code> do?</li>
+<li><code>int *dangle(void){ int x=1; return &amp;x; }</code> — why does it "work" once and break the second time?</li>
+<li>What are caller-saved vs callee-saved registers, and why does the split exist?</li>
+<li><code>free(p)</code> takes no size. Where is the size, and what does that adjacency cost (two answers: perf and security)?</li>
+<li>Why can the JVM compact its heap while glibc cannot?</li>
+</ol>
+<p><strong>Part II — the languages (chapters 08-18)</strong></p>
+<ol>
+<li>C: what legally happens to <code>if (a+b &lt; a)</code> at <code>-O2</code>, and why?</li>
+<li>C++: why can a lingering <code>weak_ptr</code> pin a <code>make_shared</code> allocation after the object died?</li>
+<li>Rust: why is <code>Option&lt;Box&lt;u8&gt;&gt;</code> 8 bytes, and what is this optimization called?</li>
+<li>Go: a closure captures a local by reference — what two allocation decisions did the compiler just make?</li>
+<li>JVM: heap at 32 GB vs 31 GB with compressed oops — what changes, and why is the smaller heap sometimes <em>better</em>?</li>
+<li>CLR: <code>new double[10_000]</code> — which generation, and why? (Careful.)</li>
+<li>Python: <code>a = 257; b = 257</code> in one line vs two files — what does <code>a is b</code> print in each, and why?</li>
+<li>V8: two objects, properties added in different order — same hidden class? What is the runtime consequence?</li>
+<li>Swift: why can <code>weak</code> references zero themselves when Rust's <code>Rc::Weak</code> cannot?</li>
+<li>COBOL: how many bytes is <code>PIC S9(7) COMP-3</code>, and where is the sign?</li>
+<li>Erlang: a process holds references to ten 100-byte binaries vs ten 100 KB binaries — what's the retention difference?</li>
+<li>Name the language that passes its allocator <em>as a parameter</em> and why that makes allocation greppable.</li>
+</ol>
+<p><strong>Part III — the deep end (chapters 19-22)</strong></p>
+<ol>
+<li><code>malloc(1)</code> on glibc 2.35 x86-64: total chunk size? <code>malloc(100000)</code>: brk or mmap? <code>malloc(200000)</code> freed then repeated: what <em>silently changes</em>?</li>
+<li>SB litmus test on x86 vs ARM: which values can both threads see, and which architectural property makes x86's answer narrower?</li>
+<li>What does <code>volatile</code> guarantee in C — atomicity, ordering, or neither? Same question for Java.</li>
+<li>What is Safe-Linking, and which chapter-19 fact made it necessary?</li>
+<li>ASan: what is shadow memory, what is its overhead, and how does it catch use-after-free <em>after</em> the free?</li>
+<li>Why does an iOS memory-mapped 500 MB read-only asset cost ~0 footprint while the same bytes in a <code>Data</code> cost 500 MB?</li>
+<li>Android: why does every app share a boot image, and which Chapter 03 mechanism is it?</li>
+<li>One sentence each: MTE, false sharing, the canary's zero byte, dirty vs clean pages, generational hypothesis.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<p><strong>Part I</strong></p>
+<ol>
+<li>The hierarchy's unit of transfer should match the wire's: DRAM delivers 8×64-bit bursts = 64 bytes; making the cache line the burst width means one miss = one transfer, no partial-line waste or re-fetch (ch01/02).</li>
+<li>24 bytes: a@0, pad 1-7, b@8, c@16, pad 17-23 — trailing pad so the struct size is a multiple of its largest member alignment (8), keeping arrays aligned (ch01/06).</li>
+<li>~300 cycles. Streaming wins on <em>throughput</em> (not latency): the memory system pipelines many outstanding misses (MLP) and the prefetcher stays ahead — latency is hidden by parallelism (ch02).</li>
+<li>The kernel's fault handler policy decides. Not-errors: zero-fill on first touch, swap/file readback, COW break (ch03).</li>
+<li>The page <em>tables</em> only; all pages shared read-only/COW. The child's first write to a shared page faults and copies that one page (typically 4 KB) (ch03).</li>
+<li>Frame size is compile-time known, so claim = <code>sub rsp, N</code> (one instruction). <code>leave</code> = <code>mov rsp, rbp; pop rbp</code> — restores rsp <em>past</em> all locals and restores the caller's frame pointer: batch deallocation (ch04).</li>
+<li>The frame is freed but not erased: first use often still reads the old bits; an intervening call's frame reuses and overwrites the slot before the second use. UB because the standard guarantees neither outcome (ch04/08).</li>
+<li>Callee-saved: the callee preserves them across the call (push/pop in prologue); caller-saved: the caller must spill around calls. The split lets leaf functions use caller-saved registers with zero save/restore cost — splitting the burden by who actually needs continuity (ch04/07).</li>
+<li>In allocator metadata adjacent to the block (glibc: size word at p−8). Perf: the 32-byte minimum chunk for a 1-byte request (~24-31 wasted bytes). Security: overflow of user data corrupts the <em>next</em> chunk's metadata — the precondition of heap exploitation (ch08/19/21).</li>
+<li>The JVM can enumerate every live reference (typed object graph + GC roots), so it can move objects and rewrite pointers. C's raw pointers hide in registers/unions/foreign code — unfindable, so blocks must stay put (ch05/12).</li>
+</ol>
+<p><strong>Part II</strong></p>
+<ol>
+<li>The check compiles away: signed overflow is UB, so the optimizer may assume <code>a+b &lt; a</code> simplifies to <code>b &lt; 0</code> and delete the addition. Correct checks: <code>b &gt; INT_MAX - a</code> or <code>__builtin_add_overflow</code> (ch08).</li>
+<li><code>make_shared</code> allocates object + control block as ONE chunk; a surviving weak count keeps the whole allocation (both strong and weak counts live in the block) — the block can't be freed until weak hits zero too. Two-allocation shared_ptr doesn't have this coupling (ch09).</li>
+<li>Box is a non-null pointer; <code>None</code> is encoded as the null pointer pattern that a valid Box can never hold — the "niche"/null-pointer optimization. Optionality is free (ch10).</li>
+<li>The captured local must outlive the frame → it escapes to the heap; the closure itself is heap-allocated (a Context-ized box holding the captured reference). Check with <code>-gcflags='-m'</code> (ch11).</li>
+<li>32 GB is past the compressed-oops reach (32-bit shifted refs decode to 2^32×8 = 32 GB): references become 8-byte, every object grows ~4-8 bytes — total heap <em>capacity</em> can drop going from 31→32 GB, so -Xmx31g can hold more objects than -Xmx32g (ch12).</li>
+<li>Not LOH: the double[]-specific rule died with .NET Core; the 85,000-byte threshold applies (10,000×8 = 80,000 &lt; 85,000) — gen0. The trap: on .NET Framework, <code>double[]</code> ≥ 1000 elements went to LOH (ch13).</li>
+<li>One line: True — the compiler folded both literals into one constant pool entry (plus the −5..256 cache covers 257? No — 257 is out of range; the one-line case is constant <em>dedup</em>). Two separate compilations: False — distinct constants, distinct objects. (And <code>is</code> with literals warns in 3.12+ because you're testing dedup artifacts, not equality) (ch14).</li>
+<li>Different hidden classes: property-add order builds different transition paths, so the two objects carry different maps. Consequence: the call site becomes polymorphic/megamorphic — inline caches miss, optimization dies (ch15).</li>
+<li>Swift/ObjC weak slots live in a global side table outside the object; dealloc zeroes them under lock before the memory is released. Rust's weak count lives inside the Rc block itself — the dying object's own memory — so no outside writer can nil the reference; a live Weak pins the block instead (ch16/10).</li>
+<li>4 bytes: 7 digits → ⌈(7+1)/2⌉ = 4 nibbles of packed decimal; the sign occupies the last nibble (C=+, D=−, F=unsigned) (ch17).</li>
+<li>Binaries &gt;64 bytes are refcounted and live off-heap, <em>shared</em> between processes — ten references to one 100 KB binary retain one copy; 100-byte binaries are copied into each process's heap (ch18).</li>
+<li>Zig: every allocating function takes <code>std.mem.Allocator</code> — no hidden global, so "which heap, whose lifetime" is visible at the call site, and arena lifetimes are one <code>defer deinit</code> (ch18).</li>
+</ol>
+<p><strong>Part III</strong></p>
+<ol>
+<li>32 bytes (24 usable). 100,000 &lt; 131,072 threshold → brk arena. After the 200,000-byte mmap'd chunk is freed, the dynamic threshold <em>rises</em> to ~200,000 — subsequent identical requests come from brk: "run 2 behaved differently" (ch19).</li>
+<li>Both threads can read 0 (both stores still buffered) — allowed on both architectures; x86-TSO additionally forbids the other three reorderings (only store→load reorders), while ARM may also show store→store and load→load reorderings across addresses. The store buffer is the mechanism; x86's drains in order (ch20).</li>
+<li>C <code>volatile</code>: neither atomicity nor ordering — it only forbids caching/merging of the <em>single</em> access in registers (compiler visibility), which is a device-register contract, not a thread contract. Java <code>volatile</code>: sequential consistency for volatile accesses — reads/writes are ordered and atomic (JSR-133). Same keyword, different universes (ch20).</li>
+<li>glibc 2.32's tcache/fastbin pointer mangling: freed-chunk <code>fd</code> pointers are stored XOR'd with their own address &gt;&gt; 12, so an attacker who overwrites a freelist pointer with a plain value fails the decode — it was necessary because chunk metadata sits adjacent to attacker-writable data (ch19/21).</li>
+<li>Shadow = 1 byte per 8 bytes of heap (1/8 overhead), encoding each 8-byte granule's poison state (redzones 0xfa, freed 0xfd). UAF after free: freed memory goes to a quarantine and is poisoned, so the <em>stale access itself</em> is the violation caught at the exact instruction (ch21).</li>
+<li>mmap'd file pages are file-backed <em>clean</em> pages: evictable, re-faulted from NAND — jetsam doesn't bill them. <code>Data</code> copies are anonymous <em>dirty</em> pages: must stay resident (or be compressed) — 500 MB of footprint. Clean vs dirty is the iOS memory ledger (ch22/03).</li>
+<li>The zygote: one process preloads the boot image/framework; every app is forked from it, sharing those pages copy-on-write. The mechanism is COW from Chapter 03 — sharing without copying, copying only on write (ch22).</li>
+<li>MTE: 4-bit tag per 16-byte granule, hardware-checked — catches UAF/OOB at the CPU. False sharing: two cores writing different variables in one line — MESI ping-pong. The canary's zero byte: the low byte is 0x00 so strcpy-family overflows terminate inside the canary instead of copying it out. Dirty vs clean: must-stay-resident vs evictable-again page classes (the mobile memory currency). Generational hypothesis: most objects die young — the bet that funds copying nurseries (ch12/20/21/22).</li>
+</ol>
+</details>
+<div class="post-footer"><p>Prefer clicking to folding? The <a href="../quiz.html">interactive quiz</a> scores you as you go. Chapter list: <a href="../index.html#module-01">Module 01</a>. Source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/quiz/final-exam.md">quiz/final-exam.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

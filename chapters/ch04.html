@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapter 04 — The stack: the shape of call lifetimes — deep-roots</title>
+<meta name="description" content="Chapter 04 of the memory-models module: Chapter 04 — The stack: the shape of call lifetimes">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Chapter 04 — The stack: the shape of call lifetimes — deep-roots">
+<meta property="og:description" content="Chapter 04 of the memory-models module: Chapter 04 — The stack: the shape of call lifetimes">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Chapter 04 — The stack: the shape of call lifetimes — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of the memory-models module: Chapter 04 — The stack: the shape of call lifetimes">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 01 &middot; memory models &middot; Part I · the machine</div>
+<h1 class="post-title">Chapter 04 — The stack: the shape of call lifetimes</h1>
+<div class="post-meta">chapter 04 &middot; ~11 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Function calls nest and return in reverse order — last called, first returned. That is exactly LIFO, so a machine region that grows on call and shrinks on return is the <em>perfect</em> representation of the call graph's lifetime structure. That region is the stack, and "allocation" on it is one instruction: moving the stack pointer. This chapter builds the frame from the call sequence upward, so that Chapter 07's assembly, Chapter 08's C bugs, and Chapter 21's stack smashing all read as the same diagram.</blockquote>
+<h2 id="why-the-stack-exists-derive-it-don-t-memorize-it">Why the stack exists (derive it, don't memorize it)</h2>
+<p>Suppose you must design storage for local variables. Locals have a birth (function entry), a death (function return), and a shape: while <code>f</code> calls <code>g</code> calls <code>h</code>, <code>h</code>'s locals must die before <code>g</code>'s, which die before <code>f</code>'s. Lifetimes <em>nest</em>. Two properties follow. First, the youngest lifetime is always the next to die — a last-in-first-out region with a single moving pointer tracks everything with <strong>zero bookkeeping</strong>. No per-object header, no free list, no GC metadata — the pointer's position <em>is</em> the allocation state. Second, the size of every function's locals is known at compile time, so the compiler can pre-compute each frame's size and emit entry code that claims space in one instruction.</p>
+<p>Contrast with the heap (Chapter 05), which exists precisely because real programs also contain lifetimes that do <em>not</em> nest — objects that outlive the function that created them, and sizes unknown until runtime. Stack = the nested-lifetime machine; heap = the everything-else machine; every language in Part II is a different treaty for dividing labor between them.</p>
+<h2 id="the-frame-what-one-function-call-must-store">The frame: what one function call must store</h2>
+<p>A function needs, at minimum: the <strong>return address</strong> (where to resume in the caller), a home for its <strong>locals and spilled values</strong>, saved <strong>callee-saved registers</strong> (below), and <strong>outgoing arguments</strong> that don't fit in registers. Together these bytes are the <em>stack frame</em>. On x86-64 Linux (System V ABI), a frame looks like:</p>
+<pre><code>        higher addresses
++--------------------------------+  ← caller's outgoing args (7th+ argument)
+|  arg7, arg8 ...                |
++--------------------------------+  ← return address (pushed by CALL)
+|  saved rbp  (caller's FP)      |  ← rbp points here after prologue
++--------------------------------+
+|  callee-saved regs (rbx, r12..)|
++--------------------------------+
+|  locals, spill slots           |   the frame proper — sub rsp, N claims
+|  ...                           |   all of this in ONE instruction
+|  [128-byte red zone below rsp] |   leaf-function scratch (x86-64 only)
++--------------------------------+  ← rsp (stack pointer) — always moves
+        lower addresses</code></pre>
+<p>The <strong>prologue</strong> and <strong>epilogue</strong> bracket every non-trivial function:</p>
+<pre><code class="language-asm">; int scale(int x, int k) { int t = x * k; return t + 1; }
+push rbp              ; save caller's frame pointer
+mov  rbp, rsp         ; establish my frame pointer
+sub  rsp, 16          ; CLAIM 16 bytes for locals — this IS stack allocation
+mov  eax, edi         ; x
+imul eax, esi         ; x * k   (k was passed in esi)
+add  eax, 1           ; + 1
+mov  DWORD PTR [rbp-4], eax   ; spill t to its slot: "t" == [rbp-4]
+leave                ; mov rsp, rbp; pop rbp — DEALLOCATION, one instruction
+ret                  ; pop return address into rip</code></pre>
+<p>Read the epilogue carefully: <code>leave</code> moves <code>rsp</code> <em>past</em> every local in one shot. Stack deallocation is not per-object — it is <em>per-frame</em>, batched, free. This is the whole magic of "local variables are automatic": allocation was <code>sub rsp, N</code>; freeing is <code>leave</code>. The only costs left are initialization and the push/pop traffic of the call sequence itself.</p>
+<h2 id="calling-conventions-the-contract-between-callers">Calling conventions: the contract between callers</h2>
+<p>Who passes arguments where? Who saves which registers? The answers are the <strong>ABI</strong> (application binary interface) — without a shared convention, your object files cannot call mine. System V x86-64: the first six integer/pointer arguments travel in registers <code>rdi, rsi, rdx, rcx, r8, r9</code>; the rest go on the stack; return value in <code>rax</code> (small structs: <code>rax:rdx</code>; bigger: the caller passes a hidden pointer — Chapter 07's <code>sret</code>). Floating point uses <code>xmm0-7</code>. ARM64's convention: <code>x0-x7</code> for args, <code>x0</code> return, <code>x30</code> (LR) holds the return address, and <code>x29</code> is the frame pointer.</p>
+<p>The register split that matters for performance intuition: <strong>caller-saved vs callee-saved</strong>. Callee-saved registers (<code>rbx, rbp, r12-r15</code> on x86-64; <code>x19-x28</code> on ARM64) may be used by a function only if it saves and restores them — the callee <em>owns</em> their continuity. Caller-saved (everything else) may be obliterated by any call. Why the split? Leaf functions (which call nobody) can use caller-saved registers freely and save nothing; functions that call a lot push the burden onto the callers' register allocator instead. One rule, two savings, chosen by graph coloring economics.</p>
+<h2 id="the-frame-pointer-the-price-of-being-lost">The frame pointer: the price of being lost</h2>
+<p><code>rbp</code>/<code>x29</code> points at a fixed spot in the frame. With it, a debugger can walk frames: each saved-old-rbp at [rbp] links to the parent frame; the return address sits at [rbp+8] — a linked list through the stack, built by the prologue, giving backtraces for free. Compilers can omit frame pointers (<code>-fomit-frame-pointer</code>, saving one register and two instructions) and find frames by <em>computed</em> offsets instead — slightly faster, dramatically harder to unwind. The industry swung to omit for years, then profiled itself into regret: modern distros and browsers are re-enabling frame pointers because stack sampling (and postmortem crash triage) is worth the 1% cost. On ARM64 the frame record chain is effectively mandatory culture — <code>x29</code> linked list always there.</p>
+<h2 id="growth-limits-and-overflow">Growth, limits, and overflow</h2>
+<p>The stack lives at the top of the address space (Chapter 03's map) and grows <em>downward</em> — toward the heap growing upward, maximizing the runway between them. Default limits: 8 MB on Linux (<code>ulimit -s</code>; JVM threads default 512 KB-1 MB, pthread-created threads can be anything; goroutines start at single-digit KB — Chapter 11). The kernel maps a <strong>guard page</strong> below the stack (a virtual-memory trap — Chapter 03): run into it and you die with SIGSEGV, the classic "stack overflow" from unbounded recursion.</p>
+<p>The subtle security chapter-hook: deep recursion does not hit the guard page politely in huge steps — a frame that allocates 100 KB can <em>jump past</em> the guard page into unrelated mappings and keep writing. The fix is <strong>stack probing</strong> (<code>-fstack-clash- protection</code>): the prologue touches each page as it descends, guaranteeing the guard page gets its chance. Note also the <strong>red zone</strong> (the 128 bytes below <code>rsp</code> that leaf functions may use without moving <code>rsp</code>): signal handlers and interrupts that land between instructions can clobber it, which is why kernel code compiles with <code>-mno-red-zone</code>.</p>
+<h2 id="dynamic-frames-vlas-and-alloca">Dynamic frames: VLAs and alloca</h2>
+<p>C99 let locals have runtime sizes (<code>int a[n];</code>) — implemented by a <code>sub rsp, computed</code> in the prologue, and C's <code>alloca()</code> does the same inside a body. Fast (no heap!), and dangerous: nothing checks that <code>n</code> is sane, so <code>alloca(1&lt;&lt;30)</code> walks straight into the guard page. The Linux kernel banned VLAs outright in 2018 (every kernel frame size must be statically provable — the stack is a scarce, shared, safety-critical resource). This is a taste of Chapter 08's larger lesson: C gives you the machine's freedom and the machine's teeth.</p>
+<h2 id="what-a-local-variable-actually-is">What a local variable actually is</h2>
+<p>By now you can say it precisely: <strong>a local is a compile-time-named byte range in the current frame.</strong> <code>&amp;t</code> compiles to <code>lea rax, [rbp-4]</code> — the address is arithmetic on the frame pointer. And now two famous phenomena make sense: (1) the dangling pointer to a local — return its address, the <code>leave</code> batch-frees the whole frame, the bytes still exist (nothing zeroes them) but belong to whoever's frame lands there next (Chapter 08's UB gallery); (2) the debugger's "value optimized out" — at <code>-O2</code> the variable may never get a slot at all, living in a register that the compiler moves and retires; debug info describes a fiction the optimizer declined to build.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The backtrace is a data structure</strong>: <code>backtrace()</code>/libunwind walk the saved-rbp chain (or DWARF's <code>.eh_frame</code> when pointers were omitted); a corrupted saved rbp is why hacked or smashed stacks produce garbage traces (Chapter 21).</li>
+<li><strong>Tail calls are frame reuse</strong>: <code>return f(x)</code> compiled as <code>jmp f</code> (not <code>call</code>) overwrites the current frame with the callee's — Scheme's loops (Chapter 18) and some recursion patterns run in constant stack for exactly this reason.</li>
+<li><strong>Stack size is a real production dial</strong>: thread-per-request servers with 256 KB stacks meet 300 KB driver frames; deep template instantiation in C++, JSON parsers recursing on adversarial input (parser DoS — a CVE family), and recursive <code>toString</code>s are all stack-budget bugs, not "logic" bugs.</li>
+<li><strong>The canary's home</strong> is just above saved rbp, between locals and the return address (<code>fs:0x28</code> via TLS — Chapter 21 shows the actual instructions): the only place where an overflow <em>must</em> pass through a secret to reach control data.</li>
+<li><strong>Stack frames are never zeroed on reuse</strong> — the classic info-leak: a password buffered in a frame is still readable in the "dead" bytes when the next function's frame overlaps it without initializing. (<code>-ftrivial-auto-var-init</code> exists to stop exactly this.)</li>
+<li><strong>goroutines made the whole design rethink</strong> (Chapter 11): a 2 KB stack cannot hold deep C-style frames, so Go <em>moves</em> the whole stack when it grows — impossible for native threads precisely because C code holds raw pointers into stack frames that the language cannot find and fix.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Read a real frame with gdb — this is the exact skill Chapter 21 and Module 04 build on:</p>
+<pre><code class="language-console">$ gcc -g -O0 frames.c &amp;&amp; gdb ./a.out
+(gdb) break scale
+(gdb) run
+(gdb) info frame        # frame at 0x7ffd...: rbp, saved regs, locals range
+(gdb) x/8gx $rsp        # raw frame words: saved regs, locals
+(gdb) bt                # the rbp chain as names
+(gdb) disas scale       # find the prologue: push rbp; mov rbp,rsp; sub rsp,N</code></pre>
+<p>And overflow one, honestly:</p>
+<pre><code class="language-c">void f(int depth) { char pad[1024]; pad[0] = 1; f(depth + 1); }
+int main(void) { f(0); }        # 8 MB / ~1 KB frames ≈ ~8000 frames then SIGSEGV
+# run under gdb: "Program received signal SIGSEGV" — rsp in the guard-page range
+# compile with -fsanitize=address: "stack-overflow ... stack size 8192 KB"</code></pre>
+<p><code>ulimit -s</code> prints your limit; raise/lower it and watch the death depth change — the stack is a <em>quota</em>, enforced by the guard page, a Chapter 03 virtual-memory device.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Crash triage</strong>: a core dump's <code>rsp</code>/<code>rip</code> relationship tells you <em>where</em> you died in the tower; "rip near rsp in unmapped territory" = stack exhaustion; "rip = a byte pattern you recognize" = smashed return address (Chapter 21).</li>
+<li><strong>Recursion decisions</strong>: recursion depth × frame size is a real product budget; this arithmetic tells you when to convert to iteration before production does.</li>
+<li><strong>Reading any disassembly or decompiled code</strong> (Module 04): prologues, <code>leave</code>, <code>sret</code> slots, and the ABI register roles are the grammar of every binary you will ever read.</li>
+<li><strong>Concurrency intuition</strong>: thread stack sizes, why context switches are cheap (swap rsp, save regs — no copying), and why fibers/coroutines (and goroutines) are "just stacks we can move."</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 03</strong> — the stack as a map region, the guard page, limits as quotas.</li>
+<li><strong>Chapter 05</strong> — the heap: what to do when lifetimes don't nest; malloc for the everything-else machine.</li>
+<li><strong>Chapter 07</strong> — full assembly treatment: <code>sret</code>, varargs, <code>-O0</code> vs <code>-O2</code> frames.</li>
+<li><strong>Chapter 08 / 09</strong> — dangling-local pointers, RAII's scope = frame lifetime.</li>
+<li><strong>Chapter 11 / 12 / 14</strong> — goroutine stacks that move, JVM frames and -Xss, Python's recursion limit bridging C frames and interpreter frames.</li>
+<li><strong>Chapter 21</strong> — smashing the frame: canaries, ROP gadgets <em>live at frame scale</em>.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Derive the stack from the shape of call lifetimes: state the property of function lifetimes that makes LIFO storage the zero-bookkeeping design.</li>
+<li><strong>Concept.</strong> Why is stack allocation one instruction while heap allocation needs a whole allocator (Chapter 05)? What does the compiler know at compile time that makes this possible?</li>
+<li><strong>Predict the number.</strong> Linux default stack 8 MB; <code>void f(){char b[4096]; f();}</code> — roughly how deep before SIGSEGV? Which Chapter 03 mechanism delivers the signal?</li>
+<li><strong>Predict the behavior.</strong> <code>int* f(){ int x=1; return &amp;x; }</code> — the caller stores the pointer and dereferences it twice. Why might this "work" once and corrupt on the second use?</li>
+<li><strong>Predict the output.</strong> In gdb you see <code>x/1gx $rbp</code> = <code>0x55d5f4a07bc0</code> and <code>x/1gx $rbp+8</code> = <code>0x55d5f4a03412</code>. What are these two values to the current frame?</li>
+<li><strong>Bug diagnosis.</strong> A recursive-descent JSON parser crashes on a 10 MB deeply nested input at depth ~30,000 but not on 9 MB. What is the arithmetic, and name two fixes (one at the parser, one at the platform).</li>
+<li><strong>Bug diagnosis.</strong> A multithreaded service crashes at startup with SIGSEGV in <code>memcpy</code> called from a third-party library, only when thread stack size is set to 256 KB. What is the diagnosis?</li>
+<li><strong>Cross-chapter.</strong> Go cannot keep C-style fixed stacks <em>and</em> support thousands of goroutines. Which mechanism does Chapter 11 use instead, and why is it impossible in C?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>Call lifetimes <em>nest</em>: while <code>f → g → h</code> runs, h's locals must die first and f's last — the youngest allocation is always the next freed. A region with one moving pointer records the entire allocation state with no metadata: the pointer's position <em>is</em> the state; batch-claim (sub rsp) and batch-release (leave) are each one instruction.</li>
+<li>The compiler knows each frame's exact size and layout at compile time, so claim and release are pointer arithmetic. The heap serves sizes unknown until runtime and lifetimes that don't nest, so it needs per-block metadata, reuse policy, and freelist/bins machinery (Chapter 05/19) to decide <em>which</em> freed bytes satisfy the <em>next</em> request.</li>
+<li>Each recursion consumes one 4096-byte buffer plus ~48-64 bytes of frame overhead → ~8,388,608/4160 ≈ ~2,000 frames (a few thousand with compiler-optimized frames). The guard page below the stack — an unmapped page from Chapter 03's virtual-memory kit — raises SIGSEGV when rsp descends into it.</li>
+<li>The frame is batch-freed but not erased: <code>x</code>'s bytes still hold 1 until some later call's frame reuses them. The first dereference often still reads 1 (nothing overwrote it yet); by the second, an intervening call's locals have overwritten the slot. Classic dangling-pointer nondeterminism — UB in C (Chapter 08) precisely because the standard refuses to promise which outcome occurs.</li>
+<li>[rbp] holds the <em>saved caller's rbp</em> (parent frame pointer — one link of the backtrace chain) and [rbp+8] holds the <em>return address</em> into the caller. Those two words are the frame's connection to its past; overwriting them is exactly the target of Chapter 21's stack smashing.</li>
+<li>~30,000 × ~270 bytes/frame ≈ 8.1 MB — past the 8 MB quota. Fix at parser: impose a depth limit or convert to an explicit-stack loop (the parser owns its lifetime discipline). Fix at platform: raise <code>ulimit -s</code> (or thread stack size) — a quota, not a law; the right fix is the parser's, because unbounded recursion on adversarial input is a DoS vector regardless of quota.</li>
+<li>The library's call chain (its frames plus large stack-locals or an alloca-style buffer) exceeds 256 KB at some depth; <code>memcpy</code> writing into a local buffer walks past the guard page. Diagnose by SIGSEGV address ≈ thread stack region top minus 256 KB; fix by raising that thread's stack size — some libraries publish their stack requirement for exactly this reason.</li>
+<li>Grow-by-copying: Go starts goroutine stacks tiny and, when the guard hits, copies the whole live stack to a larger region and <em>rewrites every pointer into it</em> (compiler metadata knows where they are). Impossible in C because raw pointers hide in untyped registers, unions, and foreign code — the language cannot find, let alone fix, pointers into a moved stack.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="../index.html">Module 01 — memory models from first principles</a>. Markdown source: <a href="https://github.com/srivtx/deep-roots/blob/main/modules/01-memory-models/chapters/04-the-stack.md">chapters/04-the-stack.md</a>. Test yourself: <a href="../quiz.html">the interactive quiz</a> &middot; take the <a href="final-exam.html">final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>
