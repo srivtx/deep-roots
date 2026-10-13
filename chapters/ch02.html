@@ -26,7 +26,7 @@
 <header class="site-header">
   <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
   <div class="header-right">
-    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
     <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -37,7 +37,7 @@
 <article class="post">
 <div class="post-kicker">module 01 &middot; memory models &middot; Part I · the machine</div>
 <h1 class="post-title">Chapter 02 — The hierarchy: latency is the tax, locality is the loophole</h1>
-<div class="post-meta">chapter 02 &middot; ~10 min read &middot; deep-roots learning program</div>
+<div class="post-meta">chapter 02 &middot; ~11 min read &middot; deep-roots learning program</div>
 <blockquote><strong>The 30-second version.</strong> Memory is a tall tower: registers at the top, L1/L2/L3 caches, DRAM, then disk — each level bigger and ~10x slower than the one above it. The tower exists because of Chapter 01's physics (fast is expensive, big is slow). What makes the tower livable is <em>locality</em>: programs reuse a small working set (temporal locality) and touch nearby bytes together (spatial locality). Nearly every performance question in this book — cache lines, false sharing, struct layout, GC behavior, why arrays beat lists, why your scroll janks — is one question: <em>how well does this code use the tower?</em></blockquote>
 <h2 id="the-tower-derived">The tower, derived</h2>
 <p>If DRAM were as fast as registers, we would not need this chapter. It is not — a DRAM trip is ~200-400 cycles (Chapter 01). But SRAM is ~6x the area per bit, so a CPU with hundreds of megabytes of register-speed memory is physically absurd. The engineering answer is a series of increasingly large, increasingly slow caches, each holding a <em>subset</em> of the level below:</p>
@@ -125,6 +125,13 @@ int main(void) {
 <li><strong>Chapter 20</strong> — coherence (MESI), false sharing, and the memory model.</li>
 <li><strong>Chapter 22</strong> — mobile: shared L3/DRAM bandwidth is the frame budget the GC steals.</li>
 </ul>
+<p><em>Forward links — where the rest of the program picks this chapter up:</em></p>
+<ul>
+<li><strong>Module 17 ch04 (the cache born in RTL)</strong> — the 64-byte line and the direct-mapped set this chapter asserted are derived there from transistors up.</li>
+<li><strong>Module 13 ch03 (TCP buffer machine)</strong> — bufferbloat is a queue's occupancy — the hierarchy's 'lower is slower' extended into the network itself.</li>
+<li><strong>Module 18 ch02 (AES and modes)</strong> — the T-table timing attack is this chapter's cache-line eviction turned into a key leak.</li>
+<li><strong>Module 22 ch05 (the datacenter tower)</strong> — the fabric becomes a hierarchy level: HBM -&gt; DRAM -&gt; network -&gt; storage, the same trade at 10^9 scale.</li>
+</ul>
 <h2 id="quiz">Quiz</h2>
 <ol>
 <li><strong>Concept.</strong> Why does the hierarchy use ~10x steps between levels instead of two levels (registers + DRAM)?</li>
@@ -171,6 +178,7 @@ int main(void) {
       <a href="../index.html#module-01">Module 01</a>
       <a href="../quiz.html">Quiz</a>
       <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
       <a href="https://github.com/srivtx/deep-roots">GitHub</a>
       <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
     </div>

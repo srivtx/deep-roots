@@ -242,6 +242,13 @@ whole business model, and (Chapter 22) the Zygote's.
 - **Chapter 21** — ASLR, NX, guard pages: the exploit-resistant configuration of the
   page tables.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 15 ch02 (EPT)** — the second page table: what this chapter built for processes, virtualization builds for VMs.
+- **Module 22 ch04 (the KV cache)** — paged attention is virtual memory for tokens — block tables, COW prefixes, the whole mechanism reborn.
+- **Module 20 ch01 (the MPU)** — the world with no page table: page permissions collapse to 8 regions of RW/XN, and a fault is your error channel.
+- **Module 14 ch03 (the page cache)** — the OS's file cache is demand paging pointed at disk — the biggest consumer of this chapter's machinery.
+
 ## Quiz
 
 1. **Concept.** Name the three incompatible facts that force virtual memory, and say

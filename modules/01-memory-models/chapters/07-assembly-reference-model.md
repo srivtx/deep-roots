@@ -220,6 +220,12 @@ you have permanently de-mystified "what the compiler did to my code."
   GOT/RELRO.
 - **Module 04 (queued)** — decompilation = this chapter, industrialized.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 04 ch03 (compiler idioms)** — the patterns this chapter reads by hand are the fingerprints that identify -O2 vs -O0 in a stripped binary.
+- **Module 02 ch03 (code reuse)** — ROP turns the instruction stream into a menu: every 'ret' in the binary is a gadget this chapter can already find.
+- **Module 17 ch02 (pipelines)** — why branches are expensive: the predictor and the 17-FO4 budget that make the ISA's quirks make sense.
+
 ## Quiz
 
 1. **Concept.** Why does a leaf function need no stack frame at all? Which

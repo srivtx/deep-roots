@@ -26,7 +26,7 @@
 <header class="site-header">
   <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
   <div class="header-right">
-    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
     <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -148,6 +148,12 @@ $ gcc -O2 -S tiny.c -o - | sed -n '/scale:/,/ret/p'    # the frame, gone</code><
 <li><strong>Chapter 21</strong> — canaries (<code>fs:0x28</code>), ROP (every <code>ret</code> is a gadget), <code>endbr64</code>, GOT/RELRO.</li>
 <li><strong>Module 04 (queued)</strong> — decompilation = this chapter, industrialized.</li>
 </ul>
+<p><em>Forward links — where the rest of the program picks this chapter up:</em></p>
+<ul>
+<li><strong>Module 04 ch03 (compiler idioms)</strong> — the patterns this chapter reads by hand are the fingerprints that identify -O2 vs -O0 in a stripped binary.</li>
+<li><strong>Module 02 ch03 (code reuse)</strong> — ROP turns the instruction stream into a menu: every 'ret' in the binary is a gadget this chapter can already find.</li>
+<li><strong>Module 17 ch02 (pipelines)</strong> — why branches are expensive: the predictor and the 17-FO4 budget that make the ISA's quirks make sense.</li>
+</ul>
 <h2 id="quiz">Quiz</h2>
 <ol>
 <li><strong>Concept.</strong> Why does a leaf function need no stack frame at all? Which instruction still implicitly uses the stack?</li>
@@ -194,6 +200,7 @@ $ gcc -O2 -S tiny.c -o - | sed -n '/scale:/,/ret/p'    # the frame, gone</code><
       <a href="../index.html#module-01">Module 01</a>
       <a href="../quiz.html">Quiz</a>
       <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
       <a href="https://github.com/srivtx/deep-roots">GitHub</a>
       <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
     </div>

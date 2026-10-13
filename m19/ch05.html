@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What types cannot do — deep-roots</title>
+<meta name="description" content="Chapter 05 of module 19: What types cannot do">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="What types cannot do — deep-roots">
+<meta property="og:description" content="Chapter 05 of module 19: What types cannot do">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="What types cannot do — deep-roots">
+<meta name="twitter:description" content="Chapter 05 of module 19: What types cannot do">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 19 &middot; why the rules are theorems</div>
+<h1 class="post-title">What types cannot do</h1>
+<div class="post-meta">chapter 05 &middot; ~16 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Chapters 01–04 built the type system into a theorem prover: soundness, memory safety, liveness, machine-checked; this chapter is the receipt. Four things no type system can give you: termination (halting problem — total languages dodge it by rejecting legal loops), spec fidelity (types prove <em>syntactic</em> facts; "this sorts" is semantics, paid for with tests or module 21), the world (I/O and time cannot be caged by a pure type — Haskell's <code>IO</code> is an honest surrender), and escape hatches (any <code>unsafe</code>/<code>any</code> is a membrane — the same kernel-membrane-bulk shape as an OS kernel and a browser). Then the two grand trades — soundness vs precision, and static vs dynamic as <em>when you pay for the proof</em> — ending in a 6-question checklist for any language.</blockquote>
+<h2 id="the-first-impossibility-no-checker-admits-exactly-the-terminating-programs">The first impossibility: no checker admits exactly the terminating programs</h2>
+<p>Chapter 01's diagonalization sets a ceiling every type system lives under. Suppose a checker accepted exactly the terminating programs. Feed it the four-line Collatz loop below: it must either say "terminates" — thereby proving the Collatz conjecture, open since the 1930s — or refuse, rejecting a loop everyone has run a billion times. No third answer: by Rice's theorem, every non-trivial semantic property of programs is undecidable. Real checkers pick a side, and both sides cost:</p>
+<ul>
+<li><strong>Over-accept (everyone else).</strong> Java, Rust, OCaml, TypeScript all admit non-terminating programs — <code>fn f() -&gt; ! { f() }</code> typechecks, and the price lands at runtime: the wedged thread, the livelock. Soundness (chapter 02) says a program never gets <em>stuck</em> — not that it <em>finishes</em>.</li>
+<li><strong>Over-reject (total languages).</strong> Agda and Coq make termination a typing obligation: every recursive call must be on a <em>structurally smaller</em> argument (Coq's guard condition) — under Curry–Howard (chapter 02), a non-terminating proof is a proof of <code>False</code>. The price is total programming: a general server loop — <code>serve :: Request -&gt; Response</code> forever — cannot be written without <em>lying</em>, typically by threading a fuel argument (<code>serve n</code> runs ≤ <code>n</code> iterations). The honest escape is <strong>codata</strong>: define the server as a coinductive process — an infinite object observed lazily; the dual of "terminates" is <em>productivity</em>: every match delivers its next step in finite time though the object never ends. Termination read backwards: not "it stops," but "every step arrives." Total languages ban ordinary loops; codata recasts them as infinite values; industry buys neither and pays at runtime.</li>
+</ul>
+<h2 id="the-second-types-prove-syntax-not-specs-and-even-data-models-fight">The second: types prove syntax, not specs — and even data models fight</h2>
+<p>A type claims <em>shape</em>: this value is drawn from that set, and soundness says evaluation stays inside the promised shapes. Every interesting bug lives one level up, in semantics: "this function <em>sorts</em>," "this dose calculator <em>never returns a lethal value</em>," "this loop <em>eventually releases the lock</em>" — specifications, which no decidable checker can verify (the same Rice theorem). The gap is filled by <strong>tests</strong> (weaker, finite proofs about sample inputs), <strong>formal verification</strong> (module 21's machines, at the price of proof scripts), or <strong>nothing</strong> — the default. The smallest instance: <code>int</code> addition typechecks, yet <code>x + 1 &lt; x</code> can be <em>true</em> — a value fact, invisible to a shape checker. Milner's "well-typed programs cannot go wrong" means <em>cannot get stuck</em> — overflow, wrong answer, wrong dose: all still possible.</p>
+<p>Even at the data-model level, guarantees fight: the <strong>expression problem</strong> is the minimal proof. Extend a type along two axes — <em>new cases</em> (<code>Triangle</code> joins <code>Circle | Rect</code>) and <em>new functions</em> (<code>perimeter()</code> joins <code>area()</code>) — under two designs:</p>
+<pre><code class="language-text">                sum types (Rust enum /       OO interfaces
+                TS discriminated union)      (a class per case)
++---------------+---------------------------+---------------------------+
+| add a CASE    | touch EVERY function:     | free: new subclass,       |
+| (variant)     | every exhaustive switch   |   zero existing code      |
+|               | must handle it            |   edited                  |
++---------------+---------------------------+---------------------------+
+| add a         | free: just write the      | touch EVERY class: the    |
+| FUNCTION      |   new function            |   method joins every      |
+|               |                           |   implementing class      |
++---------------+---------------------------+---------------------------+</code></pre>
+<p>Neither column is better; they place the friction on opposite axes. Wadler named the tension in 1998; the <strong>visitor pattern</strong> is the OO compromise — cases become one method per case on a visitor interface, so new <em>functions</em> (visitors) are free while new <em>cases</em> still edit every visitor. The visitor moves the seam, never removes it: impossibility 2 in miniature — both axes cheap is not on the menu.</p>
+<h2 id="the-third-the-world-effects-a-pure-type-cannot-cage">The third: the world — effects a pure type cannot cage</h2>
+<p>A program is a closed box of terms; the world is not. <code>read()</code>, <code>now()</code>, another process return different values for identical expressions; no type system can constrain what the kernel returns, and the machine beneath even disagrees with itself. Types stop at the process boundary — Impossibility 3.</p>
+<p>Haskell's answer is an honest surrender, not a solution. <code>IO</code> brands a computation as "this <em>is</em> an effect," and the only thing the type system knows about branded values is how to sequence them:</p>
+<pre><code class="language-haskell">-- the entire effect surface of the program is in the type
+main :: IO ()
+main = do
+  putStrLn "name?"          -- effect #1
+  name &lt;- getLine           -- effect #2, must happen after #1
+  putStrLn ("hi, " ++ name) -- effect #3; () = no result value</code></pre>
+<p><code>main</code> is not a printed string; it is a <em>value describing</em> an effectful computation, and <code>do</code>/<code>&gt;&gt;=</code> is the only law: run in order. The type system never inspects the effect — it cannot prove the file exists or the writes are ordered. You get <em>tracking</em> — which code can touch the world is a typed fact — instead of <em>knowledge</em>. The frontier tries for more: <strong>effect rows</strong> (Koka) let a function's type say <code>&lt;io&gt;</code>, <code>&lt;div&gt;</code>, <code>&lt;throw&gt;</code> and compose rows across calls. Research-frontier: none of module 01's deployed languages has it.</p>
+<h2 id="the-fourth-escape-hatches-the-tcb-shape-drawn-three-times">The fourth: escape hatches — the TCB shape, drawn three times</h2>
+<p>Any sound system large enough to be useful grows a hole <em>by design</em>: Rust's <code>unsafe</code>, TypeScript's <code>any</code>, Java's casts, Python's <code>ctypes</code>. The theorem changes shape instead of dying: soundness becomes "the <strong>kernel</strong> of provably-safe code plus the <strong>membrane</strong> of audited code upholds the invariants" — the shape of every trustworthy system, seen twice already in this program:</p>
+<pre><code class="language-text">    OS kernel                 browser                  Rust project
++--------------------+  +--------------------+  +--------------------+
+| ring 0: kernel     |  | broker (the        |  | unsafe blocks      |
+| small, privileged, |  |   browser process: |  | small, privileged, |
+| AUDITED, owns all  |  |   owns screen,     |  | AUDITED, owns raw  |
+|   hardware         |  |   disk, sockets)   |  |   memory           |
++--------------------+  +--------------------+  +--------------------+
+| membrane: the      |  | membrane: Mojo IPC |  | membrane: the safe |
+|   syscall table    |  |   + seccomp filter |  |   API (Vec, Mutex, |
+|   (the only door)  |  |   (the only door)  |  |   send — the door) |
++--------------------+  +--------------------+  +--------------------+
+| ring 3: processes  |  | renderers:         |  | safe Rust: the     |
+|   untrusted bulk   |  |   untrusted DOM/JS |  |   95% the checker  |
+|   (the 99%)        |  |   bulk (the 99%)   |  |   proves for free  |
++--------------------+  +--------------------+  +--------------------+</code></pre>
+<p>Same three layers, three times: a small trusted kernel, a narrow membrane as the <em>only</em> door to its powers, and a bulk that is never trusted — only checked. This is the program's thesis, stated one last time: <strong>soundness is never a property of the whole program; it is a property of the kernel plus the membrane.</strong> The corollary: the audit surface is measurable — count the kernel, review the membrane. When a renderer escapes or an <code>unsafe impl Send</code> lies, the bug is never in the bulk: the postmortem goes to the kernel or the membrane.</p>
+<h2 id="trade-one-soundness-or-precision-pick-your-false-friend">Trade one: soundness or precision — pick your false friend</h2>
+<p>Soundness (a well-typed program really is safe) and precision (the checker accepts most reasonable programs) trade off, and real languages have chosen every corner:</p>
+<pre><code class="language-text">                         sound (guarantees hold)
+              +--------------------------------------+
+              |   Rust / OCaml / SML                 |   Haskell: sound,    |
+   precise    |   borrow checker REJECTS legal       |   but the price is   |
+   (accepts   |   programs: the false-positive tax   |   effect limits and  |
+    a lot)    |   (fighting NLL, variance...)        |   IO puritanism      |
+              +--------------------------------------+
+              |   TS / Flow: precise, DELIBERATELY   |   (no major taker    |
+   permissive |   unsound (any, assertions,          |    of this corner)   |
+              |   covariant arrays)                  |                      |
+              |   Java 1996-2004: casts + covariant  |                      |
+              |   arrays = unsound BY ESCAPE         |                      |
+              +--------------------------------------+
+                         unsound (holes by design)</code></pre>
+<p>Read the corners as invoices. Rust/OCaml pay in rejected programs — every borrow-checker fight and appeasing <code>clone()</code> is the false-positive tax. TypeScript bought the opposite corner deliberately: <code>any</code>, assertions, and covariant arrays leak unsoundness for near-zero friction on a 10-million-line JavaScript codebase. Java's cast era: <code>ClassCastException</code> is a type system arriving late. Haskell is sound but effects-limited — purity is real, monadic plumbing is the price. No corner is free; a language claiming sound <em>and</em> precise <em>and</em> permissive is lying about one of them.</p>
+<h2 id="trade-two-static-vs-dynamic-is-a-proof-schedule-choice">Trade two: static vs dynamic is a proof-schedule choice</h2>
+<p>The holy war dissolves under the module's lens. The <em>same proofs</em> — "this is an int," "this object is live," "this borrow is unique" — can be scheduled at compile time or at runtime. The tag word on every Python object (module 01 chapter 06's certificate: 16 B of <code>refcount + type ptr</code> per value), the GC pause (chapter 04's bill: ~4 s on a 2 GB heap at ~500 MB/s marking), and the borrow error (a compile error today instead of a use-after-free in month nine) are one proof at three schedules:</p>
+<pre><code class="language-text">+---------------------+------------------------+------------------------+
+|                     | static schedule        | dynamic schedule       |
++---------------------+------------------------+------------------------+
+| unit cost           | seconds-minutes, once  | ns/op (tag check) to   |
+|                     | per build              | seconds (GC pause)     |
+| paths paid for      | ALL paths, including   | only paths actually    |
+|                     | never-executed ones    | executed               |
+| when the bill       | before you run         | mid-request,           |
+| arrives             | (compile latency)      | mid-loop, mid-pause    |
+| failure mode        | rejected build (cheap) | TypeError / pause /    |
+|                     |                        | crash (expensive)      |
++---------------------+------------------------+------------------------+</code></pre>
+<p>The arithmetic that ends the argument: a proof costing 10 s once beats 12 ns per execution after 10 s / 12 ns ≈ <strong>8 × 10^8 ≈ 10^9 executions</strong>. A service at 3,000 calls/s crosses that in ~4 days and banks margin forever — static amortizes. A script run 20 times pays 10 s to save 480 ns — dynamic wins by eight orders of magnitude, and the developer inner loop <em>is</em> the scripts regime — why the same person can rightly write Python at 11 a.m. and Rust at 3 p.m. Never philosophy; when you pay.</p>
+<p>What survives is a 6-question checklist for any language, applied to the four you know best:</p>
+<div class="table-wrap"><table><thead><tr><th>question</th><th>Rust</th><th>TypeScript</th><th>Go</th><th>Python</th></tr></thead><tbody><tr><td>proves at compile?</td><td>memory + thread safety (mod <code>unsafe</code>)</td><td>shape/nullability, unsoundly</td><td>types; races only with <code>-race</code></td><td>nothing (syntax only)</td></tr><tr><td>proves at runtime?</td><td>bounds/overflow panics (debug)</td><td>JS tag checks</td><td>nil-map, bounds, GC</td><td>tag check on EVERY op</td></tr><tr><td>tag cost?</td><td>none (erased; enums pay 1 byte by choice)</td><td>none (erased) — JS objects carry shape maps</td><td>interfaces carry itabs</td><td>16 B header/obj, ints boxed 28 B</td></tr><tr><td>escape hatch blast radius?</td><td><code>unsafe</code>: whole-crate soundness</td><td><code>any</code>: bisection — spreads silently</td><td><code>interface{}</code>, <code>unsafe</code></td><td><code>ctypes</code>: the process</td></tr><tr><td>GC proves, when?</td><td>nothing (ownership proved at compile)</td><td>V8 tracing, pauses = bill</td><td>concurrent GC, ~sub-ms</td><td>refcount now + cycles later</td></tr><tr><td>TCB?</td><td>unsafe blocks + std + rustc</td><td>checker + everything behind <code>any</code></td><td>runtime + reflect + unsafe</td><td>CPython + every C extension</td></tr></tbody></table></div>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The vocabulary ladder is nested, and people blur it.</strong> Type soundness ⊆ memory safety ⊂ safety ⊂ correctness, where ⊆ means <em>implies</em>. Rust/SML sit in the strongest ring. Java-with-casts and modern TS are memory-safe but statically unsound — the runtime tags catch the lie (<code>ClassCastException</code>: a <em>type</em> error delivered late). Python is memory-safe by running its type system at runtime. The interview trap: asked "is X type-safe?", name the ring, not the word.</li>
+<li><strong>Rust <code>unsafe</code> ≠ C# <code>unsafe</code> — false friends.</strong> Rust's is a <em>proof obligation</em> (checks lifted; you now owe the invariants), C#'s is a <em>pointer permission</em> (raw pointers, <code>fixed</code> buffers; the CLR skips verification for those methods). Opposite membranes: Rust's unsafe code must re-establish safety through its API; C#'s can corrupt any managed object it reaches.</li>
+<li><strong>TypeScript <code>unknown</code> vs <code>any</code> is the disciplined-escape lesson.</strong> <code>any</code> is assignable in <em>both</em> directions — the checker stops and the hole spreads to every caller (bisection). <code>unknown</code> accepts everything <em>inward</em> but pays before use: narrow first (typeof, instanceof, a guard). Rule: boundary data — JSON, network, parse results — gets <code>unknown</code>, never <code>any</code>.</li>
+<li><strong>GHC's <code>-fdefer-type-errors</code></strong> reschedules the proof to runtime: type errors become warnings, and each deferred expression becomes a runtime exception <em>if evaluated</em>. Useful for exploring half-fixed code; dangerous to ship — an unexecuted path carries an unproven theorem.</li>
+<li><strong>The first static/dynamic war ran 1958–present.</strong> Backus proposed compile-time type checking to the Algol 58 committee and was rejected; McCarthy's Lisp (1958–60) shipped untyped and won the AI decade. The industry's oldest holy war is that Zurich meeting, still running.</li>
+<li><strong>TypeScript 2012 is the industry's proof-debt confession</strong> (10^6 lines of JS could not be retrofitted with tests), and <strong>linear logic → Rust is the 28-year arc</strong>: Girard's linear logic (1987), Wadler's "Linear types can change the world!" (1990), Rust 1.0 (May 2015). Paper-to-product latency like this is why module 01's languages look as they do.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>1. Termination on an open problem (4 lines, any machine).</strong></p>
+<pre><code class="language-python">def collatz(n):
+    while n != 1:
+        n = 3*n + 1 if n % 2 else n // 2
+    return n</code></pre>
+<pre><code class="language-console">$ python3 -c 'from ch05 import collatz; print(collatz(27))'          # 111 steps
+$ python3 -c 'from ch05 import collatz; print(collatz(670617279))'   # 986 steps</code></pre>
+<p>Every input ever tried halts (verified to 2^68 ≈ 3×10^20); nobody can prove all do. Any tool deciding termination for this file would decide Collatz. Watch it run; that is the gap.</p>
+<p><strong>2. Spec fidelity: types pass, the property fails.</strong></p>
+<pre><code class="language-python"># pip install hypothesis   (Python 3.8+)
+from hypothesis import given, strategies as st
+
+def sort(xs: list[int]) -&gt; list[int]:     # the annotation is TRUE
+    return sorted(set(xs))                # ...and the spec is FALSE
+
+@given(st.lists(st.integers()))
+def test_permutation(xs):
+    assert sorted(xs) == sort(xs)         # weaker proof than a theorem,
+                                          # stronger than any unit test
+test_permutation()</code></pre>
+<p>Hypothesis 6.x falsifies in ~31 examples and shrinks to the boundary:</p>
+<pre><code class="language-text">Falsifying example: test_permutation(
+    xs=[0, 0],      # the duplicate boundary: sorted(set()) drops it
+)</code></pre>
+<p>The annotation <code>list[int] -&gt; list[int]</code> is honest and useless: "permutation" is semantics — no type system catches this.</p>
+<p><strong>3. The expression problem in 2 × 30 lines (TypeScript playground).</strong> Sum-type version:</p>
+<pre><code class="language-typescript">type Shape = { kind: "circle"; r: number } | { kind: "rect"; w: number; h: number };
+
+function area(s: Shape): number {
+  switch (s.kind) {
+    case "circle": return Math.PI * s.r ** 2;
+    case "rect":   return s.w * s.h;
+    default: { const _exhaustive: never = s; return _exhaustive; }
+  }
+}
+function perimeter(s: Shape): number { /* same switch shape */ return 0; }</code></pre>
+<p>Add <code>{ kind: "tri"; a: number }</code> to the union: the compiler instantly flags <code>area()</code> <strong>and</strong> <code>perimeter()</code> at each <code>never</code> check — every function touched (top-left cell). Now write <code>describe(): string</code> — zero existing lines edited. Then build the OO mirror (<code>abstract class Shape</code>, <code>Circle</code>/<code>Rect</code> subclasses) and invert: <code>Triangle extends Shape</code> edits nothing; <code>describe()</code> edits every class — you have <em>felt</em> both cells of the 2×2.</p>
+<p><strong>4. The escape-hatch census (any real tree, one command).</strong></p>
+<pre><code class="language-console">$ cd /usr/lib/python3.13/asyncio
+$ rg -c "# *type: *ignore" -g '*.py' --no-filename | paste -sd+ | bc   # 3
+$ rg -c "except *:"      -g '*.py' --no-filename | paste -sd+ | bc   # 15
+$ cat $(rg --files -g '*.py') | wc -l                                  # 14754</code></pre>
+<p>CPython 3.13's asyncio: 14,754 lines, an audit surface of 18 sites (3 <code># type: ignore</code>, 15 bare <code>except:</code> in 7 files) — a <strong>membrane ratio of 0.12%</strong>. That number <em>is</em> the review budget. The same census on Rust: <code>rg -c "unsafe" -g '*.rs'</code>; on TypeScript: <code>rg -w "any" -g '*.{ts,tsx}'</code>. Run it on your dependency tree before you trust it.</p>
+<p><strong>5. The proof-schedule experiment: 10^7 calls, two languages.</strong></p>
+<pre><code class="language-console">$ python3 timing.py          # loop of 10**7 calls, time.perf_counter
+duck-typed method call :  110 ns/call  total 1.10 s
+plain function call    :   69 ns/call  total 0.69 s
+$ gcc -O2 static.c &amp;&amp; ./staticc     # noinline static void step(void)
+static C call          :  2.1 ns/call  total 0.02 s</code></pre>
+<p>(One core of the build VM; CPython 3.12, gcc 14.2.) The naive read — "dynamic typing is 50× slower" — is wrong; the confound: ~108 of those 110 ns is <em>interpreter</em> tax (bytecode dispatch, frame setup), not tag-checking. The tag tax visible inside Python: the ~40 ns between bound-method and plain calls — and 3.12's specializing interpreter already discounts it; a JIT with inline caches (V8) amortizes dispatch to single-digit ns. The chapter's honest conclusion: dynamic costs <em>per execution, forever</em>; static costs <em>once, for all paths</em> — 10^7 × ~100 ns is a full second, every run.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Choosing a language is arithmetic, not identity.</strong> Run the 6-question table on the candidates, then the 10^9 amortization on your execution count. Batch script → dynamic wins; long-lived hot service → static banks margin after ~10^9 runs.</li>
+<li><strong>Code review targets the membrane.</strong> A PR adding <code>unsafe</code>, <code>any</code>, or a cast is reviewed like a kernel patch: what invariant does the author now owe, and does the safe API re-establish it?</li>
+<li><strong>Postmortem triage by ring.</strong> A crash in "memory-safe" Python or Java is in the TCB — a C extension, an <code>unsafe</code>, a boundary cast — never in the checked bulk; audit at the membrane, where the census points.</li>
+<li><strong>Interview answers that land:</strong> "sound vs complete" placed on the 2×2 with a language per corner; "static vs dynamic" as <em>scheduling</em> with the 10^9 break-even; "is TypeScript safe?" with the ring, the holes, and <code>unknown</code>.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 01</strong> — the diagonalization whose ceiling became the four impossibilities; Rice's theorem is halting's big sibling.</li>
+<li><strong>Chapter 02</strong> — progress + preservation, whose <em>scope</em> (stuck terms only) is why Milner's quote leaves room for module 03's bugs.</li>
+<li><strong>Chapter 03</strong> — the spectrum table; this chapter generalized <code>unsafe</code>-Rust-as-kernel into the TCB shape shared with OSes and browsers.</li>
+<li><strong>Chapter 04</strong> — the GC as proof search; its pause is this chapter's "proof bill arriving," scheduled dynamically.</li>
+<li><strong>Module 21 (formal verification)</strong> — what fills the spec-fidelity gap: machines that prove whole kernels (seL4: ~10,000 lines of C, ~400,000 lines of proof).</li>
+<li><strong>Module 03 (software bugs)</strong> — what survives typing: logic, parsing, numeric, concurrency bugs — Impossibility 2's invoice.</li>
+<li><strong>Module 01 chapter 20 (hardware memory models)</strong> — Impossibility 3 in silicon: the proof beneath your types that no type system hands you for free.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> The vocabulary ladder claims type soundness ⊆ memory safety. Give the containment direction in words, one language occupying each of the two innermost rings, and the runtime event that proves the outer ring can hold when the inner one fails.</li>
+</ol>
+<ol>
+<li><strong>Concept.</strong> A colleague says "static vs dynamic typing is a philosophical preference." In one sentence each, recast the tag word, the GC pause, and a borrow-checker error as the same thing at three different schedules.</li>
+</ol>
+<ol>
+<li><strong>Predict/derive.</strong> A static proof costs 10 s once per release; the equivalent dynamic proof costs 12 ns per execution. Derive the break-even execution count, then rule on (a) a CLI script run daily for 5 years and (b) a service at 3,000 calls/s: which schedule wins, by roughly how much?</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> In the sum-type shape code (union of <code>circle | rect</code>, exhaustive switches with <code>never</code> checks in <code>area()</code> and <code>perimeter()</code>), predict exactly what the compiler reports when <code>{ kind: "tri" ... }</code> joins the union — which functions, which line, what error. Then predict the same two edits for the OO version.</li>
+</ol>
+<ol>
+<li><strong>Derive.</strong> A Python list holds 10^6 distinct integers (CPython 3.12, 64-bit). Compute total bytes and the <em>certificate</em> fraction (object header + list pointer) versus payload, given <code>sys.getsizeof(1) == 28</code> and 8-byte list slots. Which schedule is the certificate paying for?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A Rust service segfaults; the stack ends in <code>Vec::push</code> reached through <code>unsafe impl Send for RawChannel</code> in a dependency. Safe code called the safe API. Where is the bug, why is "Rust is memory-safe" not falsified, and which two tools does the audit use?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A TypeScript codebase crashes at runtime: <code>TypeError: Cannot read properties of undefined (reading 'price')</code> on <code>items[0].price</code>, though <code>items</code> is declared <code>Item[]</code>. The value crossed <code>JSON.parse(raw) as any</code> at an API boundary. Explain the bisection: what did the checker check downstream, and what is the minimal boundary fix and why does it work?</li>
+</ol>
+<ol>
+<li><strong>Cross-chapter.</strong> A Rust thread sets a flag with <code>AtomicBool::store(flag, Ordering::Relaxed)</code>; another thread, after seeing the flag, reads the buffer published before it. The borrow checker approved the code; the second thread sees stale data. Connect to module 01 chapter 20: which impossibility is this, what exactly did the type system prove (and not prove), and where did the proof obligation go?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Type soundness implies memory safety; the reverse fails.</strong> Inner ring (type-sound): Rust or SML — well-typed programs never commit a type-confused access, which entails no OOB, no UAF, no wild pointers. Outer ring (memory-safe, statically unsound): Java-with-casts or modern TypeScript — the runtime event proving the outer ring held while the inner failed: <code>ClassCastException</code>, a <em>type</em> error at runtime with no memory corruption.</li>
+</ol>
+<ol>
+<li><strong>One proof, three schedules.</strong> The tag word is the certificate carried per value, checked on every operation (paid per execution); the GC pause is the liveness proof's bill arriving mid-run (paid per collection, ~seconds); the borrow error is the aliasing proof delivered at compile time (paid once, for all paths). Static vs dynamic is the <em>schedule</em> of one obligation, not a philosophy.</li>
+</ol>
+<ol>
+<li><strong>Break-even: 10 s / 12 ns ≈ 8.3 × 10^8 ≈ 10^9 executions.</strong> (a) The script runs 5 × 365 ≈ 1,800 times: dynamic pays 1,800 × 12 ns ≈ 22 µs against static's 10 s — dynamic wins by ~500,000×. (b) The service does 3,000 × 86,400 ≈ 2.6 × 10^8 calls/day, crossing 10^9 in ~4 days; over 2 years (~1.9 × 10^11 calls) dynamic would pay ≈ 2,300 s ≈ 38 min of checking versus 10 s once — static wins by ~200× and covers all paths, executed or not.</li>
+</ol>
+<ol>
+<li><strong>Sum types:</strong> the union edit is accepted, but every exhaustive switch fails its <code>never</code> check — both <code>area()</code> and <code>perimeter()</code> error at the <code>const _exhaustive: never = s</code> line, of the form <em>Type '{ kind: "tri"; a: number; }' is not assignable to type 'never'</em> (TS2322). Two existing functions touched: the top-left cell. <code>describe()</code> is a new function: zero existing lines change. <strong>OO:</strong> <code>Triangle extends Shape</code> overrides compile with zero edits to existing classes; the new <code>describe()</code> must be added to the base class and implemented in every subclass — every case edited: the bottom-right cell.</li>
+</ol>
+<ol>
+<li><strong>Total: 10^6 × 28 B (int objects) + 10^6 × 8 B (list slots) ≈ 36 MB</strong> (−5..256 are cached singletons; "distinct" avoids the discount). Payload: one 30-bit digit = 4 B of each 28 B object, so payload ≈ 4 MB. Certificate = 24 B header (refcount 8 + type ptr 8 + size 8) + 8 B pointer = 32 B per element: 32/36 ≈ <strong>89% certificate, 11% payload</strong>. It pays for the dynamic schedule: every operation re-proves "this is an int" from the header, on every use, every execution.</li>
+</ol>
+<ol>
+<li><strong>The bug is in the membrane, not the safe bulk.</strong> <code>unsafe impl Send</code> asserts "RawChannel has no thread-unsafe interior" — a proof obligation the compiler trusts. If the buffer is mutated from two threads, the impl lied and the crash is the deferred bill. "Rust is memory-safe" survives because the theorem was always <em>conditional</em>: soundness = every unsafe block upholds its invariants. Tools: Miri (chapter 03's operational model) and this chapter's unsafe census — audit the ~40-line unsafe kernel, not the 10,000 safe callers.</li>
+</ol>
+<ol>
+<li><strong>Bisection: <code>as any</code> is assignable both directions, so the checker stopped at the boundary and every downstream function typechecked against a fiction</strong> — <code>items: Item[]</code> was never contradicted because nothing checked the JSON's actual shape. Minimal fix: <code>const raw: unknown = JSON.parse(rawText)</code> plus a narrowing guard before use (typeof, <code>Array.isArray</code>). <code>unknown</code> accepts anything inward but pays before use, settling the proof debt once, at the membrane — downstream guarantees become <em>earned</em>, not asserted.</li>
+</ol>
+<ol>
+<li><strong>Impossibility 3 — the world.</strong> Rust's type system proved <em>data-race freedom</em> — no two <code>&amp;mut</code> to the same memory — so the sharing itself was legal. It did not — and cannot — prove <em>ordering</em>: with <code>Relaxed</code>, module 01 chapter 20's hardware memory model lets the flag store become visible before the buffer stores it guards. The proof obligation moved into happens-before reasoning (Acquire/Release — module 09's territory) or a verifier (module 21). The types caged aliasing; the memory model is the proof the machine refuses to give you.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch04.html"><span class="cn-label">previous</span><span class="cn-title">Ch 04</span></a>
+<a class="next" href="index.html"><span class="cn-label">next</span><span class="cn-title">Module index</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 19 — PL theory &amp; type systems</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

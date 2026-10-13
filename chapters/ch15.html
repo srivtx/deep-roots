@@ -26,7 +26,7 @@
 <header class="site-header">
   <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
   <div class="header-right">
-    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
     <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -37,7 +37,7 @@
 <article class="post">
 <div class="post-kicker">module 01 &middot; memory models &middot; Part II · the languages</div>
 <h1 class="post-title">Chapter 15 — JavaScript: V8's hidden classes and the scavenger</h1>
-<div class="post-meta">chapter 15 &middot; ~24 min read &middot; deep-roots learning program</div>
+<div class="post-meta">chapter 15 &middot; ~25 min read &middot; deep-roots learning program</div>
 <blockquote><strong>The 30-second version.</strong> ECMAScript says nothing about memory — no <code>sizeof</code>, no address-of, no <code>free</code> — so every engine invents its own heap. V8 (Chrome, Node, Edge, Electron) answers the four questions like this: a <em>value</em> is a tagged word — a Smi is the integer itself packed into the tag bits and never allocated, everything else is a pointer whose first target word is a <strong>map</strong>, the hidden class. Because the spec makes objects string-keyed dictionaries, V8 turns property lookup into <em>map check + fixed offset load</em> — that is what hidden-class transition trees, inline caches, and elements kinds exist for, and why insertion order and <code>delete</code> decide whether your object access runs at load speed or hash speed. The heap is generational like the JVM's (ch12): two equal semispaces scavenged by Cheney copying (survive twice → old space), then mark-compact with time-sliced concurrent marking. Leaks are <em>reference</em> leaks through closures' heap-allocated Contexts and listener registries; ArrayBuffers park their bytes outside the heap. Numbers: V8 as of the Node 20 / Chrome 120 era (2023–2024), 64-bit, unless a line says otherwise.</blockquote>
 <h2 id="1-the-spec-is-silent-one-language-many-heaps">1. The spec is silent: one language, many heaps</h2>
 <p>Part II's four questions — what is a value, who owns it, who frees it, what safety — have no ECMAScript answer. The spec defines <em>observable behavior</em>: which properties a <code>{}</code> has, what <code>===</code> sees, in what order <code>for-in</code> enumerates. It never defines a byte, an address, or an object size, and it has no <code>sizeof</code> or <code>free</code> to violate. So the same source file runs on three unrelated heaps: <strong>V8</strong> (Chrome, Node, Edge, Electron, Deno), <strong>SpiderMonkey</strong> (Firefox), and <strong>JavaScriptCore/JSC</strong> (Safari). "JavaScript memory model" is shorthand for one engine's memory model; this chapter is V8's.</p>
@@ -268,6 +268,12 @@ total_heap_size 6.8 MB | heap_size_limit 2213 MB</code></pre>
 <li><strong>Ch 21</strong> — V8 exploits are map forgeries: type confusion = making a check see the wrong hidden class; the map word is the security boundary.</li>
 <li><strong>Ch 22 + queued security module</strong> — JSC under Jetsam (iOS) vs V8 under the zygote (Android); V8 sandboxing work puts a cage around exactly the pointers section 2 described.</li>
 </ul>
+<p><em>Forward links — where the rest of the program picks this chapter up:</em></p>
+<ul>
+<li><strong>Module 16 ch02 (the DOM heap)</strong> — two collectors, one wrapper problem: the scavenger this chapter taught meets Oilpan at the boundary.</li>
+<li><strong>Module 16 ch04 (page memory)</strong> — the detached-node leak is this chapter's heap graph with one edge type that outlives the page.</li>
+<li><strong>Module 19 ch04 (GC as proof search)</strong> — the scavenger re-derived: the nursery's cost is survivor bytes, not allocation volume.</li>
+</ul>
 <h2 id="quiz">Quiz</h2>
 <ol>
 <li>V8's object header is a bare map word — no refcount, no lock bits, no GC age field. Derive each absence from V8's design, and name what each of PyObject (ch14) and the JVM mark word (ch12) needs that V8 does not.</li>
@@ -349,6 +355,7 @@ total_heap_size 6.8 MB | heap_size_limit 2213 MB</code></pre>
       <a href="../index.html#module-01">Module 01</a>
       <a href="../quiz.html">Quiz</a>
       <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
       <a href="https://github.com/srivtx/deep-roots">GitHub</a>
       <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
     </div>

@@ -395,3 +395,51 @@ a:focus-visible, button:focus-visible, summary:focus-visible, .quiz-opt:focus-vi
   .post, .chapter-row, .module-card { break-inside: avoid; }
   a { color: #1a4d8f !important; text-decoration: underline; }
 }
+
+/* ---------- connections map ---------- */
+.xmap {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+  table-layout: fixed;
+}
+.xmap th, .xmap td {
+  border: 1px solid var(--card-border);
+  padding: 4px 2px;
+  text-align: center;
+}
+.xmap th.xh {
+  background: var(--bg-soft);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+  text-align: left;
+  padding-left: 8px;
+}
+.xmap th.xh a { color: inherit; text-decoration: none; }
+.xmap td a { color: inherit; text-decoration: none; display: block; }
+.xmap td.x0 { background: transparent; }
+.xmap td.x1 { background: rgba(122, 92, 30, 0.12); }
+.xmap td.x2 { background: rgba(122, 92, 30, 0.28); }
+.xmap td.x3 { background: rgba(122, 92, 30, 0.5); color: #fff; }
+.xmap td.x4 { background: rgba(122, 92, 30, 0.78); color: #fff; }
+.xties {
+  border-collapse: collapse;
+  font-size: 14px;
+  margin: 8px 0 22px;
+}
+.xties th, .xties td {
+  border: 1px solid var(--card-border);
+  padding: 8px 14px;
+  text-align: left;
+}
+.xties th { background: var(--bg-soft); font-weight: 600; }
+.xties td.xc { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent); }
+.xties td.xarrow { color: var(--faint); text-align: center; }
+.xties a { color: var(--accent); }
+@media (max-width: 900px) {
+  .xmap { font-size: 10px; }
+  .xmap th.xh { max-width: 64px; }
+}

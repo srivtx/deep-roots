@@ -26,7 +26,7 @@
 <header class="site-header">
   <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
   <div class="header-right">
-    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
     <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -142,6 +142,12 @@ int main(void) {
 <li><strong>Chapter 20</strong> — "aligned word access is atomic" is the physical floor of the memory model.</li>
 <li><strong>Chapter 17</strong> — COBOL storage dumps are endianness + PICTURE byte decoding.</li>
 </ul>
+<p><em>Forward links — where the rest of the program picks this chapter up:</em></p>
+<ul>
+<li><strong>Module 17 ch01 (transistors to gates)</strong> — the DRAM cell this chapter drew is one MOSFET-passivated capacitor away from the CMOS logic this program bottoms out in.</li>
+<li><strong>Module 02 ch07 (side channels)</strong> — Rowhammer hammers exactly this chapter's leaky capacitor — the physics you learned is the attack surface.</li>
+<li><strong>Module 20 ch01 (the no-MMU world)</strong> — SRAM's 6T cell needs no refresh: the microcontroller's memory is this chapter's physics minus the DRAM tax.</li>
+</ul>
 <h2 id="quiz">Quiz</h2>
 <ol>
 <li><strong>Concept.</strong> Why is SRAM used for caches and DRAM for main memory, rather than all SRAM? Give both the economic and the physical reason.</li>
@@ -188,6 +194,7 @@ int main(void) {
       <a href="../index.html#module-01">Module 01</a>
       <a href="../quiz.html">Quiz</a>
       <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
       <a href="https://github.com/srivtx/deep-roots">GitHub</a>
       <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
     </div>

@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory safety as a theorem — deep-roots</title>
+<meta name="description" content="Chapter 03 of module 19: Memory safety as a theorem">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Memory safety as a theorem — deep-roots">
+<meta property="og:description" content="Chapter 03 of module 19: Memory safety as a theorem">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Memory safety as a theorem — deep-roots">
+<meta name="twitter:description" content="Chapter 03 of module 19: Memory safety as a theorem">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 19 &middot; why the rules are theorems</div>
+<h1 class="post-title">Memory safety as a theorem</h1>
+<div class="post-meta">chapter 03 &middot; ~17 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> "Memory safe" is a four-clause theorem: touch only memory you own, stay inside bounds, never lie about types at the byte level, never reach after a lifetime ends. That is type soundness (chapter 02) with addresses as terms — the <em>type of an address</em> is "what may live there" — and the MMU already runs a 1-bit version of this proof on every access: a segfault is the hardware's type error. Rust moved most of the proof to compile time with affine types (ownership) and a proof relation on intervals (borrowing), behind a trusted kernel (<code>unsafe</code>). Every module 01 language sits on this spectrum: who proves safety, when, which hole.</blockquote>
+<h2 id="the-theorem-stated-at-the-address-level">The theorem, stated at the address level</h2>
+<p>A program is <strong>memory-safe</strong> (Crary's formulation) if every evaluation that reaches a value</p>
+<ul>
+<li><strong>(a) owns its accesses</strong> — no wild reads or writes into memory the program has no right to touch;</li>
+<li><strong>(b) respects bounds</strong> — an access to object <code>o</code> at index <code>i</code> stays inside <code>o</code>;</li>
+<li><strong>(c) never puns types at the byte level</strong> — no reading a <code>float</code>'s bytes as a <code>Node*</code>;</li>
+<li><strong>(d) never touches memory after its lifetime</strong> — no use-after-free, no dangling references.</li>
+</ul>
+<p>The identification that organizes the chapter: <strong>memory safety is type soundness at the address level</strong> — the type of an address is <em>the set of values that may legitimately live there now</em>: (b) a bounds type, (c) an ordinary type, (d) a lifetime region, (a) an ownership predicate. The machine already runs one proof of this shape: module 01 chapter 03's page table gives every 4 KiB page a 3-bit permission <em>type</em> (R/W/X), and the MMU <strong>type-checks every access against it, in hardware, for free</strong>. Writing an R-only page is a type error the hardware throws — we call it SIGSEGV; NX is a soundness rule; <code>mprotect</code> a checked cast. The granularity is terrible — one 3-bit type per 4,096 bytes — but the shape is Java's per-object tag word, at page scale. Every language below is a point on one axis: <strong>how fine-grained the address types are, and who proves the program well-typed — compiler, runtime, or nobody.</strong></p>
+<h2 id="ownership-is-an-affine-type-system">Ownership is an affine type system</h2>
+<p>Rust's ownership is a 1987 theorem that took 28 years to ship (Girard's linear logic, Wadler's linear uses, Rust 1.0 in 2015). <strong>Affine</strong>: a value may be used <em>at most once</em>. <strong>Linear</strong>: <em>exactly once</em>. <strong>Unrestricted</strong>: as often as you like.</p>
+<pre><code>          unrestricted      affine             linear
+  uses:      0 .. 8           0 .. 1             exactly 1
+  owner:     anyone           one at a time      one, obligatorily
+  drop:      GC or manual     implicit, at       explicit, on every
+             (never/rare)    last-use point     path, even panics
+  langs:     Java, Python     Rust (move =       academic linear
+             C++ values       consume)           lambda calculi</code></pre>
+<p><strong>Why affine won: implicit drop.</strong> Linear types force explicit consumption on <em>every</em> path — panic paths included. Affine lets the compiler insert the destructor where the value dies, and the unwinder runs those drops even on panic: the <code>move</code> consumes, the <code>drop</code> you never write is the obligation the compiler discharges.</p>
+<p><strong>Borrowing is the proof relation that buys back usability</strong> — pure affinity would make a linked list unusable. <code>&amp;'a mut T</code> claims: "for interval <code>'a</code> I hold the unique live reference into <code>T</code>," and the checker proves two invariants: <em>shared XOR mutable</em> (many <code>&amp;T</code>, or one <code>&amp;mut T</code>) and <em>lifetime containment</em> (no reference outlives its target).</p>
+<p><strong>NLL — non-lexical lifetimes, the 2018 borrow-checker rewrite</strong> — changed what "interval" means: pre-2018, a borrow lived from declaration to closing brace. NLL reformulated borrowing as <strong>region inference over a constraint graph solved by fixed-point iteration</strong> — conceptually ~100 lines: every <em>use</em> of a reference emits "its region includes this point"; containment constraints link regions to their targets; iterate to a fixed point — regions grow by <em>liveness</em>, not syntax (polynomial, milliseconds in practice). Two borrows whose solved regions intersect = the error. The live range ends at <strong>last use</strong>, not scope end:</p>
+<pre><code class="language-rust">let mut x = 42;      // 1
+let r = &amp;mut x;      // 2   borrow starts
+*r += 1;             // 3   last USE of r: live range ENDS here
+println!("{}", x);   // 4   x used directly: NLL accepts</code></pre>
+<pre><code>line:       1        2        3        4        5   end of block
+            |        |        |        |        |
+x  owner:   =========================================================&gt;
+r  borrow:            [========]
+                      starts   ends at LAST USE, not scope end
+lexical     [============================================]  &lt;- conflicts
+(2015):     starts                                       scope ends
+NLL         [========]                                   no overlap  OK
+(2018):</code></pre>
+<p>Under 2015 rules, <code>r</code>'s scope ran to the brace, so line 4 used <code>x</code> while mutably borrowed — E0502, <code>cannot borrow \</code>x\<code> as immutable because it is also borrowed as mutable</code>. Under NLL, line 3 spent the borrow: same invariants, better search.</p>
+<p><strong>PhantomData and variance.</strong> A type parameter invisible in your fields needs <code>PhantomData&lt;T&gt;</code> so the compiler knows your type <em>acts like</em> it holds a <code>T</code> — for drop-checking and <strong>variance</strong>. <code>&amp;'a T</code> is <em>covariant</em> — a <code>&amp;'long T</code> works where <code>&amp;'short T</code> is expected, because a read-only view can be safely forgotten. <code>&amp;'a mut T</code> is covariant in <code>'a</code> but <strong>invariant in <code>T</code></strong> — load-bearing:</p>
+<pre><code class="language-rust">fn shorten&lt;'short, 'long: 'short&gt;(r: &amp;mut &amp;'long i32, s: &amp;'short i32) {
+    *r = s;    // E0308: mismatched types -- lifetime mismatch:
+}              // expected &amp;'long i32, found &amp;'short i32</code></pre>
+<p><code>*r = s</code> writes a <code>&amp;'short i32</code> into a slot typed <code>&amp;'long i32</code> — covariance would let <code>s</code> coerce up, and that is what invariance forbids <em>through a mutable alias</em>. Suppose the coercion <code>&amp;mut &amp;'long i32</code> → <code>&amp;mut &amp;'short i32</code> (shortening <code>'a</code> through the <code>&amp;mut</code>) were allowed. The kill program:</p>
+<pre><code class="language-rust">fn plant(r: &amp;mut &amp;'static i32, s: &amp;i32) {
+    let short: &amp;mut &amp;i32 = r;  // if this coercion existed...
+    *short = s;                // ...plant a short-lived ref into
+}                              // a 'static-typed slot
+
+fn main() {
+    let local = 42;
+    let slot: &amp;i32 = &amp;local;    // type promises a long region
+    { let temp = 7;
+        plant(&amp;mut slot, &amp;temp); }  // temp dies HERE
+    println!("{}", slot);  // reads &amp;temp: use-after-free, no cast
+}</code></pre>
+<p>The write plants a reference that dies early into a slot whose type promises it lives long; every long-typed reader then reads a dangling pointer. Lengthening fails symmetrically: reading a <code>&amp;'long</code> out of a slot storing a <code>&amp;'short</code>. Only invariance forbids both — mutable slots must be invariant or every write becomes an <code>ArrayStoreException</code>; read-only slots may be covariant because forgetting is harmless. Chapter 02's Java-arrays theorem, hoisted to compile time.</p>
+<h2 id="unsafe-the-trusted-kernel-pattern"><code>unsafe</code>: the trusted kernel pattern</h2>
+<p>Rust's safety is a proof decomposition: safe code is proven by the compiler; every <code>unsafe</code> block is a theorem a human discharges — <em>unsafe = "I prove it, compiler trusts."</em> The program is safe <strong>iff</strong> every unsafe block upholds the invariants its safe interface advertises — the OS trusted-kernel pattern. <code>Vec</code> is the case study:</p>
+<pre><code class="language-rust">pub struct Vec&lt;T&gt; { ptr: Unique&lt;T&gt;, cap: usize, len: usize }</code></pre>
+<ul>
+<li><code>ptr</code> points at <code>cap</code> slots from the global allocator, with no other live pointer into that allocation (uniqueness — why <code>push</code> takes <code>&amp;mut self</code>);</li>
+<li><code>0 &lt;= len &lt;= cap</code> always, and <code>[0, len)</code> are initialized <code>T</code>s — <code>set_len</code> <em>borrows</em> this invariant, its caller must restore it;</li>
+<li>drop frees the allocation exactly once (affinity's destructor as a manual obligation);</li>
+<li>growth must not strand outstanding <code>&amp;T</code>/<code>&amp;mut T</code> in the old buffer — a use-after-free the safe API prevents via the borrow on <code>self</code>.</li>
+</ul>
+<p>Safe code cannot violate these — the membrane; std is a few hundred unsafe blocks behind checked interfaces, and your project's audit surface is its <code>unsafe</code> count.</p>
+<h2 id="the-spectrum-every-language-as-a-proof-system">The spectrum: every language as a proof system</h2>
+<p>The module 01 languages: what proves the four clauses, when, the hole. One 6-line witness each.</p>
+<div class="table-wrap"><table><thead><tr><th>language</th><th>proof mechanism</th><th>when</th><th>the hole</th></tr></thead><tbody><tr><td>C</td><td>none — hardware faults only</td><td>runtime, on crash</td><td>all four clauses; OOB <em>compiles</em></td></tr><tr><td>C++</td><td>RAII + <code>shared_ptr</code> refcount</td><td>scope end / runtime</td><td>no aliasing proof; cycles leak</td></tr><tr><td>Rust</td><td>affine types + borrow proof</td><td>compile time</td><td><code>unsafe</code>; wraps in release</td></tr><tr><td>Go</td><td>bounds checks + GC</td><td>runtime</td><td>data races (detector opt-in)</td></tr><tr><td>Java</td><td>GC + klass tag</td><td>runtime (pauses = proof cost)</td><td>covariant arrays, erasure</td></tr><tr><td>C#</td><td>same + nullable retrofit</td><td>runtime + compile warn</td><td>warns, not errors</td></tr><tr><td>Python</td><td><code>Py_TYPE</code> tags + GC</td><td>runtime</td><td><code>ctypes</code>/C extensions erase it</td></tr><tr><td>JS</td><td>maps + GC; OOB gives <code>undefined</code></td><td>runtime</td><td>silent undefined; native edge</td></tr><tr><td>Swift/ObjC</td><td>ARC, compiler-inserted</td><td>runtime counting</td><td>cycles; ObjC legacy</td></tr><tr><td>Haskell/OCaml</td><td>static types + GC + purity</td><td>compile + runtime</td><td><code>Obj.magic</code>, FFI</td></tr><tr><td>COBOL</td><td>no pointers/heap; PIC</td><td>compile (layout)</td><td>silent MOVE truncation</td></tr></tbody></table></div>
+<p><strong>C</strong> — no proof, by design (gcc 14.2, <code>-Wall</code> silent, live run; past <code>a[2]</code> is stack garbage):</p>
+<pre><code class="language-c">#include &lt;stdio.h&gt;
+int main(void) {
+    int a[3] = {10, 20, 30};
+    for (int i = 0; i &lt; 6; i++)        /* i=3..5: out of bounds */
+        printf("a[%d] = %d\n", i, a[i]);
+    return 0;                          /* exit 0, no complaint */
+}</code></pre>
+<pre><code class="language-console">a[3] = 3
+a[4] = 1
+a[5] = 0     # garbage; -fsanitize=address is the retrofit</code></pre>
+<p><strong>C++</strong> — RAII is affine intuition without an aliasing proof; <code>shared_ptr</code>'s runtime refcount is unsound on cycles (live run — no <code>~Node</code> fires):</p>
+<pre><code class="language-cpp">#include &lt;cstdio&gt;
+#include &lt;memory&gt;
+struct Node { std::shared_ptr&lt;Node&gt; peer; ~Node() { std::puts("~Node"); } };
+int main() {
+    {   auto a = std::make_shared&lt;Node&gt;();
+        auto b = std::make_shared&lt;Node&gt;();
+        a-&gt;peer = b; b-&gt;peer = a;     // rc(a)=rc(b)=2: the hole
+    }                                 // brace ends: rc 2-&gt;1, never 0
+    std::puts("scope ended, no ~Node printed: both objects leaked");
+}</code></pre>
+<p><strong>Rust</strong> — compile-time proof, real error text:</p>
+<pre><code class="language-rust">fn main() {
+    let mut x = 0;
+    let r1 = &amp;mut x;
+    let r2 = &amp;mut x;    // second unique reference: rejected HERE
+    *r1 += 1;           // because r1 is used after (live range)
+    *r2 += 1;
+}</code></pre>
+<pre><code class="language-text">error[E0499]: cannot borrow `x` as mutable more than once at a time
+  |     let r1 = &amp;mut x;
+  |              ------ first mutable borrow occurs here
+  |     let r2 = &amp;mut x;
+  |              ^^^^^^ second mutable borrow occurs here
+  |     *r1 += 1;
+  |     ------ first borrow later used here</code></pre>
+<p>The bold clauses are the constraint graph's conflict witness. Holes: <code>unsafe</code>, plus release-mode wrapping (chapter 05).</p>
+<p><strong>Go</strong> — (b) and (d) proven <em>late</em> (bounds checks, GC); data races are the hole, policed by an opt-in runtime oracle:</p>
+<pre><code class="language-go">var counter int
+func main() {                   // go run -race race.go
+    go func() { counter++ }()   // goroutine 6: write
+    counter++                   // main: write, same variable
+}
+// WARNING: DATA RACE -- Write at 0x... by goroutine 6 / main
+// (vector clocks, module 09 ch02); 5-10x cost keeps -race out
+// of production.</code></pre>
+<p><strong>Java</strong> — GC proves liveness, the klass word proves type at every cast, and the <em>pause is the proof cost</em> (chapter 04). Live run (JDK 21):</p>
+<pre><code class="language-java">import java.util.*;
+public class Erasure {
+    public static void main(String[] args) {
+        List&lt;String&gt; xs = new ArrayList&lt;&gt;();  // compile-time proof
+        List raw = xs; raw.add(42);           // raw type: suspended
+        String s = xs.get(0);                 // cast fires at the READ
+        System.out.println("never reached: " + s);
+    }
+}</code></pre>
+<pre><code class="language-text">Exception in thread "main" java.lang.ClassCastException: class
+java.lang.Integer cannot be cast to class java.lang.String ...
+at Erasure.main(Erasure.java:7)</code></pre>
+<p><strong>C#</strong> — same machinery plus the 2019 nullable retrofit — a <em>warning</em>, i.e., a proof you can ignore:</p>
+<pre><code class="language-csharp">static void Main() {
+    string s = Find("key");            // string, not string?
+    System.Console.WriteLine(s.Length);
+}
+static string Find(string k) =&gt; null;  // CS8603: possible null
+// warning CS8602: Dereference of a possibly null reference.
+// C stays silent; C# leaves a witness in the log.</code></pre>
+<p><strong>Python</strong> — runtime tags on every operation (a real share of interpreter cost); the hole is the C boundary: <code>ctypes</code> erases the proof by changing the pointer's <em>type</em> (live run):</p>
+<pre><code class="language-python">import ctypes
+a = (ctypes.c_int * 3)(10, 20, 30)    # the TYPE carries length 3
+p = ctypes.cast(a, ctypes.POINTER(ctypes.c_int))  # length erased
+for i in range(6):                    # the bounds check lived in
+    print(f"p[{i}] = {p[i]}")         # the type; 3..5: raw reads</code></pre>
+<pre><code class="language-console">p[3] = 0
+p[4] = 1535784240    # heap garbage; sometimes SIGSEGV instead
+p[5] = 32706</code></pre>
+<p><strong>JavaScript</strong> — V8 maps are per-object runtime types; OOB reads return <code>undefined</code> — proof by refusing, not crashing (live run, node 22):</p>
+<pre><code class="language-js">const a = [10, 20, 30];
+console.log(a[3]);            // undefined: safe read, wrong logic
+const t = new Int32Array(3);  // raw memory, runtime-bounded
+t[3] = 42;                    // no exception: silently dropped
+console.log(t[3]);            // undefined -- no crash</code></pre>
+<p><strong>Swift / Objective-C</strong> — ARC is a refcount proof whose <em>insertion points the compiler chooses</em>: <code>swiftc -emit-silo</code> on a 5-line file holding a class reference shows the obligations as SIL — <code>strong_retain</code>/<code>strong_release</code> pairs bracketing each use region, one pair per borrow. The counter runs at runtime, so it inherits <code>shared_ptr</code>'s hole: cycles retain forever — why <code>weak</code>/<code>unowned</code> exist, and why ObjC's <code>unsafe_unretained</code> says so in the type's name.</p>
+<p><strong>Haskell / OCaml</strong> — static types, GC, purity as a bonus theorem (no hidden mutation). Proof working, OCaml:</p>
+<pre><code class="language-ocaml">type shape = Circle of float | Square of float
+let area s = match s with
+  | Circle r -&gt; 3.14159 *. r *. r
+(* Warning 8: this pattern match is not exhaustive.
+   Here is an example of a case not matched: Square _ *)</code></pre>
+<p><strong>COBOL</strong> — no pointers, no heap: (a) and (d) vacuous — safety by <em>impoverishment</em>. The type system is the PICTURE clause plus the record layout (module 01 ch17), its bound silent:</p>
+<pre><code class="language-cobol">       WORKING-STORAGE SECTION.
+       01 NAME PIC X(10).
+       PROCEDURE DIVISION.
+       MAIN.
+           MOVE "ABCDEFGHIJKLM" TO NAME.  *&gt; 13 chars into 10
+           DISPLAY NAME.                  *&gt; "ABCDEFGHIJ": truncated</code></pre>
+<p>No crash ever, but no complaint either: unfailable means silent data loss.</p>
+<h2 id="can-t-prove-it-therefore-patch-it-mitigations-as-runtime-proofs">Can't prove it, therefore patch it: mitigations as runtime proofs</h2>
+<p>Module 02 chapter 06's ladder, re-derived: each rung is a runtime proof system — a fragment of the type system C refused to have.</p>
+<ul>
+<li><strong>Canaries</strong> — proof of <em>intact return path</em>: the 8-byte <code>AT_RANDOM</code>-derived secret (module 02 ch02) is a per-frame certificate checked at the epilogue — one bit of "return address still mine."</li>
+<li><strong>ASLR</strong> — randomness as a <em>proof substitute</em>: the system cannot prove an attacker doesn't know an address, so it randomizes (~28 bits for x86-64 library mappings); each guess is a 2^-28 type-check that fails into a crash.</li>
+<li><strong>CFI / PAC</strong> — the proof oracle in hardware: indirect branch targets get a <em>type</em> (the legal-target set), and PAC signs return addresses with a per-process key so <code>ret</code> becomes <code>verify + jump</code> — the X-bit treatment per branch, not per page.</li>
+<li><strong>MTE</strong> — the honest runtime type tag: every 16-byte granule carries a 4-bit allocation tag in the pointer's top bits, checked by the MMU on every access (first consumer silicon: Tensor G3, Pixel 8, 2023). The tag width <em>is</em> the error budget: 4 bits = 16 tags, so a wild pointer's random tag collides with the target granule's with probability 1/16 — <strong>6.25% false negative per bad access, 15/16 = 93.75% caught</strong>, each catch a loud crash in sync mode; four escaping accesses survive (1/16)^4 ≈ 0.002%. False positives for correct code: zero — the tag is a certificate the allocator maintains, itself a trusted kernel; a fault on correct code means a tag-manager bug, never noise. The dangling corner: a re-allocated granule's fresh random tag equals the stale pointer's 1/16 of the time — that UAF walks through undetected. MTE is this chapter's thesis in silicon: <em>the hardware runs a type system — 4 bits where Rust's compiler uses a lifetime solver.</em></li>
+</ul>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>unsafe</code> is a proof obligation, not a license</strong>, and the culture rule is <em>local provability</em>: every unsafe block carries an invariant comment checkable against a list like Vec's. The folklore name for its absence is <em>fear-driven development</em> — avoiding <code>unsafe</code> so hard you build worse safe structures. The 2024 edition makes unsafe ops inside an <code>unsafe fn</code> need their own <code>unsafe {}</code> block (<code>unsafe_op_in_unsafe_fn</code>): an <code>unsafe fn</code> is a contract on callers, not a license on its body.</li>
+<li><strong><code>Pin</code> is the theorem "this object will not move."</strong> A struct holding a pointer into itself dangles if moved — an intra-object use-after-free no borrow checker can see, because the borrow is inside the value. <code>Pin&lt;&amp;mut T&gt;</code> certifies stability; <code>async</code> is the reason: the compiled future is a state machine whose frames point into its own fields, so it must not move between <code>poll</code>s.</li>
+<li><strong>The borrow checker proves an approximation; Miri checks a model.</strong> Stacked borrows (2018) and tree borrows (its 2023 refinement) are <em>operational</em> models of reference validity — rules an interpreter can check exactly. <code>cargo miri</code> executes the program under the model and reports UB the approximation admits — "no conflict found" is weaker than "the conflict provably cannot happen."</li>
+<li><strong><code>Box::leak</code> is deliberate proof weakening</strong> — it consumes the box and returns <code>&amp;'static mut T</code>: "I promise never to free this," an affine value made unrestricted. The standard trick for startup-built global caches.</li>
+<li><strong><code>checked_add</code> is a type-level service.</strong> Returning <code>Option&lt;u32&gt;</code> forces every caller to handle overflow <em>now</em>; C says overflow is UB, licensing the optimizer to delete your bounds check (module 03 ch03). Rust's hole: release builds wrap silently — the theorem holds only where you asked.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>Lab 1 — the doubly-linked list: one insert, two universes.</strong> The canonical unsafe-required case. C++ (compiles and runs clean under <code>g++ -std=c++17 -Wall -Wextra</code>):</p>
+<pre><code class="language-cpp">struct Node { Node* next; Node* prev; int v; };
+void insert_after(Node* p, int v) {      // the classic DLL insert
+    Node* n = new Node{p-&gt;next, p, v};   // two raw writable aliases
+    if (p-&gt;next) p-&gt;next-&gt;prev = n;      // into one list: no proof
+    p-&gt;next = n;                         // required, none attempted
+}
+int main() { Node h{nullptr, nullptr, 0}; insert_after(&amp;h, 1); }</code></pre>
+<p>Rust needs <code>&amp;mut</code> to two neighbors at once — <code>prev.next</code> <em>and</em> <code>next.prev</code>, reachable through one list. Safe Rust rejects every phrasing; the errors are real:</p>
+<pre><code class="language-rust">struct Node { next: Option&lt;Box&lt;Node&gt;&gt;, prev: Option&lt;Box&lt;Node&gt;&gt; }
+fn insert_after(prev: &amp;mut Node, fresh: &amp;mut Node) {
+    if let Some(old) = prev.next.take() {
+        old.prev = Some(Box::new(fresh));   // alias the new node...
+        fresh.next = Some(old);
+        prev.next = Some(Box::new(fresh));  // ...then MOVE it: E0505
+    }
+}</code></pre>
+<pre><code class="language-text">error[E0505]: cannot move out of `*fresh` because it is borrowed
+  |     old.prev = Some(Box::new(fresh));
+  |                              ----- borrow of `*fresh` occurs here
+  |     prev.next = Some(Box::new(fresh));
+  |                        ^^^^^ move out of `*fresh` occurs here</code></pre>
+<p>Storing <code>&amp;mut</code> neighbors instead yields E0499, <code>cannot borrow ... as mutable more than once at a time</code>. The working version is the paper exercise: a <code>NonNull&lt;Node&gt;</code> ring with <code>unsafe</code> blocks whose comments read like Vec's invariant list — <em>every node freed exactly once on drop; every NonNull non-null and initialized; no two live <code>&amp;mut</code> reach one node; links removed before free.</em></p>
+<p><strong>Lab 2 — Miri, or the honest paper version.</strong> With a toolchain: <code>cargo miri run</code> on a dangling deref (<code>Box::new(5)</code>, keep a <code>*const i32</code>, <code>drop</code> the box, read through it) halts with <code>Undefined Behavior: pointer to alloc N was dereferenced after it was freed</code> (wording as of Miri 2024; ids vary). Without one: read stacked/tree borrows as the rule the interpreter checks, and mark which of your unsafe blocks it would catch.</p>
+<p><strong>Lab 3 — erasing Python's proof.</strong> Run the ctypes program above, then the control: <code>a[5]</code> on the array itself raises <code>IndexError: invalid index</code> — the check lived in the array <em>type</em> <code>(c_int * 3)</code>, and <code>cast</code> to <code>POINTER(c_int)</code> deleted the 3. The garbage changes across runs (adjacent heap metadata); occasionally the interpreter segfaults instead — clause (a), witnessed.</p>
+<p><strong>Lab 4 — Java's two proof times.</strong> <code>java Erasure.java</code> (JDK 11+, single-file launcher) prints the <code>ClassCastException</code> — the check fires at the <em>read</em>, not the insert: erasure left no tag to check at <code>add</code>. Then arrays: <code>Object[] o = new String[3]; o[1] = Integer.valueOf(42);</code> throws <code>java.lang.ArrayStoreException: java.lang.Integer</code> at the <em>write</em> — arrays are reified, so the store is checkable; generics are not.</p>
+<p><strong>Lab 5 — TypeScript <code>any</code> bisection.</strong> On a large legacy TS build: <code>npx tsc --noEmit | wc -l</code> for the error count; bisect by casting the boundary of half the files to <code>any</code> and re-running — the count that vanishes is the proof debt you took on. <code>unknown</code> is the disciplined version: a debt type that must be paid with a check before use, so it stays in the error count until you do.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>CVE triage in four clauses.</strong> Name the clause a vulnerability violates; the clause predicts the mitigation that catches it (canary/CFI for control data, ASan for (b), runtime tags or CFI for (c), MTE for (d)).</li>
+<li><strong>Choosing a component's language.</strong> Who proves the four clauses, and does the proof time fit the threat model? A parser over untrusted input wants the proof <em>before</em> the bytes arrive; a plugin host can pay GC pauses; a kernel can afford neither — hence Rust and SPARK in kernels.</li>
+<li><strong>Reviewing unsafe/FFI code.</strong> Use Vec's list as the template: invariants as comments, each block checked against them, Miri in CI. An unsafe block without an invariant comment is a theorem without a proof — reject the diff.</li>
+<li><strong>Interview-grade variance.</strong> Deriving <code>&amp;mut T</code>'s invariance in 60 seconds — write side and read side — is the fastest demonstration of real subtyping understanding, and it generalizes to Java arrays and C#'s <code>out T</code> on the spot.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 19 chapter 02</strong> — soundness as progress + preservation, instantiated here with addresses as terms; the Java-arrays invariance derivation reused.</li>
+<li><strong>Module 19 chapter 04</strong> — the runtime half of the spectrum: GC as proof search, pauses as proof cost, tags as certificates.</li>
+<li><strong>Module 19 chapter 05</strong> — what this proof cannot buy: overflow, logic bugs, the soundness/expressiveness trade.</li>
+<li><strong>Module 01 ch08-17</strong> — the languages placed here, re-read as proofs: C's (ch08) unchecked casts, C++'s (ch09) RAII, Rust's (ch10) borrow checker, Go's (ch11) race hole, Java's (ch12) klass-word certificates, Swift's (ch16) ARC insertion points, COBOL's (ch17) PICTURE-clause bounds.</li>
+<li><strong>Module 01 chapter 03</strong> — the page table as the original hardware type system: R/W/X, segfault as type error.</li>
+<li><strong>Module 02 chapter 06</strong> — the mitigation ladder re-derived here as runtime proof systems; ch02 for the canary.</li>
+<li><strong>Module 04 chapter 04</strong> — the vptr as a <em>type-erased</em> runtime proof: one tag word selecting the legal method set — Java's tag by convention, which is why CFI must guess it back.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> State the four clauses of memory safety, and map each to what enforces it in Java. Which clause does an MMU page check enforce, at what granularity?</li>
+<li><strong>Concept.</strong> Define affine, linear, unrestricted by allowed uses; explain — via panics and unwinding — why Rust chose affine; name what the compiler inserts that a linear language would force you to write.</li>
+<li><strong>Predict.</strong> <code>let mut v = vec![1]; let r = &amp;mut v[0]; *r += 1; v.push(2);</code> compiles today but failed 2015 rustc. Draw the borrow's live range, name the use that ends it, and say what the old checker used instead.</li>
+<li><strong>Derive (the variance counter-example).</strong> Suppose <code>&amp;mut &amp;'long T</code> could coerce to <code>&amp;mut &amp;'short T</code>. Write the two-function program that turns that into a use-after-free; identify the line that plants the dangling reference and the line that reads it; explain why the same shortening on a <em>shared</em> <code>&amp; &amp;'long T</code> is safe.</li>
+<li><strong>Predict (MTE arithmetic).</strong> 4-bit tags, 16-byte granules: (a) chance one wild access escapes; (b) chance an exploit needing 4 escaping accesses survives; (c) chance a dangling pointer (freed granule re-allocated, fresh random tag) walks through undetected; (d) the false-positive rate for correct code — and why a sound type system gives the same answer.</li>
+<li><strong>Diagnose.</strong> A C++ service's RSS climbs 1 MB/hour; ASan is silent; valgrind shows "still reachable," growing. The team says "Rust would fix this — it's memory-safe." Bug class, C++ fix, and would safe Rust reject the equivalent?</li>
+<li><strong>Diagnose.</strong> Release-build Rust: a <code>u32</code> counter <code>x += 1</code> loops forever under <code>x &lt; MAX</code>; a debug build had panicked with <code>attempt to add with overflow</code>. What did the debug panic prove, what did release do instead, the two type-level fixes?</li>
+<li><strong>Cross-chapter.</strong> Module 01 ch03's MMU and MTE both check types in hardware. Compare them — type, width, granularity, clauses covered — then name the one check CFI/PAC adds that neither gives you.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>(a) own-access: implied by (b)+(c)+(d) together; (b) bounds: runtime check on every array index (<code>ArrayIndexOutOfBoundsException</code>); (c) no punning: the per-object klass tag checked at every cast (<code>ClassCastException</code>); (d) no post-lifetime: the GC never frees reachable objects. The MMU enforces (a) coarsely: one 3-bit R/W/X "type" per 4,096-byte page, checked every access — why wild C pointers <em>end</em> at SIGSEGV, not in the kernel.</li>
+<li>Unrestricted: any number of uses. Linear: exactly one, on every path. Affine: at most one. Panics break linearity: an unwind between creation and use makes "exactly once" unprovable; "at most once" tolerates early exit. The compiler inserts the <em>drop</em> — the destructor call — on every path, including the unwinding one.</li>
+<li>The borrow starts at <code>&amp;mut v[0]</code> and ends at the last <em>use</em> of <code>r</code> — <code>*r += 1</code> — so <code>v.push(2)</code> (which needs <code>&amp;mut self</code>) runs after the borrow died: accepted. The lexical checker used <em>scopes</em>: <code>r</code> lived to its block's end, so <code>push</code>'s borrow conflicted — E0499/E0502. NLL swapped syntax-based regions for liveness-based region inference.</li>
+<li><code>fn plant(r: &amp;mut &amp;'long T, s: &amp;'short T) { *r = s; }</code> — the coercion makes the store well-typed. Caller: <code>let slot: &amp;'long T = &amp;long_val; plant(&amp;mut slot, &amp;short_val);</code> The <em>plant</em> line writes <code>&amp;short_val</code> into a slot typed <code>'long</code>; once <code>short_val</code> dies, any reader of <code>slot</code> — legal, since the type promises <code>'long</code> — reads a dangling reference: the read line is <code>println!("{}", slot)</code>, no cast anywhere. On a shared <code>&amp; &amp;'long T</code> shortening is safe because <em>nobody can write through it</em>: forgetting a view's precision cannot corrupt the slot for better-informed viewers. Mutability forces invariance; read-only permits covariance — Java's covariant arrays + <code>ArrayStoreException</code>, at compile time.</li>
+<li>(a) 1/16 = <strong>6.25%</strong> (15/16 = 93.75% caught). (b) (1/16)^4 = 1/65,536 ≈ <strong>0.002%</strong> — in sync mode the other ~99.998% of the time a check fires and the process dies loudly. (c) The fresh tag equals the stale pointer's with probability <strong>1/16</strong> — that use-after-free is undetected. (d) <strong>Zero</strong>: the tag is a certificate the allocator maintains — a fault on correct code means a tag-manager bug, never noise; sound type systems reject only ill-typed programs, so their false-positive rate is also zero.</li>
+<li>A <code>shared_ptr</code> reference cycle: the refcount never reaches zero, destructors never run — memory-<em>safe</em> (no dangling) but leaky, which is why ASan is silent and valgrind says "still reachable." Fix: <code>weak_ptr</code> back-pointers. Safe Rust would <em>not</em> reject the equivalent — <code>Rc&lt;Node&gt;</code> cycles leak identically: both prove memory safety, not reachability (chapter 04).</li>
+<li>The debug panic was the <em>overflow check</em> — a runtime proof that exists only in debug builds. Release compiled the add as wrapping, so <code>x</code> wrapped past <code>u32::MAX</code> and <code>x &lt; MAX</code> stayed true forever: an infinite loop, not memory unsafety. Fixes: <code>checked_add</code> (returns <code>Option</code>, forcing the match) or <code>wrapping_add</code> (intent in the expression's type).</li>
+<li>MMU: 3 bits (R/W/X) per 4 KiB page — clause (a), coarsely (plus NX's control-flow value). MTE: a 4-bit allocation tag per 16-byte granule — (a) and (d) (wild and dangling pointers carry mismatched tags), <em>almost</em> (b): OOB within the same granule escapes. Neither constrains <em>where control flows</em>: CFI/PAC type-checks indirect branch targets — the legal-target set, signed per process (PAC).</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch02.html"><span class="cn-label">previous</span><span class="cn-title">Ch 02</span></a>
+<a class="next" href="ch04.html"><span class="cn-label">next</span><span class="cn-title">Ch 04</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 19 — PL theory &amp; type systems</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

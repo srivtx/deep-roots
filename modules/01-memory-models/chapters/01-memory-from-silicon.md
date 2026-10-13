@@ -236,6 +236,12 @@ first lesson from hardware.
   model.
 - **Chapter 17** — COBOL storage dumps are endianness + PICTURE byte decoding.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 17 ch01 (transistors to gates)** — the DRAM cell this chapter drew is one MOSFET-passivated capacitor away from the CMOS logic this program bottoms out in.
+- **Module 02 ch07 (side channels)** — Rowhammer hammers exactly this chapter's leaky capacitor — the physics you learned is the attack surface.
+- **Module 20 ch01 (the no-MMU world)** — SRAM's 6T cell needs no refresh: the microcontroller's memory is this chapter's physics minus the DRAM tax.
+
 ## Quiz
 
 1. **Concept.** Why is SRAM used for caches and DRAM for main memory, rather than all

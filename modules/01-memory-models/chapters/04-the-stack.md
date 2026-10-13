@@ -219,6 +219,12 @@ stack is a *quota*, enforced by the guard page, a Chapter 03 virtual-memory devi
   Python's recursion limit bridging C frames and interpreter frames.
 - **Chapter 21** — smashing the frame: canaries, ROP gadgets *live at frame scale*.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 20 ch02 (bare metal)** — the stack pointer is data in a file: hardware reads _estack from address zero before any code runs.
+- **Module 02 ch02 (stack exploitation)** — the frame this chapter drew is the attack surface: canaries, ROP, and the smashed return address.
+- **Module 04 ch03 (compiler idioms)** — the prologue and epilogue you learned to read are the fingerprints a reverse engineer matches.
+
 ## Quiz
 
 1. **Concept.** Derive the stack from the shape of call lifetimes: state the property

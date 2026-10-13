@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Types as theorems, programs as proofs — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 19: Types as theorems, programs as proofs">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Types as theorems, programs as proofs — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 19: Types as theorems, programs as proofs">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Types as theorems, programs as proofs — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 19: Types as theorems, programs as proofs">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 19 &middot; why the rules are theorems</div>
+<h1 class="post-title">Types as theorems, programs as proofs</h1>
+<div class="post-meta">chapter 02 &middot; ~15 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Chapter 01 built the bare machine — and, in the same box, programs that get stuck or diverge. A type system is a <strong>proof, checkable by recursion on syntax, that evaluation stays inside a set of values</strong>. Two theorems define every typed language (Wright–Felleisen): <em>progress</em> — a well-typed closed term is a value or can step — and <em>preservation</em> — stepping keeps the type; together, well-typed programs never get stuck. Read types as propositions, programs as proofs (Curry–Howard): <code>null</code> a soundness lie, generics free theorems, variance a derivation, <code>any</code> a proof pause button.</blockquote>
+<h2 id="the-reframe-a-proof-you-can-check-by-recursion">The reframe: a proof you can check by recursion</h2>
+<p>Chapter 01's calculus evaluates until it hits a value or a <strong>stuck term</strong> — <code>true true</code>, which is neither; untyped runtimes die there. A type system rejects, <em>before evaluation</em>, every term that could end stuck — not by running it (halting problem) but by checking a proof the result lives in a value set. The proof language: STLC with booleans and unit. Grammar, one line each:</p>
+<pre><code class="language-text">t ::= x | λx:T.t | t₁ t₂ | true | false | if t₁ then t₂ else t₃ | unit | t₁;t₂
+T ::= Bool | Unit | T₁ → T₂</code></pre>
+<p>A judgment <code>Γ ⊢ t : T</code> reads "under assumptions Γ (a list of <code>x:T</code> pairs in scope), <code>t</code> is evidence for <code>T</code>". Rules have names — typecheckers report errors by them. Eight rules:</p>
+<pre><code class="language-text">+--------+--------------------------------------+-------------------------------+
+| Rule   | Premises                             | Conclusion                    |
++--------+--------------------------------------+-------------------------------+
+| T-Var  | x:T is in Γ                          | Γ ⊢ x : T                     |
+| T-Abs  | Γ, x:T₁ ⊢ t : T₂                     | Γ ⊢ λx:T₁.t : T₁→T₂           |
+| T-App  | Γ ⊢ t₁ : T₁→T₂   and   Γ ⊢ t₂ : T₁   | Γ ⊢ t₁ t₂ : T₂                |
+| T-True | (none)                               | Γ ⊢ true : Bool               |
+| T-False| (none)                               | Γ ⊢ false : Bool              |
+| T-If   | Γ ⊢ t₁:Bool,  Γ ⊢ t₂:T,  Γ ⊢ t₃:T   | Γ ⊢ if t₁ then t₂ else t₃ : T |
+| T-Unit | (none)                               | Γ ⊢ unit : Unit               |
+| T-Seq  | Γ ⊢ t₁:Unit,  Γ ⊢ t₂:T              | Γ ⊢ t₁;t₂ : T                 |
++--------+--------------------------------------+-------------------------------+</code></pre>
+<p>(<code>t₁;t₂</code> is sugar for <code>(λx:Unit.t₂) t₁</code>, so T-Seq is the derived rule; its evaluation is β in disguise, which is how the work-rule count stays three.) Evaluation: three work rules, plus congruence ("reduce the leftmost non-value subterm"):</p>
+<pre><code class="language-text">if true  then t₂ else t₃  →  t₂        (E-IfTrue)
+if false then t₂ else t₃  →  t₃        (E-IfFalse)
+(λx:T.t) v                →  t[x:=v]   (E-AppAbs — β, on a value argument)</code></pre>
+<p>The same term in two universes: <code>(λx.x x) true</code>. Untyped: β fires and it becomes <code>true true</code> — stuck. In STLC, <code>λx:Bool.x x</code> demands <code>x : Bool</code> and <code>x : Bool→T</code> at once; no finite type satisfies that, so it is rejected <em>before it runs</em> — in the lab, with the rule name printed. Self-application — the Y combinator's engine — is what STLC forbids, which is why all STLC programs terminate: the first point on the expressiveness-versus-guarantees frontier (chapter 05 returns).</p>
+<h2 id="wright-felleisen-the-two-theorems-every-typed-language-stands-on">Wright–Felleisen: the two theorems every typed language stands on</h2>
+<p>Type soundness is not a vibe; it is one theorem with two halves (Wright and Felleisen, "A Syntactic Approach to Type Soundness", 1994), for closed terms:</p>
+<ul>
+<li><strong>Progress.</strong> If <code>⊢ t : T</code> then <code>t</code> is a value or <code>t → t'</code> for some <code>t'</code>.</li>
+<li><strong>Preservation.</strong> If <code>⊢ t : T</code> and <code>t → t'</code> then <code>⊢ t' : T</code>.</li>
+</ul>
+<p><strong>Progress</strong> (sketch — the lab runs the cases). Induction on the typing derivation, case on the last rule: T-True/T-False/T-Unit/T-Abs conclude in values; T-Var is impossible (empty Γ). T-App: the induction hypothesis makes each operand a value or stepping; if both are values, canonical forms — a closed value of <code>Bool</code> is <code>true</code> or <code>false</code>, of <code>T₁→T₂</code> is a <code>λ</code> — make the left operand <code>λx:T₁.s</code> with a value argument, and E-AppAbs fires. T-If: the condition is <code>true</code> or <code>false</code>; E-IfTrue/E-IfFalse fires. T-Seq: the first component is <code>unit</code>; the desugaring's β fires. No dead ends.</p>
+<p><strong>Preservation, application case, in full.</strong> Given <code>⊢ t₁ t₂ : T₁₂</code> by T-App, with premise derivations <strong>D₁</strong>: <code>⊢ t₁ : T₁₁→T₁₂</code> and <strong>D₂</strong>: <code>⊢ t₂ : T₁₁</code>. Suppose <code>t₁ t₂ → t'</code>. Three subcases:</p>
+<pre><code class="language-text">* E-AppAbs: t₁ = λx:T₁₁.s is a value. Invert D₁ (only T-Abs types an
+  abstraction): its binder is T₁₁ and  ⊢ s : T₁₂  in context  x:T₁₁.
+  D₂ says ⊢ t₂ : T₁₁, so the substitution lemma (if Γ,x:S ⊢ u:T and
+  Γ ⊢ v:S then Γ ⊢ u[x:=v]:T — proved by induction on u) gives
+  ⊢ s[x:=t₂] : T₁₂.  Preserved.
+* E-App1 (congruence): t₁ → t₁'.  IH on D₁:  ⊢ t₁' : T₁₁→T₁₂.
+  Re-apply T-App with D₂:  ⊢ t₁' t₂ : T₁₂.  Preserved.
+* E-App2 (congruence): t₂ → t₂'.  IH on D₂:  ⊢ t₂' : T₁₁.
+  Re-apply T-App with D₁:  ⊢ t₁ t₂' : T₁₂.  Preserved.</code></pre>
+<p>The other cases are easier; any feature that makes this induction fail is unsound — the rest of the chapter is case studies of that sentence.</p>
+<p><strong>Corollary (soundness).</strong> If <code>⊢ t : T</code> and <code>t →* v</code> then <code>v : T</code>, and no intermediate state is stuck — preservation keeps every state well-typed, progress keeps every non-value stepping. This is Milner's 1978 slogan "well-typed programs cannot go wrong", where <strong>"go wrong" means stuck</strong>, nothing more.</p>
+<h2 id="curry-howard-the-proof-you-compiled">Curry–Howard: the proof you compiled</h2>
+<p>Write <code>→</code> as implication and the 8 rules <em>are</em> natural deduction. The Curry–Howard correspondence is not an analogy; it is a bijection you can check by hand:</p>
+<pre><code class="language-text">+-----------------------------+---------------------------+--------------------------+------------------------+
+| Type theory                 | Logic                     | Reading                  | Example                |
++-----------------------------+---------------------------+--------------------------+------------------------+
+| type A                      | proposition A             | a claim                  | Bool                   |
+| term t : A                  | proof of A                | the evidence             | true                   |
+| λ-abstraction               | →-introduction            | discharge an assumption  | λa:A.λb:B.a            |
+| application t₁ t₂           | →-elimination             | modus ponens             | (λx:Bool.x) true       |
+| β-reduction                 | proof simplification      | cut elimination          | (λx.x) true → true     |
+| inhabited type (has a term) | provable proposition      | a closed proof exists    | Bool, by true          |
+| uninhabited type            | contradiction             | no proof exists          | never                  |
++-----------------------------+---------------------------+--------------------------+------------------------+</code></pre>
+<p>The worked example: <code>A → B → A</code>, logic's weakening axiom. Its proof term is <code>λa.λb.a</code> (the K combinator of chapter 01's SKI set). Check by hand — typing left, natural deduction right, the <em>same tree</em>:</p>
+<pre><code class="language-text">   a:A, b:B ⊢ a : A      (T-Var)          A, B ⊢ A        (assumption)
+   a:A ⊢ λb:B.a : B→A    (T-Abs)          A ⊢ B⊃A         (→-intro, discharge B)
+   ⊢ λa:A.λb:B.a         (T-Abs)          ⊢ A⊃B⊃A         (→-intro, discharge A)
+      : A→B→A</code></pre>
+<p>The term is the proof; the type is the theorem. β-reduction <em>is</em> proof simplification — <code>(λa:A.λb:B.a) x y → x</code> eliminates a detour. An inhabited type is provable (<code>Bool</code> by <code>true</code>, <code>A→A</code> by <code>λx.x</code>); an uninhabited one is a contradiction. The rest of the chapter asks: <em>which proposition is your language actually proving?</em></p>
+<h2 id="null-the-type-that-lied-the-billion-dollar-soundness-hole">null: the type that lied (the billion-dollar soundness hole)</h2>
+<p>Tony Hoare, QCon 2009, on inventing the null reference in 1965: "I call it my billion-dollar mistake... I couldn't resist the temptation to put in a null reference, simply because it was so easy to implement. This has led to innumerable errors, vulnerabilities, and system crashes, which have probably caused a billion dollars of pain and damage in the last forty years."</p>
+<p>The mistake, type-theoretically, is exact: <code>Γ ⊢ e : Foo</code> promises "e evaluates to one of Foo's values", but <code>null</code> inhabits <em>every</em> reference type — <code>null : Foo</code> for all <code>Foo</code> — so <strong>every proposition became provable with evidence that proves nothing</strong>, and a system where every claim is provable proves nothing. The <code>NullPointerException</code> at <code>e.field</code> is the runtime noticing, late, a forgery: progress violated, <code>e.field</code> stuck.</p>
+<p>The honest repair is a sum type: <code>Option&lt;Foo&gt;</code> / <code>Maybe Foo</code> makes the claim explicit — <em>value or absent</em> — and the compiler enforces the case analysis: no payload read without handling <code>None</code>. The cost is module 01 chapter 06's tagged-value story re-appearing: a discriminant. Rust's niche optimization pays it only when a bit pattern is spare: <code>Option&lt;&amp;T&gt;</code> is 8 bytes (same as <code>&amp;T</code> — the null-pointer pattern is reserved as <code>None</code>); <code>Option&lt;i32&gt;</code> is 8 where <code>i32</code> is 4 (all 2³² patterns are legal, so a real tag is unavoidable).</p>
+<p>Two epilogues. <strong>C# 8 (2019) nullable reference types:</strong> <code>string?</code> is a <em>compile-time</em> annotation with flow analysis, retrofitted onto ~20 years of code that assumed the lie; the migration (per-file opt-in, warnings first, <code>#nullable enable</code>) is what retrofitting honesty looks like (module 01 ch13). <strong>Kotlin platform types:</strong> a Java <code>String</code> of unknown nullability arrives as <code>String!</code> — <em>neither checked nor trusted</em>; assert <code>String</code> and the NPE arrives at runtime. The <code>!</code> means "obligation suspended".</p>
+<h2 id="generics-system-f-and-theorems-for-free">Generics: System F and theorems for free</h2>
+<p><code>λx:Bool.x</code> proves <code>Bool→Bool</code> and nothing else. System F (Girard/Reynolds, 1972/74) adds a type-abstraction binder <code>Λ</code>: <code>Λα.λx:α.x : ∀α.α→α</code> — one proof, every type. Instantiation is application at the type level: <code>(Λα.λx:α.x)[Bool]</code> becomes <code>λx:Bool.x</code>, then <code>(λx:Bool.x) true → true</code>. Java's <code>&lt;T&gt;</code>, C#'s <code>&lt;T&gt;</code>, Rust's <code>&lt;T&gt;</code> are surface syntax over this — inference writes the <code>Λ</code>s (chapter 01: why System F inference is undecidable).</p>
+<p>The payoff is <strong>parametricity</strong> (Wadler, "Theorems for Free!", 1989): a term <code>∀α.[α]→[α]</code> receives only the list — elements are opaque α. It cannot inspect, compare, print, or construct an α; the only operations are position-shaped, so the type alone proves a theorem about <em>every</em> implementation. The classic: <code>reverse : ∀α.[α]→[α]</code> — derive from the type alone that <code>map f (reverse xs) = reverse (map f xs)</code> for every <code>f</code>:</p>
+<pre><code class="language-text">1. reverse can only move positions; it never touches element values.
+2. Relational parametricity: at every instantiation it moves them the SAME way.
+   Take R = graph of f:  a R b  iff  b = f(a).
+   Then xs : [A] and map f xs : [B] are R-related elementwise.
+3. Parametricity forces reverse to map R-related inputs to R-related outputs:
+       reverse xs  is elementwise-R-related to  reverse (map f xs).
+   Elementwise R means each right element = f of the left one:
+       reverse (map f xs) = map f (reverse xs).   ∎</code></pre>
+<p><code>f</code> acts only on values, <code>reverse</code> only on positions; orthogonal axes commute. Practical translation: a generic <code>Map&lt;K,V&gt;</code> API <em>cannot</em> secretly require <code>K</code> to be a string — the type is a contract stronger than docs: docs can lie, a parametric function cannot.</p>
+<p>The bill for <code>∀</code> arrives at code generation — two ways to pay:</p>
+<pre><code class="language-text">+---------------------+---------------------------+--------------------------+---------------------------+
+|                     | Java (erasure)            | C++ (templates)          | Rust (monomorphize)       |
++---------------------+---------------------------+--------------------------+---------------------------+
+| Layout of T         | 1 shared Object header    | one layout per T         | one layout per T          |
+|                     | (12-16 B, boxed; no int)  | (primitives stay flat)   | (primitives stay flat)    |
+| Code                | 1 shared bytecode copy    | 1 copy per T per TU      | 1 copy per concrete T     |
+| Check / price       | insert-time cast; boxing, | compile time; code bloat | compile time; link size,  |
+|                     | no List&lt;int&gt;              | (.i explosion)           | dyn escape                |
++---------------------+---------------------------+--------------------------+---------------------------+</code></pre>
+<p>Java chose erasure in 2004 for binary compatibility with 1995 bytecode — the element-type tag is module 01 ch12/13's object header doing double duty. C++ and Rust stamp out a copy per instantiation (<code>Vec&lt;T&gt;</code> once per concrete <code>T</code>; <code>dyn Trait</code> buys it back with one vtable call). Module 10 ch05 covers where the choice is enforced.</p>
+<h2 id="subtyping-variance-effects-and-the-soft-hole">Subtyping, variance, effects, and the soft hole</h2>
+<p><strong>Width subtyping</strong> is safe: <code>{x, y} &lt;: {x}</code> — more fields supplies everything a narrower consumer needs. <strong>Depth</strong> is where it bites: <code>{m:{a,b}}</code> &lt;: <code>{m:{a}}</code> is safe for <em>reads</em>, unsound for <em>writes</em>: alias <code>Employee {birthday: RichDate}</code> as <code>Person {birthday: Date}</code>, store a plain <code>Date</code> through it, and the RichDate-only method called later detonates. Mutable fields make covariance a lie; function types force the rule:</p>
+<pre><code class="language-text">Use f : T₁→T₂ where S₁→S₂ is expected. Callers will pass s:S₁:
+  f must accept every S₁ value:          S₁ &lt;: T₁     (argument: contravariant)
+  f returns T₂, caller needs S₂:         T₂ &lt;: S₂     (result: covariant)
+∴ S₁→S₂ &lt;: T₁→T₂  iff  T₁ &lt;: S₁ and T₂ &lt;: S₂ — inputs flip, outputs don't.</code></pre>
+<p>Three lines, and Java's most famous runtime exception falls out of ignoring them. Java arrays are covariant (<code>String[] &lt;: Object[]</code>, a 1995 pre-generics decision so <code>Arrays.sort(Object[])</code> could take a <code>String[]</code>), so writes through the wider alias are unsound — and every store into a reference array carries a runtime element-type check: <code>Object[] o = new String[2]; o[0] = Integer.valueOf(42);</code> throws <code>ArrayStoreException</code> — <em>the static type system running late</em>: proof skipped at compile time, bought at every store. Sound (it fails loudly), but <code>Object[]</code> lied. C#'s fix: .NET 4 (2010) added <em>declared</em> variance on output-only surfaces — <code>IEnumerable&lt;out T&gt;</code> is covariant because nothing in it consumes a <code>T</code>, so there is no store to check; arrays stay covariant only for history (<code>ArrayTypeMismatchException</code>).</p>
+<p><strong>Effects are the same game on "may do" claims.</strong> Java's <code>IOException</code> is a checked effect — the method's type carries an obligation the caller must discharge — while <code>NullPointerException</code> ("may go stuck on null") is unchecked. Which is which is a <em>design opinion</em> from 1995, not a law; Hejlsberg's 2003 case against checked exceptions was that the obligation doesn't scale across components. The frontier is effect types proper: Koka's and Roc's <em>effect rows</em> put a function's permitted effects in its type.</p>
+<p><strong>Gradual typing is the compromise: unsoundness with a receipt.</strong> TypeScript is deliberately unsound, and the holes are enumerable: <code>any</code> (assignable both ways to everything, and contagious), type assertions (<code>x as T</code> — a promise, not a proof), covariant mutable arrays, method bivariance, the non-null <code>!</code>. Internalize: <strong><code>any</code> is a proof pause button</strong> — the theorem still holds everywhere else, and the paused regions are greppable. A hole you can list is a different animal from one you can't; <code>null</code> was the second kind, and the lab catches all four of TS's.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>void</code> in C is not the unit type.</strong> <code>unit</code> has exactly one value (<code>()</code>, storable); C <code>void</code> has none — <code>void f()</code> returns <em>control</em> without a value, but you cannot hold a <code>void</code>, and a never-returning function (<code>exit</code>, <code>while(1)</code>) has the third type, bottom. C conflates all three; Rust keeps <code>()</code> and <code>!</code> apart.</li>
+<li><strong>TypeScript is structural, but fresh object literals get the excess property check</strong> — <code>{name: "x", emial: "y"}</code> is rejected when the target has <code>email</code>, <em>only</em> at literal creation; a non-literal object with extra fields sails through. A typo-detector bolted onto a structural system.</li>
+<li><strong><code>never</code> is the uninhabited proposition</strong>, the type of <code>throw</code> and infinite loops — TS uses it for exhaustiveness: a <code>switch</code> whose default assigns to <code>never</code> stops compiling the day someone adds a union member. Proof by contradiction doing API review.</li>
+<li><strong>Milner's quote is precise, and everyone misquotes it.</strong> "Well-typed programs cannot go wrong" (1978) — "go wrong" is the technical term <em>stuck</em>. It promises nothing about integer overflow, wrong logic, or divergence; those are chapter 05.</li>
+<li><strong><code>strictFunctionTypes</code> does not fix methods.</strong> Function-type parameters are checked contravariantly, but method syntax stays bivariant so <code>Array&lt;string&gt;</code> stays assignable to looser interfaces — a documented, permanent unsoundness kept for usability.</li>
+<li><strong>Parametricity's fine print: Haskell's bottom.</strong> Laziness gives every type a secret extra inhabitant <code>⊥</code> (<code>undefined</code>), so <code>∀a.a→a</code> has more terms than the identity — and <code>seq</code> can distinguish them, breaking some free theorems. The theorem is free; the purity it assumes is not.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>Lab 1 — the four TS soundness holes, strict on and off.</strong> Install once (<code>npm install typescript</code>), then check the files both ways (or use typescriptlang.org/play and flip <code>strict</code>):</p>
+<pre><code class="language-console">$ npx tsc --strict --noEmit hole1.ts hole2.ts hole3.ts hole4.ts
+$ npx tsc --strict false --noEmit hole1.ts</code></pre>
+<p>One file per hole class — all four compile <em>clean</em> under <code>--strict</code>; that is the point:</p>
+<pre><code class="language-ts">// hole1.ts — `any`: strict catches *implicit* any, never *explicit* any
+function double(x) { return x * 2; }            // TS7006 under strict, nothing without
+const e: any = JSON.parse('{"port": 8080}');
+const port: number = e.potr * 2;                // typo'd key: NaN, no error either way
+
+// hole2.ts — `as` asserts without proving
+const first = (x: unknown): string =&gt; (x as string).slice(1);
+console.log(first(42));          // TypeError: x.slice is not a function
+
+// hole3.ts — mutable arrays are covariant (unsound by design)
+const nums: number[] = [1, 2, 3];
+const mixed: (number | string)[] = nums;        // accepted
+mixed.push("hi");                                // alias write
+console.log(nums[3].toFixed(2));                 // TypeError: n.toFixed is not a function
+
+// hole4.ts — method parameters are checked bivariantly
+class Grep { match(s: string): boolean { return s.length &gt; 0; } }
+interface Matcher { match(s: string | number): boolean; }
+const m: Matcher = new Grep();                   // accepted
+console.log(m.match(42));                        // silent false: (42).length is undefined</code></pre>
+<p>What to notice: strict mode's only complaint is <code>TS7006</code> on line 2 of hole1 — the <em>explicit</em> <code>any</code>, the assertion, the array alias, and the method all pass untouched. At runtime: <code>NaN</code>, two <code>TypeError</code>s, and one <em>silent wrong answer</em> (hole4 — no crash, just <code>false</code>).</p>
+<p><strong>Lab 2 — the STLC typechecker, 8 rules as ~60 lines of Python.</strong> The section-1 machinery, executable; rule names are the error messages:</p>
+<pre><code class="language-python"># stlc.py -- STLC with booleans and unit: the 8 typing rules as code.
+# Terms (tuples):  ("var",x) ("abs",x,T,t) ("app",t1,t2) ("true",) ("false",)
+#                  ("if",c,t,e) ("unit",) ("seq",t1,t2)
+# Types: "Bool" | "Unit" | ("arrow",T1,T2)
+
+def show(T):
+    return T if isinstance(T, str) else f"{show(T[1])} -&gt; {show(T[2])}"
+
+def lookup(g, x):
+    for k, T in reversed(g):
+        if k == x:
+            return T
+    raise TypeError(f"[T-Var] unbound variable {x}")
+
+def type_of(g, t):                       # g: list of (name, type)
+    k = t[0]
+    if k == "true":  return "Bool"       # T-True
+    if k == "false": return "Bool"       # T-False
+    if k == "unit":  return "Unit"       # T-Unit
+    if k == "var":   return lookup(g, t[1])            # T-Var
+    if k == "abs":                                    # T-Abs
+        return ("arrow", t[2], type_of(g + [(t[1], t[2])], t[3]))
+    if k == "app":                                    # T-App
+        Tf = type_of(g, t[1])
+        if not (isinstance(Tf, tuple) and Tf[0] == "arrow"):
+            raise TypeError(f"[T-App] {show(Tf)} is not a function type")
+        Ta = type_of(g, t[2])
+        if Ta != Tf[1]:
+            raise TypeError(f"[T-App] argument is {show(Ta)}, expected {show(Tf[1])}")
+        return Tf[2]
+    if k == "if":                                     # T-If
+        Tc = type_of(g, t[1])
+        if Tc != "Bool":
+            raise TypeError(f"[T-If] condition is {show(Tc)}, expected Bool")
+        Tt, Te = type_of(g, t[2]), type_of(g, t[3])
+        if Tt != Te:
+            raise TypeError(f"[T-If] branches differ: {show(Tt)} vs {show(Te)}")
+        return Tt
+    if k == "seq":                                    # T-Seq
+        if type_of(g, t[1]) != "Unit":
+            raise TypeError("[T-Seq] first component must be Unit")
+        return type_of(g, t[2])
+    raise TypeError(f"unknown form {k}")
+
+# demo
+ok = ("app", ("abs", "x", ("arrow", "Bool", "Bool"), ("app", ("var", "x"), ("true",))),
+             ("abs", "y", "Bool", ("var", "y")))
+print("well-typed term:", show(type_of([], ok)))          # Bool
+
+bad = ("app", ("abs", "x", "Bool", ("app", ("var", "x"), ("var", "x"))), ("true",))
+try:
+    type_of([], bad)
+except TypeError as e:
+    print("rejected:", e)
+
+seq = ("seq", ("unit",), ("true",))
+print("seq term:", show(type_of([], seq)))                # Bool</code></pre>
+<pre><code class="language-console">$ python3 stlc.py
+well-typed term: Bool
+rejected: [T-App] Bool is not a function type
+seq term: Bool</code></pre>
+<p>The <code>bad</code> term <em>is</em> <code>(λx.x x) true</code> — the stuck term from section 1 — rejected before running, with the rule that failed. Pair the checker with chapter 01's interpreter: run the term untyped (steps once, then dies), then ask why STLC refuses it.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Production bug triage.</strong> When a runtime type error escapes a "typed" codebase, the stack trace points at the symptom; the proof break is at a hole operator. Grep <code>as </code>, <code>!</code>, <code>any</code>, <code>@ts-expect-error</code>, platform types — the theorem stopped being checked on one of those lines.</li>
+<li><strong>API design is theorem design.</strong> Nullability annotations are claims the compiler holds you to. Make <code>Option</code>/<code>?</code> match reality in the public surface; for legacy code follow C# 8's retrofit: opt in per assembly, warnings before errors — never widen a hole to silence one.</li>
+<li><strong>Generics cost model.</strong> Erasure vs monomorphization is why Java has no <code>List&lt;int&gt;</code> (boxed, 12–16 B header each) and why Rust binaries balloon with generic fan-out; reach for <code>dyn Trait</code> when instantiation count, not call speed, is the problem.</li>
+<li><strong>Variance review in one move.</strong> Any <em>write</em> through a covariant alias is the <code>ArrayStoreException</code> pattern — reject it, or make the surface read-only (<code>out T</code>, <code>readonly</code> arrays) and say why. The interview-grade TS answer: "unsound by design; the holes are <code>any</code>, assertions, covariant arrays, method bivariance — usable, priced, greppable."</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>19-01 (the minimal machine):</strong> β, the Y combinator, Ω — and the exact rule (T-App's arrow demand) that untypable-izes self-application.</li>
+<li><strong>19-03 (memory safety as a theorem):</strong> progress + preservation at the address level — a pointer's type is "what may live there".</li>
+<li><strong>19-04 / 19-05:</strong> liveness as a theorem priced in pauses; what "cannot go wrong" does <em>not</em> mean — overflow, logic, termination.</li>
+<li><strong>Module 01 ch06 (object layout):</strong> the tag byte of <code>Option</code>/sums and runtime type tags are these proofs' RAM certificates — <code>Option&lt;&amp;T&gt;</code> at 8 B is the niche optimization.</li>
+<li><strong>Module 01 ch13 (C#/.NET):</strong> nullable reference types and CLR generics — the industrial epilogue of null and erasure (repairs the module's orphaned C# link).</li>
+<li><strong>Module 16 ch02 (DOM heap graph):</strong> the untyped object graph TS describes but never checks; where <code>any</code> meets <code>EventTarget</code>.</li>
+<li><strong>Module 10 ch05 (ABI/codegen):</strong> where erasure vs monomorphization is physically decided.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Milner's slogan is "well-typed programs cannot go wrong". What does "go wrong" mean <em>precisely</em>, in this chapter's vocabulary? Give two failure modes the slogan does <strong>not</strong> cover.</li>
+<li>In proof-system terms, why does <code>null</code> break a type system rather than merely annoy programmers? Answer with one phrase for what <code>null</code> does to the proofs of every reference type, and why <code>Option</code>/<code>Maybe</code> repairs it.</li>
+<li>Derive by hand, using the 8 rules, the type of <code>(λf:Bool→Bool. f true) (λy:Bool.false)</code> — write the derivation tree and give the final type.</li>
+<li>Java: <code>String[] ss = new String[2]; Object[] os = ss; os[0] = Integer.valueOf(42);</code>. What happens exactly, and which theorem would skipping the check violate? Counter-example half: if Java also allowed <code>List&lt;String&gt; &lt;: List&lt;Object&gt;</code> with no runtime check, construct the silent corruption and state the function-variance rule both ignored.</li>
+<li>A function <code>h : ∀α.[α]→Int</code> (think <code>length</code>). Using parametricity, derive from the type alone that <code>h (map f xs) = h xs</code> for every <code>f</code>.</li>
+<li>This TypeScript compiles clean under <code>--strict</code>, then dies: <code>const nums: number[] = [1,2,3]; const mixed: (number|string)[] = nums; mixed.push("hi"); nums[3].toFixed(2)</code>. Which unsound rule admitted it, why doesn't <code>strict</code> help, and what is the minimal sound fix?</li>
+<li>Kotlin, calling a Java library: <code>val name: String = javaApi.getName()</code> compiles with no warning; <code>name.length</code> throws <code>NullPointerException</code> in production. Diagnose the exact type the assignment went through, what the compiler did with the proof obligation, and the fix.</li>
+<li>Cross-chapter (module 01 ch06): on 64-bit Rust, <code>i32</code> is 4 bytes, <code>Option&lt;i32&gt;</code> is 8, <code>&amp;T</code> is 8 and <code>Option&lt;&amp;T&gt;</code> is 8. Explain both numbers with the tagged-value layout story, and say which one keeps the proof's runtime cost at zero.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>"Go wrong" = stuck</strong>: a closed term that is neither a value nor steps (like <code>true true</code>). Not covered: (a) integer overflow — mathematically wrong answers that typecheck; (b) logic bugs — a well-typed <code>sort</code> returning a wrongly ordered list; (c) divergence, which never goes stuck. Soundness is stuck-freedom, not correctness (chapter 05).</li>
+<li><code>null</code> is a <strong>universal inhabitant</strong>: it belongs to every reference type, so every proposition has a proof term with no evidence — a system where every claim is provable proves nothing, and <code>e.field</code> is a "well-typed" stuck term (progress violated). <code>Option&lt;Foo&gt;</code> repairs it by making absence a <em>separate case</em> (<code>Foo + Nothing</code>): the payload read requires the compiler-enforced match — the lie becomes a 2-case type with a tag.</li>
+<li>Bottom-up. <code>y:Bool ⊢ false : Bool</code> (T-False), so T-Abs gives <code>⊢ λy:Bool.false : Bool→Bool</code> (<strong>D₂</strong>). Under <code>f:Bool→Bool</code>: T-Var + T-True + T-App give <code>f true : Bool</code>. T-Abs: <code>⊢ λf:Bool→Bool.f true : (Bool→Bool)→Bool</code>. Final T-App, argument matching exactly: <strong><code>Bool</code></strong> — the term evaluates to <code>false</code>.</li>
+<li><strong><code>ArrayStoreException</code> at the store</strong> — every write into a reference array checks the runtime element type (arrays are reified, covariant). Without the check preservation dies: the store is legal at <code>Object[]</code>, <code>ss[0]</code> becomes a <code>String</code>-typed slot holding an <code>Integer</code>, and <code>ss[0].length()</code> is a stuck "well-typed" term. <code>List</code> version: <code>List&lt;String&gt; ls; List&lt;Object&gt; lo = ls; lo.add(42);</code> — legal at <code>List&lt;Object&gt;</code>, so <code>ls.get(0)</code> hands a <code>String</code>-proof for an <code>Integer</code>, and <code>.length()</code> on it detonates silently (generic stores carry no runtime check — why Java <em>refuses</em> that subtyping). Both ignored <code>S₁→S₂ &lt;: T₁→T₂ iff T₁ &lt;: S₁ and T₂ &lt;: S₂</code>: the consumer of the wider type gets to <em>input</em> the wider element, so input positions are contravariant; covariance there is writable-through, unsound.</li>
+<li>Take R = graph of f (<code>a R b</code> iff <code>b = f(a)</code>); <code>xs</code> and <code>map f xs</code> are R-related elementwise. Parametricity forces <code>h</code> — it can inspect only shape — to map R-related inputs to R-related outputs, and on <code>Int</code> relations are equality: <code>h (map f xs) = h xs</code>. <code>length</code> counts shape, not values — the <code>reverse</code> derivation with the result type collapsing the relation to equality.</li>
+<li><strong>Mutable arrays are covariant</strong>: <code>number[]</code> is assignable to <code>(number|string)[]</code>, sound only if nobody writes through the alias; <code>mixed</code> and <code>nums</code> are the <em>same</em> array, so <code>push("hi")</code> plants a string in a slot still certified as <code>number</code>. <code>strict</code> doesn't help: array variance is not a strictness flag — a documented unsoundness (method bivariance is its sibling). Minimal sound fix: <code>const mixed: readonly (number|string)[] = nums</code> (read-only covariance is sound — no store to lie through), or copy: <code>const mixed = [...nums]</code>.</li>
+<li>The assignment goes through the <strong>platform type</strong> <code>String!</code> — Kotlin's name for a Java type of unknown nullability. The compiler neither forces a check (as <code>String?</code> would) nor trusts it (as a proven <code>String</code> would); <code>val name: String</code> is <em>you</em> asserting the proof, so the obligation moved to the programmer. Fix: <code>val name: String? = javaApi.getName()</code>, forcing the null check (<code>name?.length</code>).</li>
+<li><code>Option&lt;&amp;T&gt;</code> = 8 B: a reference already reserves the all-zero pattern as illegal, so the niche optimization reuses it as the <code>None</code> tag — the sum fits in the pointer's 8 bytes, and the proof's runtime cost is <strong>zero</strong>. <code>Option&lt;i32&gt;</code> = 8 B: all 2³² patterns are legal <code>i32</code>, none spare, so a real discriminant rides along — module 01 ch06's tagged-value layout (tag word before payload) at full price.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 19 — PL theory &amp; type systems</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

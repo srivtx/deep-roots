@@ -26,7 +26,7 @@
 <header class="site-header">
   <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
   <div class="header-right">
-    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
     <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -37,7 +37,7 @@
 <article class="post">
 <div class="post-kicker">module 01 &middot; memory models &middot; Part II · the languages</div>
 <h1 class="post-title">Chapter 12 — Java: the generational heap of the JVM</h1>
-<div class="post-meta">chapter 12 &middot; ~15 min read &middot; deep-roots learning program</div>
+<div class="post-meta">chapter 12 &middot; ~16 min read &middot; deep-roots learning program</div>
 <blockquote><strong>The 30-second version.</strong> Java's answer to "who frees memory?" is "nobody — reachability decides." Every thread owns a private stack of frames (locals + operand stack — chapter 04's frame, different ISA); all threads share one heap where allocation is a pointer bump in a thread-private slice of eden: ~10 ns per object, cheaper than <code>malloc</code> (chapter 05). Reclamation is tracing GC (chapter 11 deepened here) on one bet: <em>most objects die young</em> — the heap splits by age (eden + two survivors 8:1:1, then old gen), the young are evacuated while a 4-bit header age counts to tenure at 15, and old gen belongs to collectors from Serial to ZGC on the pause/throughput/footprint axis. Numbers: HotSpot, OpenJDK 17/21, 64-bit, compressed oops on, unless stated.</blockquote>
 <h2 id="1-the-frame-machine-one-shared-heap-one-stack-per-thread">1. The frame machine: one shared heap, one stack per thread</h2>
 <p>Java's four answers: a <em>value</em> is a primitive or a reference, never an object; <em>ownership</em> is undefined (no <code>free</code>, no <code>delete</code>); <em>freeing</em> is the collector's job once unreachable; <em>safety</em> is memory + type safety, <code>null</code> the one hole.</p>
@@ -206,6 +206,12 @@ public class Alloc {
 <li><strong>Ch 13, 15, 17</strong> — CLR and V8 run the same 8:1:1-shaped bet; COBOL is the opposite pole — fixed records, nothing to collect.</li>
 <li><strong>Ch 22 + Modules 02/04/05 (queued)</strong> — ART under a hard cap; allocation-storm DoS and class-file reading both build on this chapter.</li>
 </ul>
+<p><em>Forward links — where the rest of the program picks this chapter up:</em></p>
+<ul>
+<li><strong>Module 19 ch04 (GC as proof search)</strong> — the generational collectors this chapter described are re-derived there as proof search with write barriers as monotonicity.</li>
+<li><strong>Module 21 ch01 (the LCF kernel)</strong> — the JVM bytecode verifier is a small proof checker for a type-safety theorem — you run an LCF-style kernel every time you run Java.</li>
+<li><strong>Module 10 ch04 (safepoints)</strong> — the compiler's GC duties: where safepoints come from, and why the oop map is the proof certificate.</li>
+</ul>
 <h2 id="quiz">Quiz</h2>
 <ol>
 <li>The JVM spec defines a stack machine; every real CPU is a register machine. Give two derived reasons the spec is stack-shaped, and who does the register assignment.</li>
@@ -280,6 +286,7 @@ public class Alloc {
       <a href="../index.html#module-01">Module 01</a>
       <a href="../quiz.html">Quiz</a>
       <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
       <a href="https://github.com/srivtx/deep-roots">GitHub</a>
       <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
     </div>

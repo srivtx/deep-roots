@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The borrow checker is separation logic — deep-roots</title>
+<meta name="description" content="Chapter 04 of module 21: The borrow checker is separation logic">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The borrow checker is separation logic — deep-roots">
+<meta property="og:description" content="Chapter 04 of module 21: The borrow checker is separation logic">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The borrow checker is separation logic — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of module 21: The borrow checker is separation logic">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 21 &middot; the machines that prove programs</div>
+<h1 class="post-title">The borrow checker is separation logic</h1>
+<div class="post-meta">chapter 04 &middot; ~21 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> The tool millions fight daily is a theorem prover for a fragment of Reynolds' separation logic — and the fight <em>is</em> the fragment's incompleteness. The logic: assertions that own memory (<code>x ↦ e</code>), a conjunction <code>P * Q</code> that demands disjoint heaps, the frame rule — a proof touches only what it mentions. Rust shrank it to something decidable: affine types, region constraints, an aliasing discipline, Send/Sync as proof rules. "Borrowed value does not live long enough" is a failed fixed-point over a region constraint graph. Under the fragment sits <code>unsafe</code>, where Miri's operational model and RustBelt's Iris proofs define what the checker cannot see.</blockquote>
+<h2 id="reynolds-gift-assertions-that-own-memory">Reynolds' gift: assertions that own memory</h2>
+<p>Classical Hoare logic (chapter 01) breaks on pointers. Its assignment axiom is sound for <em>variables</em> because variables cannot alias; add one heap, and <code>p</code>, <code>q</code> become distinct names for the <em>same</em> cell while no formula says which cells it describes — so every assertion is quietly about the whole heap: a swap spec must restate the entire heap in its postcondition. The "the whole heap is my business" problem. The fix took decades: Burstall (1972) scoped formulas to one structure's cells; Reynolds — worried about aliasing since the late 1960s, already author of Forsythe's conjunctive types with two conjunctions — published the modern form in 2002 ("Separation Logic: A Logic for Shared Mutable Data Structures," LICS), with Ishtiaq–O'Hearn's 2001 bunched-implications and O'Hearn–Reynolds–Yang's 2001 local-reasoning papers as the birth sequence. Two primitives do the work:</p>
+<ul>
+<li><strong>Points-to, <code>x ↦ e</code>:</strong> "the location <code>x</code> holds <code>e</code> — <em>and I own it</em>." The second clause is the gift: the assertion is a <em>resource held</em>, not a true boolean. To assert <code>x ↦ e</code> is to be the only party who may read or write that cell — truth and ownership travel together.</li>
+<li><strong>Separating conjunction, <code>P * Q</code>:</strong> <code>P</code> holds on heap fragment <code>h1</code>, <code>Q</code> on the disjoint <code>h2</code>, real heap = <code>h1 ⊎ h2</code>. The name is literal: <code>P * Q</code> is <em>false</em> if the footprints share one cell; <code>P ∧ Q</code> can hold of one overlapping blob. Disjointness becomes a syntactic fact.</li>
+</ul>
+<pre><code class="language-text">        {P} C {Q}  ⊢  {P * R} C {Q * R}     here P = x ↦ v * y ↦ w
+
+  heap before C                            heap after C
+  +----------------+---------------+       +----------------+---------------+
+  | R (the frame)  | P (footprint) |       | R (the frame)  | Q (footprint) |
+  | z ↦ 0 * u ↦ 1  | x ↦ v * y ↦ w |  --C-&gt;| z ↦ 0 * u ↦ 1  | x ↦ w * y ↦ v |
+  +----------------+---------------+       +----------------+---------------+
+   disjointness is *'s job: C's proof         R rides along untouched,
+   mentions only x, y — R is untouchable      so callers frame their own state</code></pre>
+<p>The <strong>frame rule</strong>: if <code>C</code> is correct given only <code>P</code>, it is correct given <code>P</code> plus <em>any disjoint heap R</em> — and <code>R</code> comes back byte-for-byte: "the code you didn't mention doesn't change." That is <em>local reasoning</em> — small footprints, scale by framing. The worked derivation: a swap, with the rule schemas first:</p>
+<pre><code class="language-text">READ   {l ↦ v}  t := [l]  {l ↦ v ∧ t = v}          footprint: one cell
+WRITE  {l ↦ _}  [l] := e  {l ↦ e}                  e pure, l not free in e
+SEQ    {P} C1 {S}   {S} C2 {Q}  ⊢  {P} C1; C2 {Q}
+FRAME  {P} C {Q}  ⊢  {P * R} C {Q * R}             C assigns no var free in R</code></pre>
+<pre><code class="language-text">swap(x, y):   t := [x];   [x] := [y];   [y] := t
+
+(1)  {x ↦ v * y ↦ w} t := [x] {x ↦ v * y ↦ w ∧ t = v}     READ on x, FRAME y
+(2)  {x ↦ v * y ↦ w ∧ t = v} [x] := [y] {x ↦ w * y ↦ w}   WRITE on x, FRAME y
+(3)  {x ↦ w * y ↦ w} [y] := t {x ↦ w * y ↦ v}             WRITE on y, FRAME x
+(4)  SEQ (1)(2)(3), then FRAME with arbitrary R:
+     {x ↦ v * y ↦ w * R}  swap  {x ↦ w * y ↦ v * R}</code></pre>
+<p>The proof is four lines <em>because</em> of the frame rule. Lines (1)–(3) mention two cells; line (4) transports that local triple to every disjoint heap at once — any caller, any <code>R</code>, one step. The classical version writes <code>h' = h[x↦w][y↦v]</code> plus "and all else unchanged," re-proved per caller and growing with the heap. The modularity theorem separation logic bought (O'Hearn–Pym–Reynolds, 2001–2002): proof effort proportional to the code you touch, not the state that exists.</p>
+<h2 id="o-hearn-s-concurrent-act-the-invariant-at-the-lock">O'Hearn's concurrent act: the invariant at the lock</h2>
+<p>O'Hearn, with Brookes' semantics, took the logic concurrent in 2004; the journal version — "Resources, Concurrency, and Local Reasoning" (TCS 375, 2007) — states the critical-section rule:</p>
+<pre><code class="language-text">          {P * R} C {Q * R}
+  ---------------------------------  with m do C    R = m's resource invariant
+      {P}  with m do C  {Q}                             C's footprint ⊆ P ∪ R</code></pre>
+<p>Acquiring <code>m</code> hands your local <code>P</code> the invariant <code>R</code>: the protected cells are yours to break and rebuild. Releasing <code>m</code> demands <code>R</code> restored — <em>borrowed at lock, re-proved at unlock</em> — the obligation at one boundary instead of across every interleaving; no interference is possible, since another process touches <code>R</code>'s cells only while holding <code>m</code>.</p>
+<p>What it killed was Owicki–Gries (1976): re-verify every assertion of every process against every atomic statement of every other. Counts from the methods' own definitions (3 assertions, 4 statements per philosopher):</p>
+<div class="table-wrap"><table><thead><tr><th>dining philosophers</th><th>Owicki–Gries</th><th>CSL</th></tr></thead><tbody><tr><td>5 philosophers</td><td>5·3·(4·4) = 240 interference checks</td><td>5 local proofs (~4 triples each) + 1 invariant</td></tr><tr><td>100 philosophers</td><td>100·3·(99·4) = 118,800 checks</td><td>~4 triples + 1 invariant (a <code>*</code> fold over forks)</td></tr><tr><td>add a process</td><td>re-verify every existing assertion</td><td>write one more local proof</td></tr><tr><td>auxiliary variables</td><td>required, then erased and re-verified</td><td>none</td></tr></tbody></table></div>
+<p>For the philosophers, Owicki–Gries reasons through interleavings with auxiliary variables; CSL states "each fork is on the table or held by exactly one" and proves each philosopher as if sequential — the invariant shared once, not multiplied per interleaving. The proof-size column is the whole argument.</p>
+<h2 id="the-decidable-fragment-why-the-checker-cannot-be-the-logic">The decidable fragment: why the checker cannot be the logic</h2>
+<p>The deduction that set Rust's design: borrow checking terminates in seconds on 100,000-line crates; full separation logic cannot. Entailment with general invariants is undecidable — at best semidecidable: "this loop maintains sortedness" embeds arbitrary program properties, so proof search subsumes the halting problem — module 19 ch01's shadow. A compile-time checker must be total on all inputs, so it drops user formulas, induction, and invariants, keeping fixed-shape constraints: module 19 ch01's corner reinstalled — <em>sound by construction, incomplete forever</em>. Every "rejected my legal program" is the incompleteness tax on schedule.</p>
+<p>The fragment has one discipline per half of the logic:</p>
+<ol>
+<li><strong>Ownership = affine types.</strong> Module 19 ch03's foundation. A non-Copy value is <em>consumed</em> by the move; use-after-move fails syntactically. This is the ownership half of <code>x ↦ e</code> as a type rule: holding a <code>T</code> by value <em>is</em> holding the cell's permission.</li>
+<li><strong>Lifetimes = region constraints.</strong> Tofte–Talpin (POPL 1994; journal 1997): every value lives in a <em>region</em> with a compile-time lifetime, regions nest like stack frames, inference picks the shortest region covering each value's uses. The ML Kit (Tofte–Birkedal, late 1990s) built real ML this way — and failed: a value escaping its scope drags its whole region into a longer-lived one, regions grow until one is the whole heap, and memory quietly never comes back. Rust's lesson: regions are not <em>allocation pools</em> but <em>type-level constraints on borrows</em> — lifetimes name regions, nothing is allocated "into" one.</li>
+<li><strong>Aliasing discipline = the borrow rules.</strong> One <code>&amp;mut T</code> XOR many <code>&amp;T</code> per location, mutation through shared paths forbidden — a conservative approximation of "no data race on <code>*mut</code>," stronger than that theorem needs (it forbids synchronized-but-aliased patterns too, ruling by location-and-time, not happens-before), but decidable: permission arithmetic on syntax, not proof of a formula.</li>
+</ol>
+<p>Send and Sync complete the fragment as <strong>propositional proof rules</strong>: <code>Send: T</code> = "the value may cross threads," obligation "no shared mutable state reachable inside"; <code>Sync: T</code> ⟺ <code>&amp;T: Send</code>. Auto-derivation is type-level proof search — a struct is <code>Send</code> exactly when every field is, a conjunction rule solved coinductively so cyclic types converge. <code>unsafe impl Send for MyType {}</code> is an axiom with no derivation: the <strong>admit hole</strong>, obligation moved to human review (or RustBelt's machine-checked proof — below). Negative impls (<code>impl !Send</code>) <em>publish</em> obligations downstream.</p>
+<h2 id="nll-the-checker-as-a-fixed-point-proof-search">NLL: the checker as a fixed-point proof search</h2>
+<p>Until 2018 the checker tied borrows to lexical scopes — creation to closing brace, regardless of use. The 2016 and 2017 official Rust surveys both ranked the borrow checker the hardest part of the language; RFC 2094 (2017, non-lexical lifetimes) collected the rejected-legal programs, its poster child four lines: borrow a vector element, print it, push — rejected because the borrow's <em>scope</em> ran to the block's end. The RFC's problem statement, paraphrased: the old checker ties a borrow's region to its syntactic scope, not to the span where the value is used. NLL (Rust 1.31, December 2018, 2018 edition; all editions by 1.36, mid-2019) reformulated borrow checking as proof search over MIR — borrowck became a phase of type checking:</p>
+<ul>
+<li>every borrow and reference gets a <strong>region variable</strong>;</li>
+<li>each <em>use</em> makes its region <strong>live</strong> at that point; the live range is the least <strong>fixed point</strong> of liveness over the control-flow graph — the same mathematics chapter 02's model checker runs, on regions instead of states;</li>
+<li>subtyping and loans emit <strong>outlives</strong> edges <code>'a: 'b</code> (<code>&amp;'a T</code> used where <code>&amp;'b T</code> is expected), loan edges (a loan's region must cover its live range), drop edges;</li>
+<li>the solve computes the least region assignment satisfying every edge. A loan whose region must include a point with a conflicting move has <strong>no solution</strong> — precisely the error:</li>
+</ul>
+<pre><code class="language-text">     the constraint graph the E0505 error reports (lab 1 below)
+
+ L2  let v = vec![..];   region 'v (the data)                begins
+ L3  let r = &amp;v;         region 'r (the loan);  edge 'v: 'r  begins
+ L4  drop(v);            move: legal only if no loan live here      KILL
+ L5  println!("{r}");    last use of 'r: 'r is live HERE
+
+ liveness fixpoint: live('r) = {L3..L5}   -&gt; 'r must include L4
+ outlives edge:     'v must cover 'r       -&gt; 'v must include L4
+ move semantics:    'v ends at L4          -&gt; 'v includes AND ends at L4
+                                             -&gt; NO ASSIGNMENT -&gt; E0505</code></pre>
+<p>The error's three spans — "borrow occurs here," "move occurs here," "borrow later used here" — are the three facts of the failed proof search. Delete L5 and the fixed point shrinks: the loan dies before the move, the program compiles. The error was never <em>in</em> a line; it lives in an edge between spans.</p>
+<p>The rejections were incompleteness with a human face: the 2017 roadmap (RFC 2035) named borrow-checker ergonomics the top learnability problem, and the migration's tracking issue (rust-lang/rust #47489, 2018) graded the fix across real crates. Polonius — the 2017–2019 exploratory rewrite, named for Hamlet's courtier — re-derived NLL as an explicit Datalog-style least fixed point; it never fully landed in rustc but became the reference for what NLL <em>is</em>.</p>
+<h2 id="miri-the-operational-model-that-defines-what-unsafe-must-uphold">Miri: the operational model that defines what unsafe must uphold</h2>
+<p>The static fragment proves safety for programs inside it. <code>unsafe</code> exits it (raw pointers, transmute, unions, FFI), and the question that must have an answer is: <em>what, precisely, must unsafe code uphold?</em> Rust's answer is two halves — an operational model of references and provenance, and a checker: Miri.</p>
+<p>Stacked borrows (Jung et al., 2019) is the first complete model. Every pointer carries a <strong>tag</strong> (a provenance identity); every location has a <strong>stack</strong> of tags. <strong>Retagging</strong> — creating a <code>&amp;mut</code>, and again at function boundaries — pushes a new Unique tag; using an older pointer pops the tags above it; <em>using a popped tag is UB</em>. A <code>&amp;mut x</code> reborrow thus invalidates a raw pointer cast earlier from <code>&amp;mut x</code> — the aliasing discipline made dynamic. <strong>Protectors</strong>: a reference passed into a call has its tag protected for the call's duration; invalidating a protected tag is UB even if the borrower never uses it again — "the callee's reference stays valid" becomes enforceable.</p>
+<p>Tree borrows (the 2023 refinement) replaces stacks with a tree rooted at the allocation: reborrows are children; a pointer may write iff no protected child forbids it — the more-liberal "unique enough," accepting unsafe patterns stacked borrows rejects. The 2023–2024 migration debate: which model becomes normative is a compatibility decision for every unsafe crate; as of Miri 2024 stacked is the default, tree the <code>-Zmiri-tree-borrows</code> opt-in.</p>
+<p><code>cargo +nightly miri run</code> executes a program under the model, reporting violations with the tag and allocation named: dangling dereferences, popped-tag writes, misalignment, invalid bit patterns, data races. The two-level proof structure, honestly:</p>
+<ul>
+<li><strong>Level 1, static and conservative:</strong> the borrow checker proves no UB for the fragment — all safe Rust.</li>
+<li><strong>Level 2, dynamic and precise:</strong> Miri checks the <em>executed paths</em> of unsafe code against the model.</li>
+<li>Between them: for tested paths, no UB the model can express. The testing gap is real — Miri runs neither all paths nor all schedules, and no FFI; "Miri-clean" is evidence, not a theorem. The author's discipline is module 19 ch03's trust structure: the model is the contract; review + Miri + the documentation are the proof method.</li>
+</ul>
+<h3>Ghost state: how std carries its proofs in its types</h3>
+<p>Separation logic has ghost state — logical variables with no runtime content, used only in proofs. Rust's type-level version is <code>PhantomData&lt;T&gt;</code>: a zero-sized field making the compiler reason <em>as if</em> <code>T</code> were present — an iterator holding raw pointers is covariant in <code>'a</code> only via its <code>PhantomData&lt;&amp;'a T&gt;</code>; dropck and Send/Sync derivation read the same field. <code>Unique&lt;T&gt;</code>, Vec's pointer wrapper, is <code>NonNull&lt;T&gt;</code> plus that marker: "this pointer owns a T," restoring the variance and auto-trait truth raw pointers erase, with non-nullness recorded (that is the niche).</p>
+<p>Vec's internal obligations, enumerated — every safe <code>Vec</code> method proves these hold on exit if they held on entry:</p>
+<ol>
+<li><code>ptr</code> points to <code>cap</code> contiguous bytes from allocator <code>A</code>, aligned for <code>T</code>;</li>
+<li>elements <code>[0, len)</code> initialized and valid; <code>[len, cap)</code> may be uninitialized;</li>
+<li><code>len ≤ cap</code> in every reachable state;</li>
+<li>the allocation is uniquely owned — no other live pointer may write it;</li>
+<li>drop runs on exactly <code>[0, len)</code>, in order, once; the buffer is freed once, by the same <code>A</code>, at the same <code>cap</code>;</li>
+<li><code>from_raw_parts</code> reassembles exactly this tuple (or leaks it) — never free twice.</li>
+</ol>
+<p>That list is Vec's separation-logic invariant in Rust's clothing; the safe membrane (push, pop, index, iter) is a set of theorems "obligations in ⇒ obligations out," and the <code>unsafe</code> blocks inside are where the machine's proof yields to a human's. std is an unsafe kernel with a safe membrane — module 19 ch03's shape in proof-theory vocabulary: the library exports proof rules, its internals are their derivations, the membrane checks rather than trusts.</p>
+<h2 id="the-lineage-ships-and-async-stress-tests-it">The lineage ships — and async stress-tests it</h2>
+<pre><code class="language-text"> year    system          what it contributed to the shipped logic
+ 1972    Burstall        formulas scoped to one structure's cells
+ 1994-97 Tofte-Talpin    region inference: lifetimes as compile-time values
+ 2001-02 BI / SL         P * Q, x ↦ e, the frame rule (Reynolds, LICS 2002)
+ 2001-06 Cyclone         safe C: regions + owned pointers, in production
+ 2004-07 CSL (O'Hearn)   ownership + locks: the resource-invariant rule
+ mid-10s Mezzo           affine ML with first-class permissions
+ 2015    Rust 1.0        the synthesis ships — Reynolds -&gt; Rust: 28 years
+ 2018-21 RustBelt        λRust proven sound in Iris/Coq — the meta-proof
+ 2023-   Hylo / Oxide    the live frontier: value semantics; a formal core</code></pre>
+<p>(1987, Reynolds' Forsythe conjunctive types — the seed of <code>*</code> — to Rust 1.0: 28 years.)</p>
+<p>Cyclone (2001–2006, Grossman et al.) was the industrial experiment: a safe C dialect with region annotations, fat pointers, and owned pointers — the first ownership discipline compiling real systems code, and the pipe through which Tofte–Talpin's "regions" reached Rust. Mezzo (Pottier et al., mid-2010s) gave ML affine types and explicit permissions — the proof rules on display. Rust 1.0 (May 15, 2015) is the synthesis: the papers finally shipped, closing module 19 ch05's timeline.</p>
+<p>RustBelt (Jung–Jourdan–Dreyer, POPL 2018, extended through 2021) is the meta-proof this chapter's identification needs: λRust, a core calculus of Rust's ownership, formalized in Iris, a Coq-mechanized separation logic. The theorem: safe client code, linked against libraries whose <code>unsafe impl</code>s discharge their Iris-level obligations, executes without UB. The borrow checker's own rules — the fragment above — are <em>proven</em> sound against the full logic, the admit holes becoming theorem obligations discharged in Coq instead of trust: "the decidable fragment is a sound approximation of separation logic" is a theorem, not folklore. The frontier: Hylo (formerly Val) drops borrows for mutable value semantics — ownership without the checker, by construction; Oxide distills Rust's type system to a formal core for metatheory the full language cannot carry.</p>
+<p><strong>Async is the fragment's hardest customer.</strong> <code>async fn</code> compiles to a state machine: each <code>.await</code> is a suspend point, and every local live across an await becomes a <em>field</em> of the generated <code>Future</code>. The borrow checker then checks that struct — and a local buffer borrowed by a slice (<code>buf</code> and <code>&amp;mut buf[..]</code> as two fields) makes it <strong>self-referential</strong>: a reference field pointing into a sibling field. The fragment cannot bless that: moving the state machine dangles the interior pointer, and the region discipline assumes Tofte–Talpin stack order — a frame's values die with its frame; suspension breaks that assumption <em>mid-function</em>. The resolution is a ghost proposition in the type: <code>Pin&lt;P&gt;</code> — "this value will not move again before drop," no runtime content, pure obligation. <code>!Unpin</code> marks the types that depend on it; <code>Box::pin</code> is the safe derivation (the heap move before pinning is the last); <code>Pin::new_unchecked</code> is the admit hole. Across-await borrows stress the fragment: each is a live range crossing a suspension point into a compiler-generated heap struct whose region variables the programmer never names.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>Validity vs safety — the RustBelt distinction.</strong> The type system proves <em>safety</em>: no UB in safe code, given the library's invariants hold. <em>Validity</em> is the bit-pattern obligation: a <code>bool</code> is <code>0x00</code> or <code>0x01</code> — the same eight bits are a valid <code>u8</code> and an invalid <code>bool</code> (validity is type-relative; two's-complement bits are always valid integers, never "valid enough" for a typed read). References must be non-null and aligned; <code>char</code> ≤ <code>0x10FFFF</code>; uninitialized memory must not be read as typed data. Unsafe code can write <code>0x02</code> into a bool — the UB begins at the read, and <code>MaybeUninit</code> is the honest type for the hole.</li>
+<li><strong>Every niche is a validity dependency.</strong> <code>Option&lt;&amp;T&gt;</code> is 8 bytes because <code>None</code> <em>is</em> the null bit pattern — and null is not a valid reference, so the discriminant is free. Write a null <code>&amp;T</code> through unsafe and the "None" collides with your data: the optimization is only sound because validity is upheld. Same bet for <code>Box</code>, <code>NonZero</code>, and fn pointers.</li>
+<li><strong>Drop order and <code>#[may_dangle]</code>.</strong> Struct fields drop in declaration order, locals in reverse; dropck demands <code>T: 'a</code> strictly because drop <em>reads</em> references. <code>#[may_dangle]</code> (RFC 1238) relaxes it for fields the drop will not touch — "I promise not to access the dead" — and std reaches for it in the iterator family (IntoIter/Drain-style types) where element lifetimes have technically ended. The counterpart, a <code>PhantomData&lt;&amp;'a T&gt;</code> field <em>forcing</em> the obligation when you will touch the data, is the "PhantomDrop" trick.</li>
+<li><strong>Stacked vs tree, the live spec decision.</strong> Stacked borrows is strict: an older pointer's use invalidates younger reborrows, permanently. Tree borrows only asks "unique enough": writes are fine unless a protected child disagrees. Patterns legal under tree and UB under stacked exist — long-lived raw pointers re-derived from a <code>&amp;mut</code> across calls. As of Miri 2024 stacked is the default; the normative choice is open, and unsafe-crate authors must satisfy both or pick a side.</li>
+<li><strong>The specialization history.</strong> <code>feature(specialization)</code> (RFC 1210, nightly since ~2016) is known unsound: overlapping impls plus associated-type projection let <em>safe</em> code synthesize wrong types — the specialization-as-transmute family. The loud attempts ran 2015–2018; the surviving escape is <code>min_specialization</code>, the restricted subset std itself uses, believed sound, still unstable as of 2024.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>Lab 1 — the compile-time proof experiment (mandatory, free).</strong> Five lines, one rejection, one constraint diagram drawn by hand:</p>
+<pre><code class="language-rust">fn main() {
+    let v = vec![1, 2, 3];
+    let r = &amp;v;      // the loan begins
+    drop(v);         // the move the fixed point cannot allow
+    println!("{r}")  // the later use that keeps the loan alive
+}</code></pre>
+<pre><code class="language-console">$ cargo new prooflab &amp;&amp; cd prooflab
+$ cargo build 2&gt;&amp;1 | head -12
+error[E0505]: cannot move out of `v` because it is borrowed
+ --&gt; src/main.rs:4:10
+  |
+3 |     let r = &amp;v;
+  |              - borrow of `v` occurs here
+4 |     drop(v);
+  |          ^ move out of `v` occurs here
+5 |     println!("{r}")
+  |               ---- borrow later used here</code></pre>
+<p>(rustc 1.75, trimmed; spans follow your line numbers.) The error names three points — the three facts of the failed proof search. Draw the graph: nodes <code>'v</code>, <code>'r</code>; edges <code>outlives('v,'r)</code>, liveness forcing <code>'r</code> to span L3–L5, the move ending <code>'v</code> at L4 — no assignment satisfies all three. Then delete L5, rebuild — it compiles: the fixed point shrank, the loan died before the move. The error lives in an edge between spans, not in a line; reading it as a failed fixed-point is the skill, and it is free.</p>
+<p><strong>Lab 2 — cargo miri on the checker's blind spot</strong> (paper version if nightly is unavailable):</p>
+<pre><code class="language-console">$ rustup toolchain install nightly
+$ rustup +nightly component add miri
+$ cargo +nightly miri run</code></pre>
+<pre><code class="language-rust">// miri_lab.rs — the lifetime laundered through a raw pointer.
+fn ghost() -&gt; &amp;'static mut u64 {
+    let mut local = 42u64;
+    unsafe { std::mem::transmute(&amp;mut local) }  // the admit hole
+}
+
+fn main() {
+    let r = ghost();
+    println!("{}", *r);  // Miri: the dangling dereference
+}</code></pre>
+<pre><code class="language-console">error: Undefined Behavior: dereferencing dangling pointer (8 bytes)
+note: details of the allocation, and this stack frame, were already freed</code></pre>
+<p>(Miri 2024, trimmed.) <code>-Zmiri-tree-borrows</code> agrees: this UB is allocation-level, below both tag models. Paper version: after <code>ghost</code> returns, the frame and its tag stack are gone; any tag derived from <code>&amp;mut local</code> grants nothing, so the deref is UB by the model's first rule. Why did rustc accept? <code>transmute</code> is an admit hole — it asserted <code>'static</code> with no derivation, and the checker had nothing to check.</p>
+<p><strong>Lab 3 — the frame rule on paper.</strong> Instantiate line (4) of the swap proof with <code>R = z ↦ 0</code> and verify each line against the four schemas: for (1), the rule that fires (READ on <code>x</code>) and what was framed (<code>y ↦ w</code>); likewise (2), (3); for (4), the side condition — swap assigns only <code>t</code>, <code>z</code> appears in no command, so modified-variables ∩ free-variables(R) = ∅ — and the <code>*</code>-check: three distinct cells. Then break it: set <code>R = x ↦ 0</code> — <code>x ↦ v * x ↦ 0</code> is false by <code>*</code>'s disjointness (one cell, two owners), the conclusion unstatable, the rule unable to fire. Framing is licensed by ownership disjointness, nothing else.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Error triage as proof theory.</strong> Every borrow error is three spans plus an unsatisfiable edge; the three legal moves — shorten the live range (move the use), shrink the footprint (borrow the field, not the struct), change the proposition (own or copy the data) — map onto the three families of fix. ("Why is <code>Option&lt;&amp;T&gt;</code> 8 bytes?" and "why does async need <code>Pin</code>?" are the interview questions.)</li>
+<li><strong>Unsafe review.</strong> The model is the checklist: provenance, tags, protectors, alignment, validity, deallocate-exactly-once. "What would Miri say?" is the review question; <code>cargo +nightly miri test</code> in CI is the cheapest oracle an unsafe crate can buy.</li>
+<li><strong>API and concurrency design.</strong> <code>split_at</code>, <code>chunks</code>, <code>iter_mut</code> exist because the fragment proves per-field and per-disjoint-slice; design signatures that are <em>provable</em>, not merely callable — every public signature is a proof rule your users derive against. Send/Sync derivation is proof search, negative impls publish obligations, <code>unsafe impl</code> admits propositions — decide which you are doing, on purpose.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 19 chapter 03</strong> — the affine foundation and unsafe-kernel pattern re-derived as Reynolds' ownership logic; its <code>Pin</code> returns as the ghost proposition.</li>
+<li><strong>Module 01 chapter 10</strong> — the Rust practitioner's view re-theorized: "the compiler proves it," named precisely — a decidable fragment of separation logic.</li>
+<li><strong>Module 09 chapter 03</strong> — the race-freedom theorem: <code>&amp;mut</code> exclusivity + <code>&amp;T</code> sharing + Send/Sync; lock-free code builds on it.</li>
+<li><strong>Module 21 chapter 01</strong> — the Hoare triple and LCF kernel: same architecture — small sound kernel, large incomplete search in front.</li>
+<li><strong>Module 21 chapter 02</strong> — the NLL solve is the model checker's fixed point, on regions instead of states.</li>
+<li><strong>Module 21 chapter 03</strong> — seL4's invariant maintenance is Vec's obligation list at kernel scale: same proof shape, different TCB.</li>
+<li><strong>Module 21 chapter 05</strong> — the tower continues downward: the compiler and the crypto under it, carrying proofs.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> The points-to assertion <code>x ↦ e</code> states two things. Name both, identify which one the frame rule consumes, and say what goes wrong if <code>↦</code> means only "x holds e."</li>
+<li><strong>Concept.</strong> Borrow checking terminates in seconds on 100,000-line crates. Why does that <em>forbid</em> full separation logic, which property of invariant checking is the obstacle, and what price does the fragment pay?</li>
+<li><strong>Predict the number.</strong> Eight dining philosophers, 3 assertions and 5 statements each: the Owicki–Gries interference obligation count and CSL's proof inventory, at 8 and at 100 philosophers.</li>
+<li><strong>Derive.</strong> From <code>{x ↦ v * y ↦ w} swap {x ↦ w * y ↦ v}</code>, apply the frame rule with <code>R = z ↦ 0</code>: write the conclusion, verify the side condition, and explain why <code>R = x ↦ 0</code> cannot be framed.</li>
+<li><strong>Predict.</strong> <code>let mut v = vec![1,2,3]; let r = &amp;v[0]; println!("{r}"); v.push(4);</code> — the 2015 lexical checker's verdict and the NLL verdict, each with its region reason.</li>
+<li><strong>Diagnose.</strong> <code>let mut x = 0u8; let raw = &amp;mut x as *mut u8; let r = &amp;mut x; *r = 1; unsafe { *raw = 2; } *r = 3;</code> — Miri reports UB at the last statement. Which tag was popped, by which operation, and which single change moves the UB earlier?</li>
+<li><strong>Diagnose.</strong> <code>struct Shared&lt;T&gt;(Rc&lt;T&gt;)</code> with <code>unsafe impl&lt;T&gt; Send for Shared&lt;T&gt; {}</code> passes single-threaded tests; two threads clone and drop it. What breaks at the memory level, and what is the proof-theory name for what the <code>unsafe impl</code> did?</li>
+<li><strong>Cross-chapter.</strong> Why do across-await borrows stress the fragment — name the assumption suspension breaks — and what proof-theory role does <code>Pin</code> play? Tie to module 19 ch03 and module 01 ch04.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>Truth — <code>x</code> holds <code>e</code>; ownership — the asserter alone may read or write the cell. The frame rule consumes ownership: <code>C</code>'s proof, holding <code>P</code>, has rights to <code>P</code>'s cells only, so <code>R</code> is untouchable by <em>permission</em>, not mere non-mention. If <code>↦</code> were truth-only, <code>C</code> could write <code>R</code>'s cells and <code>{P * R} C {Q * R}</code> would be unsound — <code>R</code> could come back changed; hence classical Hoare logic's whole-heap restatements.</li>
+<li>Entailment with user invariants is undecidable (semidecidable at best): "this loop maintains sortedness" embeds arbitrary program properties, so proof search subsumes the halting problem — module 19 ch01's shadow. A compile-time checker must terminate on all inputs, so it keeps only fixed-shape constraints — types, region variables, outlives edges; no user formulas, no induction. The price is incompleteness: legal programs rejected, the tax paid in ergonomics, never in soundness.</li>
+<li>Owicki–Gries: every assertion of every process against every atomic statement of every other — 8 × 3 × 7 × 5 = <strong>840</strong> obligations, each a semantic step, plus auxiliary variables. CSL: 8 local proofs + 1 invariant (a <code>*</code> fold over the forks). At 100: 100 × 3 × 99 × 5 = <strong>148,500</strong>, quadratic in the population; CSL unchanged in shape — one invariant, one proof pattern reused. Adding a process re-opens every existing assertion in Owicki–Gries; in CSL you write one more local proof.</li>
+<li>Conclusion: <code>{x ↦ v * y ↦ w * z ↦ 0} swap {x ↦ w * y ↦ v * z ↦ 0}</code>. Side condition: swap assigns only the local <code>t</code>; <code>z</code> appears in no command, so modified-variables ∩ free-variables(R) = ∅, and <code>*</code> makes (x, y) and (z) disjoint cells. <code>R = x ↦ 0</code> fails earlier: <code>x ↦ v * x ↦ 0</code> claims two owners of one cell — false by <code>*</code> — so the precondition is unsatisfiable and the rule cannot fire. Framing is licensed by ownership disjointness, nothing else.</li>
+<li>2015 lexical checker: <strong>error at <code>v.push(4)</code></strong> — the borrow from <code>&amp;v[0]</code> lives to the block's end, so push's mutable borrow conflicts with a still-in-scope shared borrow (E0502). NLL: <strong>compiles</strong> — <code>r</code>'s last use is the <code>println</code>, the liveness fixed point ends the loan there, no region covers both the loan and the later mutable borrow. RFC 2094's poster child.</li>
+<li>The reborrow <code>let r = &amp;mut x</code> retagged, pushing Unique(2) above raw's Unique(1). <code>unsafe { *raw = 2 }</code> uses tag (1) — legal, but it <em>pops</em> (2); <code>*r = 3</code> then uses a popped tag ("no item granting write access for tag Unique(2) found in borrow stack"). The change: pass <code>r</code> into a function and do the raw write inside the call — <code>r</code>'s tag is now <em>protected</em> for the call's duration, so the invalidation itself is the UB, one line earlier. Protectors move the boundary from use-after-invalidation to invalidation.</li>
+<li>The <code>Rc</code> refcount is a plain non-atomic cell: two threads cloning lose an increment, the count hits zero while a live <code>Rc</code> exists, the buffer is freed, and the next access is a use-after-free (possibly a double free). Proof-theory: auto-derivation <em>refused</em> <code>Send</code> (the inner shared-mutable state is what the rule forbids); the <code>unsafe impl</code> <strong>admitted the proposition with no derivation — an unsound axiom</strong>. Downstream code is sound relative to a false lemma; the checker is blameless. Miri flags the race on the counter first.</li>
+<li>The async transform turns locals live across an await into fields of a generated state machine; a borrow of one field from another (<code>buf</code>, <code>&amp;mut buf[..]</code>) makes it self-referential. The broken assumption is Tofte–Talpin stack order — a frame's values die with its frame, but a suspended future is a frame outliving its function, with live ranges crossing the suspend point into a heap struct the programmer never names. <code>Pin&lt;P&gt;</code> is the ghost proposition "this value will not move again before drop" — no runtime content, carried purely in types: <code>!Unpin</code> marks dependence, <code>Box::pin</code> is the safe derivation, <code>Pin::new_unchecked</code> the admit hole. Module 19 ch03 gave <code>Pin</code> as the unsafe kernel's contract; module 01 ch04's frames explain why moving dangles the interior pointer.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 21 — Formal verification</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

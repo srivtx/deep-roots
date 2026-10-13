@@ -26,7 +26,7 @@
 <header class="site-header">
   <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
   <div class="header-right">
-    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
     <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -37,7 +37,7 @@
 <article class="post">
 <div class="post-kicker">module 01 &middot; memory models &middot; Part II · the languages</div>
 <h1 class="post-title">Chapter 10 — Rust: ownership, borrows, and the third way</h1>
-<div class="post-meta">chapter 10 &middot; ~17 min read &middot; deep-roots learning program</div>
+<div class="post-meta">chapter 10 &middot; ~18 min read &middot; deep-roots learning program</div>
 <blockquote><strong>The 30-second version.</strong> C frees by hand (ch08); C++ offers RAII but a silent type system (ch09); the GC languages hire a runtime (ch11–ch16). Rust's third way: make <em>who owns each value</em> something the compiler proves. Every value has exactly one owner; assignment moves; access borrows. Break the aliasing × mutation invariant and you get a compile error, not a CVE. The tracking costs zero at run time — no GC thread, no refcount unless you ask. Safe Rust can still <em>leak</em> (Rc cycles, <code>Box::leak</code>), but it cannot <em>corrupt</em>.</blockquote>
 <h2 id="the-third-way-ownership-as-a-compile-time-fact">The third way: ownership as a compile-time fact</h2>
 <p>Part II's four questions — value, owner, freer, safety — get unusual answers here. C: bytes you own and free, no safety (ch08). The GC family — Java's generational heap is the archetype (ch12): references into a runtime-owned heap, where safety costs a collector that can find every pointer. Rust:</p>
@@ -238,6 +238,12 @@ fn main() {
 <li><strong>ch23</strong> — Rust anchors the compile-time-enforcement column; region inference goes to the queued compilers module (ROADMAP.md).</li>
 <li><strong>Queued cybersecurity module</strong> — exploits needing memory unsafety, and attacking safe-Rust targets.</li>
 </ul>
+<p><em>Forward links — where the rest of the program picks this chapter up:</em></p>
+<ul>
+<li><strong>Module 19 ch03 (the safety theorem)</strong> — the borrow checker is an affine type system: this chapter's rules are the visible surface of a machine-checked proof.</li>
+<li><strong>Module 21 ch04 (separation logic)</strong> — the proof-theoretic reading: ownership is the decidable fragment of Reynolds' logic, NLL is constraint solving, Miri is the operational model.</li>
+<li><strong>Module 09 ch03 (lock-free)</strong> — Send and Sync are the type system's concurrency proof rules — the compiler's answer to this chapter's 'who may share what.'</li>
+</ul>
 <h2 id="quiz">Quiz</h2>
 <p><strong>1. (Concept)</strong> Your teammate proposes making <code>String: Copy</code> "because memcpy works on it." What breaks? State the compiler's rule for what may be <code>Copy</code>, and name one type that is <code>Copy</code> despite holding a pointer.</p>
 <p><strong>2. (Concept)</strong> True or false: writing <code>fn f&lt;'a&gt;(x: &amp;'a str) -&gt; &amp;'a str</code> tells the compiler to keep the input alive longer. Justify in terms of constraints vs. directives; where can't you write lifetime annotations at all?</p>
@@ -300,6 +306,7 @@ drop a</code></pre>
       <a href="../index.html#module-01">Module 01</a>
       <a href="../quiz.html">Quiz</a>
       <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
       <a href="https://github.com/srivtx/deep-roots">GitHub</a>
       <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
     </div>

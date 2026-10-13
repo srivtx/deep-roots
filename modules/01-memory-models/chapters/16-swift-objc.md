@@ -435,6 +435,11 @@ The stack lands on the allocation site — walk up it to the closure capture. Th
 - **Chapter 21 (memory security):** tagged pointers, unowned-after-death (a *checked* dangling read, not an exploitable one), and why packed isas complicate pointer forgery.
 - **Module 04 (decompilation, queued):** reading Objective-C metadata and isa fields is step one of recovering class hierarchies from Apple binaries.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 19 ch04 (ARC as proof)** — retain/release are the proof inlined: the compiler places the certificate, the SIL shows the instructions.
+- **Module 18 ch05 (key material)** — ARC on crypto buffers: when the compiler's insertion points become the timing signal.
+
 ## Quiz
 
 1. **Concept.** In terms of Chapters 14 and 09: what is ARC mechanically, and what did the 2011 compiler change relative to MRC? Derive the two standing costs of the design — and name the pair of costs a tracing collector (Chapter 12) pays instead.

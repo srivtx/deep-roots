@@ -274,6 +274,12 @@ What happens: the loop prints up to some iteration in the tens of MB, then *sile
 - **Chapter 23** — the unification table places "eviction as reclamation" as the third reclamation strategy alongside manual free and tracing.
 - **ROADMAP** — the mobile-internals and security modules both start here: app-kill forensics, zram tuning, and exploit mitigations all assume this chapter's contracts.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 05 ch01 (Android internals)** — Zygote's COW and ART's GC at full depth — this chapter's mobile story, told from inside the OS.
+- **Module 06 ch02 (iOS internals)** — Jetsam bands and the compressor: the iOS counterpart, where the OS is the garbage collector.
+- **Module 15 ch02 (ballooning)** — the VM as a GC'd process: ballooning and KSM are this chapter's memory pressure, sold as a product.
+
 ## Quiz
 
 1. **(concept)** Phones have no disk swap. Derive in three steps why this forces *kill* as the primary reclamation strategy, and explain why zram and the iOS compressor do not break the argument.

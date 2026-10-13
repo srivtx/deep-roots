@@ -155,6 +155,33 @@ Every queued module is this module wearing another costume:
   COW as MVCC; Chapter 05's page management as buffer pools.
 - **Module 12 (GPU/AI)** — Chapter 01-02's economics rebuilt in HBM and SMEM;
   coalescing is cache-line arithmetic for a different wire.
+- **Module 13 (networking)** — the buffers *moved*: Chapter 05's allocator
+  questions, the Chapter 04 stack discipline, and Chapter 02's hierarchy
+  now measured in wire time — a packet is memory in motion.
+- **Module 14 (file systems)** — the heap that outlives the process: Chapter 19's
+  allocators persisted to disk, Chapter 03's COW as Btrfs/ZFS snapshots.
+- **Module 15 (virtualization & cloud)** — Chapter 03 sold as a product: the
+  second page table, ballooning as GC for VMs, oversubscription as the
+  bank run model.
+- **Module 16 (browsers)** — Chapter 05-06's object graphs at page scale: the
+  DOM heap, two collectors, one wrapper problem, and the 16.6 ms budget.
+- **Module 17 (hardware design)** — Chapters 01-03 derived from transistors:
+  the cache you measured, built in RTL; the power equation behind every
+  "why is it slow" this module ever answered.
+- **Module 18 (cryptography)** — the one field where Chapter 02's cache line
+  is a *breach* and Chapter 05's heap over-read cost a billion dollars:
+  memory discipline as the security boundary.
+- **Module 19 (PL theory)** — this module's table, theorized: every language
+  row is a point on the guarantees frontier, every collector a proof
+  search, every rule a theorem you already use.
+- **Module 20 (embedded)** — this module with the safety net removed: one
+  address space, the stack pointer in a file, the memory map in silicon.
+- **Module 21 (formal verification)** — the machines that prove what this
+  module's languages only promise: kernels, compilers, and the borrow
+  checker itself, as theorems.
+- **Module 22 (ML systems)** — the unification at datacenter scale: the
+  tensor as the 17th object model, sharding as the 175-billion-object
+  heap, the KV cache as virtual memory for tokens.
 
 That is the entire program thesis in one paragraph: **memory is the root layer of
 computer science, and every field is a branch that forgot it has roots.**

@@ -26,7 +26,7 @@
 <header class="site-header">
   <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
   <div class="header-right">
-    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
     <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -159,6 +159,13 @@ int main(void) {
 <li><strong>Chapter 12 / 22</strong> — GCs and mobile OSes as power users of demand paging, COW, compression, and killing.</li>
 <li><strong>Chapter 21</strong> — ASLR, NX, guard pages: the exploit-resistant configuration of the page tables.</li>
 </ul>
+<p><em>Forward links — where the rest of the program picks this chapter up:</em></p>
+<ul>
+<li><strong>Module 15 ch02 (EPT)</strong> — the second page table: what this chapter built for processes, virtualization builds for VMs.</li>
+<li><strong>Module 22 ch04 (the KV cache)</strong> — paged attention is virtual memory for tokens — block tables, COW prefixes, the whole mechanism reborn.</li>
+<li><strong>Module 20 ch01 (the MPU)</strong> — the world with no page table: page permissions collapse to 8 regions of RW/XN, and a fault is your error channel.</li>
+<li><strong>Module 14 ch03 (the page cache)</strong> — the OS's file cache is demand paging pointed at disk — the biggest consumer of this chapter's machinery.</li>
+</ul>
 <h2 id="quiz">Quiz</h2>
 <ol>
 <li><strong>Concept.</strong> Name the three incompatible facts that force virtual memory, and say which feature of the illusion solves each.</li>
@@ -205,6 +212,7 @@ int main(void) {
       <a href="../index.html#module-01">Module 01</a>
       <a href="../quiz.html">Quiz</a>
       <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
       <a href="https://github.com/srivtx/deep-roots">GitHub</a>
       <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
     </div>

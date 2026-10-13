@@ -573,6 +573,12 @@ suffice. Compile the same file for `-arch arm64` (or on the Pi) and the loads be
 - **Queued security module** — TOCTOU races and Rowhammer are "cores disagree about
   memory" turned into an attack instead of a bug.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 09 ch01 (language orderings)** — the happens-before edifice is built on exactly this chapter's store buffers and fences.
+- **Module 17 ch02 (pipelines)** — the store buffer lives in the reorder machinery this chapter hand-waved — the RTL shows where.
+- **Module 12 ch01 (GPU memory)** — the GPU's weaker model is this chapter's hierarchy of relaxations, one more rung down.
+
 ## Quiz
 
 1. *(concept)* A machine has perfect cache coherence — every core agrees on the

@@ -564,6 +564,12 @@ did — and its Retainers panel names that something.
   (Android); V8 sandboxing work puts a cage around exactly the pointers section 2
   described.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 16 ch02 (the DOM heap)** — two collectors, one wrapper problem: the scavenger this chapter taught meets Oilpan at the boundary.
+- **Module 16 ch04 (page memory)** — the detached-node leak is this chapter's heap graph with one edge type that outlives the page.
+- **Module 19 ch04 (GC as proof search)** — the scavenger re-derived: the nursery's cost is survivor bytes, not allocation volume.
+
 ## Quiz
 
 1. V8's object header is a bare map word — no refcount, no lock bits, no GC age field.

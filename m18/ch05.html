@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Implementation failures: the attack catalog — deep-roots</title>
+<meta name="description" content="Chapter 05 of module 18: Implementation failures: the attack catalog">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Implementation failures: the attack catalog — deep-roots">
+<meta property="og:description" content="Chapter 05 of module 18: Implementation failures: the attack catalog">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Implementation failures: the attack catalog — deep-roots">
+<meta name="twitter:description" content="Chapter 05 of module 18: Implementation failures: the attack catalog">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 18 &middot; the memory model of trust</div>
+<h1 class="post-title">Implementation failures: the attack catalog</h1>
+<div class="post-meta">chapter 05 &middot; ~16 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> AES has never been broken; the RSA factoring record cost 2,700 CPU-core-years; ECDSA's math holds. Every attack here with real victims — Heartbleed, Lucky 13, KRACK, Debian's RNG, Bleichenbacher's 19-year oracle — failed at <em>memory discipline</em>: a length field trusted, a microsecond leaked, a counter reset, an uninitialized buffer silenced, a comparison that quits early. This is the catalog "don't roll your own crypto" refers to. The primitives never broke; the memory discipline did.</blockquote>
+<h2 id="heartbleed-a-length-field-the-code-didn-t-own">Heartbleed: a length field the code didn't own</h2>
+<p>OpenSSL 1.0.1 shipped RFC 6520's <em>heartbeat</em> in March 2012 — a TLS keepalive that echoes a payload. The request is a textbook TLV: one type byte, a two-byte big-endian <code>payload_length</code>, the payload, 16 bytes of random padding. The bug, live for two years until April 2014 (CVE-2014-0160), is one line of C:</p>
+<pre><code class="language-c">memcpy(bp, pl, payload);   /* bp: response buffer, pl: payload pointer,
+                              payload: the ATTACKER-DECLARED length (0..65535) */</code></pre>
+<p>The server never checks <code>payload</code> against the record's actual byte count. Send a one-byte payload with the length field lying <code>0x0100</code>: the <code>memcpy</code> reads 256 bytes starting at your one honest byte — through the end of the record's heap chunk and into whatever the allocator served next:</p>
+<pre><code class="language-text">      one heap chunk (the received heartbeat record)          the rest of the heap
++------------------------------------------------------+---------------------------+
+| 01 | 00 01 | 'A' | ...16 B padding... | chunk slack    | chunk hdr | MASTER-...   |
++------------------------------------------------------+---------------------------+
+  ^     ^      ^
+  |     |      pl = source of the vulnerable memcpy
+  |     |      actual payload: 1 byte ('A')
+  |     declared payload_length = 0x0100 = 256  (the lie; max 0xFFFF = 65,535)
+  hb_type = 1 (request)
+
+        |&lt;-------------- memcpy reads 256 B --------------&gt;|
+         1 byte you own + 255 B of heap you never sent</code></pre>
+<p>This is a <strong>heap over-read</strong>: the response buffer is sized <code>payload + 16</code>, so the <em>write</em> is in bounds; the <em>read</em> walks past the record chunk. It is the complement of use-after-free (module 01/02 chapter 05): a UAF touches bytes the program logically released but still maps; Heartbleed reads bytes it never logically owned for this message — stale record buffers, plaintext request bodies, and the crown jewels: <strong>session keys first</strong> (a mid-connection heap is full of them), then private keys (Cloudflare's public challenge settled that within days), passwords, cookies.</p>
+<p>The asymmetry that made it historic: the fix is one bounds check — <code>if (1 + 2 + payload + 16 &gt; n) return 0;</code> — but the cost was re-issuing certificates for ~17% of the secure web (≈ half a million servers, Netcraft, April 2014). The class, named: <strong>TLV framing bugs</strong>. A state machine must never trust a length field it doesn't own — derive it from the record that actually arrived.</p>
+<h2 id="lucky-13-two-microseconds-amplified">Lucky 13: two microseconds, amplified</h2>
+<p>TLS 1.2's CBC suites are MAC-then-encrypt: the receiver decrypts, <em>strips padding, then checks the MAC over what remains</em>. Chapter 02 planted the birth defect; here is the exploit. AlFardan and Paterson (2013) measured that rejecting a guessed record with more valid padding is faster — fewer bytes left for HMAC to verify — by <strong>1–2 µs per padding-length step</strong>. One microsecond is nothing; two million chosen records over a LAN is an adaptive <strong>padding oracle</strong>, and padding oracles decrypt ciphertext without the key: small biases amplified by repetition <em>are</em> key recovery.</p>
+<p>Patch versus structure — the whole lesson. OpenSSL's fix: make padding handling constant-time — HMACs over dummy lengths, every padding treated as maximal, no branching. That patch took <strong>three rounds</strong> (the first two were found still leaky in 2013). TLS 1.3's fix: AEAD only — the tag is computed over the ciphertext (encrypt-then-MAC ordering), so there is no padding to strip and no decrypt-then-check sequence to time. Chapter 04's argument: the patch fixes the <em>instance</em>; the structure removes the <em>class</em>.</p>
+<h2 id="the-nonce-reuse-catalog-counters-are-process-state">The nonce-reuse catalog: counters are process state</h2>
+<p>Chapter 02 derived the two-time pad: reuse the (key, nonce) pair and <code>c1 ⊕ c2 = p1 ⊕ p2</code>; in GCM, one reuse also hands over the authentication key H (Joux's 2006 forbidden attack). Every incident below is a <em>memory</em> story about the counter:</p>
+<ul>
+<li><strong>MS-CHAPv2</strong> (the 1990s–2012 class): static published constants stood in for challenge material — a fixed, public nonce space, DES brute-forceable by 2012.</li>
+<li><strong>KRACK, 2017</strong> (Vanhoef–Piessens): WPA2's 4-way handshake <em>retransmits</em> message 3; the client's handling reinstalls the pairwise key, <strong>resetting the packet-number counter to zero</strong> — the nonce counter is process state that must survive retransmission logic. TKIP leaks keystream; GCMP, same key and nonce both directions, leaks the MIC key: forgery.</li>
+<li><strong>PS3, 2010</strong> (fail0verflow, 27C3): Sony signed firmware with a <em>fixed</em> ECDSA nonce k. Two signatures share r; then <code>k = (h1 − h2)/(s1 − s2) mod n</code> and <code>d = (s1·k − h1)/r mod n</code> (chapter 03) — the master key, factored out of its own signatures.</li>
+<li><strong>Cloud KMS AES-GCM, responsibly disclosed</strong>: the nonce counter was initialized from <em>timestamp + machine-ID</em> — "entropy at rest." Two instances restored from the same snapshot inside one clock tick mint identical nonces: one collision, H recovered, permanent forgery. A persisted monotonic counter cannot collide until 2^96; a timestamp can.</li>
+<li><strong>Fleet VPN, 2020</strong> (the <code>--uniqueids</code> reconnect class): connection-identity dedup replayed per-peer nonce state on reconnect — KRACK's shape, different trigger.</li>
+</ul>
+<p>The genus: a nonce is a counter <em>in memory</em>; retransmission, cloning, restart, and dedup logic are memory operations on it. RFC 6979's lesson generalizes — deterministic state beats harvested randomness whenever the harvesting is your attack surface.</p>
+<h2 id="side-channels-memory-reads-across-trust-boundaries">Side channels: memory reads across trust boundaries</h2>
+<p>A side channel is a memory read the CPU performs on your behalf, across a boundary the ISA says is solid — ordered by how far the read crosses:</p>
+<p><strong>Bernstein, 2004</strong> (paper 2005) founded the subfield: AES T-tables — 4 KB of tables, index = key ⊕ plaintext byte. The index selects a cache line; occupancy changes timing; the attacker's own AES encryptions evict chosen lines and the victim's latency leaks the index — remotely. Osvik–Shamir–Tromer (2006–2010) made it local (prime+probe; Tromer 2010 recovered RSA keys through ~100 ms of adjacent-VM noise). The structural fix: bitslicing, then <strong>AES-NI</strong> (2008, Westmere) — <code>AESENC</code> is data-independent by construction.</p>
+<p><strong>Spectre V1, 2018</strong> (Kocher et al.): the CPU speculatively executes the load <em>before</em> the bounds check; the result is discarded from registers but not the cache. Branch prediction becomes the cache polluter; the read crosses the browser sandbox (module 16 chapter 05): JavaScript reading cross-origin memory through timer channels. Defenses — timer coarsening, cross-origin isolation — are <em>mitigations</em>: the read primitive remains, only the transmission is throttled.</p>
+<p><strong>Rowhammer → Bellcore</strong>: module 02's bit flip lands in an RSA private key's CRT parameter during signing; the faulted signature m′ satisfies <code>gcd(m′^e − m, n) = p</code> (chapter 03): one faulted signature is the factorization. Post-Rowhammer this is a platform threat (2020–2021 firmware advisories); the countermeasure, verify-before-output, costs ~one exponentiation.</p>
+<p><strong>DRAM cold boot</strong>: module 01 chapter 01's grounded capacitor holds its bit after power removal, decaying over seconds to minutes. Halderman et al., "Lest We Remember" (2008; replicated through 2011): invert a canned-air can (−50 °C), yank power, boot a tiny dumper, scavenge keys from decayed-but-recoverable DRAM. Decay is temperature:</p>
+<pre><code class="language-text">DRAM temperature      time until substantial bit decay (typical modules)
+  55 °C (hot chip)     seconds
+  ~22 °C (room)        seconds to a few minutes
+  −50 °C (cold spray)  minutes; most modules near-zero errors at 60 s
+  −196 °C (LN2)        hours — effectively frozen</code></pre>
+<p>Keys in process memory are game over to anyone who can touch the DIMM — hence TPM/enclave key hierarchies (chapter 03; module 05/06's hardware roots).</p>
+<h2 id="parsing-comparison-and-a-19-year-oracle">Parsing, comparison, and a 19-year oracle</h2>
+<p><strong>ASN.1/DER is where binary parsing bugs live.</strong> X.509 certificates are TLV trees: tag, length, value, recursively. Length fields again (the Heartbleed class wearing a different header), integer signedness, negative lengths, recursion depth in constructed types, and BER leniency where DER was mandated — every certificate is attacker-influenced memory at a parser's trust boundary. The genus: Microsoft's ASN.1 library (MS04-007, 2003), OpenSSL's 2006 ASN.1 CVEs, BER-acceptance signature forgeries. DER's determinism helps <em>keys</em> not leak; it does nothing for the parser.</p>
+<p><strong>Bleichenbacher, 1998</strong>: PKCS#1 v1.5 requires the padded block <code>00 02 || random || 00 || message</code>; any observable difference between "bad padding" and other decryption failures is an oracle. The adaptive attack halves the candidate interval per query — ~2^20 queries, a <em>million messages</em>, per session key. TLS's countermeasure: identical failures, random premaster. <strong>ROBOT, 2017</strong> (Böck–Somorovsky–Young) found the oracle alive in major TLS stacks — Facebook, PayPal, Android among them — <strong>19 years later</strong>. The fix that finally worked was structural: TLS 1.3 removed RSA key transport entirely (DHE/ECDHE only) — an oracle over a primitive you no longer use is not an oracle.</p>
+<p><strong>Timing-safe comparison</strong> is the micro-version of the same disease: <code>memcmp</code> returns at the first differing byte, so a MAC check leaks the <em>length of the match</em> — a byte-at-a-time forgery, worst case 255 × 32 ≈ 8,160 requests. The fix is the fold: XOR every byte pair into an accumulator, test once (<code>hmac.compare_digest</code>). The tooling that <em>proves</em> it: <strong>dudect</strong> (Reparaz et al., 2017) — a Welch t-test over timing distributions for fixed-secret vs. random-secret classes; <strong>ctgrind</strong> marks secrets "uninitialized" in valgrind so secret-dependent branches or addresses trigger warnings. Constant time is measured, not claimed.</p>
+<h2 id="the-rng-genus-and-the-layer-stack-where-breaks-actually-lived">The RNG genus and the layer stack: where breaks actually lived</h2>
+<p>Three flavors of randomness-as-memory failure:</p>
+<ul>
+<li><strong>Debian, 2006–2008</strong>: a distro patch removed two lines that mixed an <em>uninitialized</em> buffer into OpenSSL's RNG seeding — to silence a valgrind warning. Uninitialized memory was the entropy. The only variable input left: the process ID — 32,767 states, every key generated in the two-year window precomputable and factorable (DSA-1571; ~500k keys blacklisted later). Nothing crashed; weak keys look like strong keys — hence two years unnoticed.</li>
+<li><strong>Android/Bitcoin, 2013</strong>: a SecureRandom state collision produced repeated ECDSA nonces; the PS3 formula recovers the private key, and wallets were swept. Randomness <em>was</em> the attack surface, as RFC 6979 anticipated.</li>
+<li><strong>The clone fleet</strong>: a VM image boots before the CRNG reseeds; every clone mints the <em>same</em> SSH host key and TLS keys ("Mining Your Ps and Qs," 2012: tens of thousands of duplicates on the internet). Entropy starvation is a <em>boot-order memory bug</em>; virtio-rng is the fix (chapter 01).</li>
+</ul>
+<p>The meta-lesson as a table: AES unbroken since 2001; the RSA factoring record 829 bits (2020, ~2,700 CPU-core-years) — nowhere near 2048; ECDSA's math holds, its nonces didn't. This chapter's catalog, by layer:</p>
+<div class="table-wrap"><table><thead><tr><th>Layer</th><th>Incidents (this catalog)</th><th>The fix that finally worked</th></tr></thead><tbody><tr><td>Primitive (AES, RSA, ECC)</td><td><strong>0</strong></td><td>none needed — margins hold</td></tr><tr><td>Mode</td><td>4: ECB pattern leak; CBC padding birth defect; GCM nonce birthday + Joux; CTR two-time pad</td><td>AEAD APIs — one knob left (the nonce); encrypt-then-MAC</td></tr><tr><td>Implementation</td><td>8: Heartbleed; Lucky 13's µs; Bernstein T-table timing; ASN.1/DER parsing; leaky memcmp; Debian; Android RNG; clone fleets</td><td>constant-time code + dudect/ctgrind harnesses; bounds-checked framing; <code>getrandom(2)</code>/virtio-rng</td></tr><tr><td>Protocol</td><td>4: Bleichenbacher→ROBOT; KRACK; BEAST-class IV prediction; 1.2 ticket FS hole</td><td>TLS 1.3 structural removal (AEAD-only, DHE-only, transcript hash, key erasure); WPA3</td></tr><tr><td>Key management</td><td>5: cold boot; Rowhammer→Bellcore; duplicate host keys; ticket keys in shared CDN memory; harvest-now-decrypt-later</td><td>TPM/enclave wrap hierarchies; rotation on suspicion; hybrid PQC</td></tr></tbody></table></div>
+<p>Zero at the primitive. Eight at the implementation. The meta-lesson: <strong>the primitives never broke — the memory discipline did</strong> — and discipline means lengths, timings, counters, and erasure, none of which appear in the math.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>"Don't roll your own crypto," decoded honestly:</strong> the math is the reviewable part. The warning is about this chapter: constant-time discipline, nonce state machines, TLV parsing, and key erasure are <em>invisible in code review</em>, visible only under adversarial measurement — dudect, fuzzing, or a stopwatch. You cannot test what you wrote the way the world will.</li>
+<li><strong>OpenSSL's <code>SECLEVEL</code>:</strong> the <code>@SECLEVEL=n</code> cipher-config knob (Debian's OpenSSL 3.0 default is 2) refuses ≤112-bit security — 1024-bit RSA, SHA-1. Talking to legacy gear means <code>-cipher 'DEFAULT:@SECLEVEL=1'</code>. CT patches now ship with variance harnesses — Lucky 13's three-round regression is why.</li>
+<li><strong>Harvest-now-decrypt-later arithmetic:</strong> a recorded X25519 handshake is Shor-recoverable once a cryptographically relevant quantum computer exists; if data must stay secret &gt;10 years, it is at risk <em>now</em>. ML-KEM (FIPS 203, NIST, August 2024); browsers and CDNs hybrid (X25519 + ML-KEM) through 2023–2024; OpenSSH 9.9 (2024) defaults to <code>mlkem768x25519</code>; YubiKey 5.7 (2024) carries ML-KEM. Migration started; not done.</li>
+<li><strong>Reading crypto CVEs like an insider:</strong> the words "timing," "distinguisher," or "observable difference" mean <em>oracle</em> — always worse than the CVSS says.</li>
+<li><strong>Post-incident triage:</strong> length-field bug → rotate keys (bytes left the box); nonce/state bug → rotate the <em>key</em> (H is burned); padding oracle → patch; RNG bug → rotate everything in the window, and date the window.</li>
+<li><strong>The countermeasure-regression law:</strong> ROBOT proves "we return the same error" decays. Never accept a constant-time claim older than the last refactor; re-run the harness.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>1. The two-time pad, live</strong> (chapter 02's derivation, performed):</p>
+<pre><code class="language-python">import os
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+key, nonce = os.urandom(32), os.urandom(16)
+def stream(msg):                       # both "parties" reuse (key, nonce): the bug
+    e = Cipher(algorithms.AES(key), modes.CTR(nonce)).encryptor()
+    return e.update(msg)
+
+p1, p2 = b"attack at dawn!", b"attack at dusk!"
+c1, c2 = stream(p1), stream(p2)
+x = bytes(a ^ b for a, b in zip(c1, c2))
+print(x)        # 11 zero bytes, then 14 04 05
+print(bytes(a ^ b for a, b in zip(x, p1)))      # b'attack at dusk!'  (p2 recovered)
+ks = bytes(a ^ b for a, b in zip(c1, p1))       # the keystream — forge freely</code></pre>
+<p><strong>2. A timing oracle on HMAC comparison</strong> — Python leaks ~µs per byte position, C leaks ns; the shape is the same:</p>
+<pre><code class="language-python">import hmac, os, time, statistics as st
+
+key = os.urandom(32)
+good = hmac.digest(key, b"transfer:100", "sha256")
+def leaky(a, b):                       # the bug: quits at first mismatch
+    for x, y in zip(a, b):
+        if x != y: return False
+    return True
+def t(mac):
+    t0 = time.perf_counter_ns(); leaky(good, mac); return time.perf_counter_ns() - t0
+
+for pos in (0, 8, 16, 24, 31):         # length of matching prefix
+    mac = good[:pos] + bytes([good[pos] ^ 1]) + b"\x00" * (31 - pos)
+    s = [t(mac) for _ in range(10_000)]
+    print(f"prefix={pos:2d}  mean={st.mean(s):5.0f} ns  sd={st.pstdev(s):4.0f}")</code></pre>
+<p>The mean climbs with the prefix — that ladder is a byte-position oracle. The fix is <code>hmac.compare_digest</code>; dudect turns it into a pass/fail t-test.</p>
+<p><strong>3. Scan for the historical weaknesses</strong>:</p>
+<pre><code class="language-console">$ git clone --depth 1 https://github.com/drwetter/testssl.sh &amp;&amp; cd testssl.sh
+$ ./testssl.sh --severity HIGH --warnings batch your.host:443</code></pre>
+<p>Notice: RC4 flags, CBC suites in TLS 1.2 (Lucky 13's home — every unpatched-era server), the FS column (forward secrecy = key erasure, chapter 04).</p>
+<p><strong>4. Heartbleed's missing bounds check, 30 lines</strong> — a deliberately vulnerable echo server (never ship this shape):</p>
+<pre><code class="language-c">/* hb_vuln.c — the 2014 bug's shape: memcpy a DECLARED length unchecked.
+ * gcc -O0 -g -o hb_vuln hb_vuln.c  (chunk B sits right after A) */
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;arpa/inet.h&gt;
+#include &lt;sys/socket.h&gt;
+
+int main(void) {
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in a = {0};
+    a.sin_family = AF_INET; a.sin_port = htons(8443);
+    bind(s, (struct sockaddr *)&amp;a, sizeof a); listen(s, 5);
+    printf("pid=%d  heap: /proc/%d/maps\n", getpid(), getpid());
+    int c = accept(s, NULL, NULL);
+    char *rec  = malloc(64);                       /* chunk A: "record"   */
+    memset(rec, 0x41, 64);                         /* stale-looking bytes */
+    char *keys = malloc(256);                      /* chunk B: adjacent   */
+    memcpy(keys, "MASTER-SECRET 9f3a51c2e8", 23); /* crown jewels        */
+    for (;;) {
+        char wire[512];
+        ssize_t n = recv(c, wire, sizeof wire, 0); /* [type][len2BE][payload] */
+        if (n &lt; 3) break;
+        unsigned short plen = ((unsigned char)wire[1] &lt;&lt; 8) | (unsigned char)wire[2];
+        memcpy(rec, wire + 3, (size_t)n - 3);      /* bounded: what arrived */
+        char *out = malloc(3 + plen);
+        memcpy(out, wire, 3);
+        memcpy(out + 3, rec, plen);                /* BUG: trusts plen — reads */
+        send(c, out, 3 + (size_t)plen, 0);         /* past A into B            */
+        free(out);
+    }
+}</code></pre>
+<pre><code class="language-python">import socket
+s = socket.create_connection(("127.0.0.1", 8443))
+s.sendall(b"\x01\x01\x00A")     # declare 256 B, send 1 real byte
+r = s.recv(512)
+print(r[3:96])                  # 1 honest byte, then A's slack, B's header...
+print(b"MASTER-SECRET" in r)    # True — chunk B's contents crossed the boundary</code></pre>
+<p>Consecutive <code>malloc</code>s come from the top chunk — B is physically after A (<code>grep heap /proc/PID/maps</code>: both live in [heap]). The honest caveat: OpenSSL's 16 KiB record buffers were recycled through thousands of connections — what leaked was <em>whose</em> stale bytes were neighbors, hence rotate everything.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Triage a crypto CVE in 60 seconds</strong>: classify by layer (length field? timing? counter state? RNG? key exposure?) — the layer dictates the response, patch Tuesday to rotate-everything.</li>
+<li><strong>Design-review questions that catch this chapter's bugs</strong>: who owns this length field; what state does this counter survive; is the comparison constant-time <em>and measured</em>; where keys get erased.</li>
+<li><strong>Ops tripwires</strong>: fingerprint and dedupe fleet host keys monthly; run testssl.sh quarterly; pin CT-harness output in CI.</li>
+<li><strong>The interview version</strong>: "Heartbleed was a heap over-read of a trusted length field; Lucky 13 a 1–2 µs padding oracle AES itself was never blamed for" — primitive vs. implementation, in one breath.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 18 chapter 01</strong> — Debian's two removed lines live at the entropy layer; the clone fleet is boot-order starvation.</li>
+<li><strong>Module 18 chapter 02</strong> — the two-time pad derivation this catalog performs; GCM's forbidden-attack arithmetic.</li>
+<li><strong>Module 18 chapter 03</strong> — the PS3 nonce-recovery formula, the Bellcore gcd Rowhammer completes, blinding and bignum layouts.</li>
+<li><strong>Module 18 chapter 04</strong> — the right column of the layer table <em>is</em> the TLS 1.3 spec: AEAD-only, DHE-only, transcript, key erasure.</li>
+<li><strong>Module 02</strong> — the sibling dark-arts module: chapter 05's heap chunk layout is what Heartbleed reads; Rowhammer and UAF-on-keys physically attack chapter 03's key material.</li>
+<li><strong>Module 16 chapters 04/05</strong> — Heartbleed's heap as the browser-heap chapter sees it; Spectre's browser sandbox-crossing read, timer coarsening and all.</li>
+<li><strong>Module 01 chapter 13</strong> — C#/managed crypto arrays: the GC copies and pins key material during pause-compaction, reopening the key-erasure problem this chapter keeps closing (repairs that chapter's orphan status).</li>
+<li><strong>Module 01 chapter 16</strong> — Swift ARC on key buffers: when the last reference drops decides when the key bytes actually vanish — deterministic erasure across the language boundary (repairs that chapter's orphan status).</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Heartbleed is "the complement of use-after-free." Explain what memory each class touches, why the over-read needs no write primitive to leak keys, and why the leaked bytes are <em>stale</em>.</li>
+<li><strong>Concept.</strong> Decode "don't roll your own crypto" honestly: name the four disciplines the warning actually protects, and why none is visible in review.</li>
+<li><strong>Predict/derive.</strong> A KMS builds each 96-bit GCM nonce from timestamp + machine-ID, degenerating to 2^32 distinct nonces per key. Compute the message count at which a collision is 50% likely (birthday arithmetic), and what one collision hands the attacker under GCM.</li>
+<li><strong>Predict/derive.</strong> A CTR keystream was reused for two ciphertexts. You compute <code>c1 ⊕ c2</code> and get eleven zero bytes, then <code>14 04 05</code>, then zeros. You know <code>p1 = "attack at dawn!"</code>. Recover <code>p2</code>, then state what else falls out and what you can now do that the cipher should have prevented.</li>
+<li><strong>Predict/derive.</strong> An attacker sends a heartbeat request: 1-byte payload, declared <code>payload_length</code> 0xFFFF. How many bytes does the <code>memcpy</code> read, how many are beyond the attacker's data, and why is the <em>destination</em> write in-bounds while the <em>source</em> read is the violation?</li>
+<li><strong>Diagnose.</strong> A distro maintainer patches two lines out of the RNG seeding path to silence a valgrind "uninitialized value" warning. Two years later every key generated on that distro is factorable. Reconstruct the chain: what did the lines do, what entropy remained, why nothing crashed, and what the maintainer should have done.</li>
+<li><strong>Diagnose.</strong> An API's MAC check uses early-exit <code>memcmp</code>. Logs show one IP holding the first 4 tag bytes constant for an hour while sweeping byte 5 across 256 values, at ~250 requests/sec. What is happening, roughly how many requests finish it, and what is the fix?</li>
+<li><strong>Cross-chapter.</strong> Using module 18 chapter 04: name the TLS 1.3 decision that kills each attack — (a) Bleichenbacher/ROBOT, (b) Lucky 13, (c) the 1.2 session-ticket forward-secrecy hole — and the one attack class 1.3 <em>consciously accepted</em> in the trade.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>Use-after-free touches memory the program logically released but still maps; Heartbleed reads memory it never logically owned for this message — past the record chunk's end into adjacent chunks. No write primitive is needed: the read's content is echoed back verbatim — the response buffer is sized for the declared length, so the <em>write</em> is in-bounds. The bytes are stale, not random, because the heap recycles chunks — freed record buffers, plaintext bodies, and previously written session-key material sit exactly where the over-read walks.</li>
+<li>(1) constant-time execution — no secret-dependent branches or table addresses; (2) nonce/counter state surviving retransmission, restart, and cloning; (3) TLV parsing that derives lengths from what arrived, not declared; (4) key erasure on schedule. All four are invisible in review because they are <em>absences</em> — a timing difference, a reset counter, an unparsed length, an un-erased buffer all look like correct code, measurable only under adversarial testing (dudect, fuzzing, state-machine replay).</li>
+<li>50% collision at ~1.18·√N ≈ 1.18·2^16 ≈ <strong>77,000 messages</strong> (~2^17). One collision means two ciphertexts under one keystream (<code>c1 ⊕ c2 = p1 ⊕ p2</code>); specific to GCM, the forbidden attack: reused-nonce polynomials reveal <strong>H</strong>, the GHASH key — permanent tag forgery. Rotate the key, not just the nonce.</li>
+<li><code>p2 = (c1 ⊕ c2) ⊕ p1</code>: <code>14 04 05</code> against <code>a w n</code> (0x61 0x77 0x6E) gives <code>u s k</code> — <code>p2 = "attack at dusk!"</code>. The zeros mark where the plaintexts agree. With p1 known, the keystream falls out (<code>ks = c1 ⊕ p1</code>): decrypt any other message under that (key, nonce), <em>and encrypt forgeries</em> — confidentiality (and integrity, in a MAC construction) gone from one reuse.</li>
+<li>The <code>memcpy</code> reads the declared <strong>65,535</strong> bytes; <strong>65,534</strong> are beyond the attacker's data — chunk slack, the next chunk's header, its payload. The write is in-bounds because the response buffer was allocated <code>payload_length + 16</code> before the copy; the violation is the source read — the declared length was never checked against the record's actual size, the TLV rule the state machine didn't own.</li>
+<li>The removed lines mixed an <em>uninitialized</em> buffer into the RNG seed — its unpredictable contents were the entropy. With them gone, only the process ID varied (~32,767 states), so every key in the window came from a precomputable, factorable seed (DSA-1571; ~500k keys blacklisted). Nothing crashed because weak keys are syntactically perfect and pass every self-test; only precomputation notices. The maintainer should have seeded from initialized-but-unpredictable memory: "uninitialized" and "unpredictable" were the same property in disguise.</li>
+<li>Byte-at-a-time timing forgery: the early exit makes comparison time proportional to the matching prefix, so each candidate byte that survives longer is (probabilistically) correct; bytes are locked left to right and re-tested to beat noise — hence the held 4-byte prefix and modest rate. Worst case ≈ 255 × 32 ≈ <strong>8,160 requests</strong>. Fix: constant-time comparison — XOR-fold all bytes, test once (<code>hmac.compare_digest</code>, <code>CRYPTO_memcmp</code>).</li>
+<li>(a) TLS 1.3 removed RSA key transport — ephemeral (EC)DHE only, so there is no PKCS#1 v1.5 decryption to give a padding oracle. (b) 1.3 allows AEAD only — the tag covers the ciphertext (encrypt-then-MAC), so no padding is stripped before authentication; there is no check sequence to time. (c) 1.3's resumption: per-ticket key derivation and the spec's erasure/lifetime discipline (chapter 04's key schedule). What 1.3 knowingly accepted: <strong>0-RTT replay</strong> — early data under a PSK is replayable by an active attacker, delegated to the application (idempotent GET yes, POST no).</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch04.html"><span class="cn-label">previous</span><span class="cn-title">Ch 04</span></a>
+<a class="next" href="index.html"><span class="cn-label">next</span><span class="cn-title">Module index</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 18 — Cryptography internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

@@ -460,6 +460,11 @@ are the leak, call stacks attached.
 - **Ch 21** — C-extension refcount bugs are the use-after-free surface; immortal
   singletons are fixed targets attackers love.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 22 ch01 (the tensor)** — the refcounted Storage under every tensor is the PyObject pattern this chapter taught, at industrial scale.
+- **Module 19 ch04 (GC as proof search)** — the cycle detector is a tracing prover for exactly the objects refcounting cannot refute — the 3-generation threshold arithmetic derived.
+
 ## Quiz
 
 1. Derive the exact writes performed by `x = y` in Python versus the same statement

@@ -242,6 +242,12 @@ the niche optimization, live.
 - **Chapter 21** — vtable/vptr overwrite, type confusion (two layouts disagreeing),
   overflow (length forgotten) — every attack in that chapter is a *layout* fact.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 22 ch01 (the tensor)** — the industrial object: (data_ptr, shape, strides) plus a refcounted storage — the header-of-object pattern at scale.
+- **Module 18 ch03 (bignums)** — OpenSSL's BIGNUM is a variable-length object whose limb count is a leak — layout as side channel.
+- **Module 16 ch02 (the DOM heap graph)** — every DOM node is a heap object with a header; the wrapper problem is a two-header object.
+
 ## Quiz
 
 1. **Concept.** Why does a boxed value cost a pointer dereference even when the

@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GC as proof search — deep-roots</title>
+<meta name="description" content="Chapter 04 of module 19: GC as proof search">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="GC as proof search — deep-roots">
+<meta property="og:description" content="Chapter 04 of module 19: GC as proof search">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="GC as proof search — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of module 19: GC as proof search">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 19 &middot; why the rules are theorems</div>
+<h1 class="post-title">GC as proof search</h1>
+<div class="post-meta">chapter 04 &middot; ~21 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A garbage collector is a theorem prover that periodically proves "this object is unreachable" and frees the refuted. Exact liveness — <em>will</em> this be read again? — is the halting problem, so every real collector proves the over-approximation <em>reachability</em>; the gap, retained garbage, is what a leak formally is. Tracing is proof search: roots are axioms, grey objects the frontier, black objects proved, sweep the refutation pass. The proof costs pointer-chasing misses (~10 s per live GB naive), and the field's machinery — write barriers, generations, cards, concurrent marking, compaction — schedules and cheapens it. Reference counting is the alternative: proof by construction, no pauses, blind to cycles. Every collector trades throughput (amortization), latency (scheduling), and footprint (overhead) against each other.</blockquote>
+<h2 id="liveness-is-the-theorem-reachability-is-the-proof-you-can-afford">Liveness is the theorem; reachability is the proof you can afford</h2>
+<p>A value is <strong>live</strong> at program point p if it <em>may</em> be read along some future path. That is uncomputable: deciding whether a heap cell will ever be read again is deciding whether a program reaches another state — the halting problem wearing a heap (chapter 01's machine, arriving in person). What a runtime <em>can</em> compute is <strong>reachability</strong>: does a reference chain from a root (globals, statics, stacks, registers at a safepoint) reach the object?</p>
+<p>The gap between the two is the formal leak definition, re-derived from module 01 chapters 14/15: a leak is <strong>reachable-but-dead</strong> — the collector's proof ("a path exists") is valid, but no future read will use it. The collector is not wrong; the <em>static roots</em> are: no collector refutes an object held by a live root, however dead. Three classic shapes cover nearly all production leaks:</p>
+<ul>
+<li><strong>The accidental global</strong> — a module-level cache or static registry keyed by something unbounded: a permanent root proving dead values.</li>
+<li><strong>The forgotten listener</strong> (module 16 ch 04) — an event bus holds a callback whose owner died long ago; the bus is a root that never did.</li>
+<li><strong>The closure that captures the world</strong> (module 01 ch 14, in this chapter's lab) — a long-lived list of small closures, each pinning the 1 MB buffer a dead frame once owned.</li>
+</ul>
+<p>All three are one bug — proof obligations left in place — and the fix is always the same: sever an edge, never "tune the GC."</p>
+<h2 id="tracing-as-proof-search-the-worklist-is-the-frontier">Tracing as proof search: the worklist is the frontier</h2>
+<p>Read mark-sweep as a prover. The <strong>root set</strong> is the axiom list; the invariant is inductive: an object is justified if it is a root or is referenced by a justified object. Marking is proof construction: pop an obligation, mark the object, push its unvisited children. The <strong>worklist is the proof frontier</strong> — obligations accepted, not yet discharged; the search ends when the frontier empties. Black = proved; never reached = refuted <em>by exhaustion</em>; <strong>sweep</strong> converts unproven into free. The <strong>mutator</strong> is the application mutating the object graph; the <strong>collector</strong> runs the proof. Every design below is about those two racing.</p>
+<p>The complexity story: object graphs are adversarially cache-hostile, so each object visit is essentially a compulsory miss, and module 01 ch 02's ladder prices a DRAM miss at ~100 ns. A 1 GiB live heap is ~10^8 pointer words:</p>
+<pre><code class="language-text">1 GiB / 8 B/chase = 1.34e8 chases  x  100 ns  ≈ 13 s single-threaded
+=&gt; effective naive mark rate ~100 MB/s per GB of live heap</code></pre>
+<p>Ten-plus seconds of proof per live gigabyte — the number motivating parallel marking (divide the frontier), incremental marking (interleave with the mutator), and concurrent marking (separate threads).</p>
+<h2 id="tri-color-the-lost-object-and-the-barrier-as-an-obligation">Tri-color, the lost object, and the barrier as an obligation</h2>
+<p>Interleaving the proof with the mutator breaks correctness in one characterizable way. The <strong>tri-color abstraction</strong>: <strong>white</strong> = unvisited (unproven), <strong>grey</strong> = frontier (visited, references not expanded), <strong>black</strong> = proved (fully scanned). The invariant is monotonicity: <strong>a black object must never point to a white object</strong>. The classic lost object, worked in four mutator steps (grey A, black B — already scanned — white C, <code>A.f = C</code>):</p>
+<pre><code class="language-text">      roots
+        |
+      [ A ] grey --f--&gt; [ C ] white      B is BLACK (already scanned;
+        |                                    fields never re-read)
+        +---------------+
+                        |
+                      [ B ] black
+
+ step 1: B.g = A.f     mutator stores C's ref INTO black B
+ step 2: A.f = null    mutator deletes C's ref from grey A
+ step 3: collector finishes scanning A -&gt; black; frontier empty
+ step 4: sweep frees C ("no proof exists")  -&gt;  black B holds a
+         DANGLING pointer: C was reachable the whole time</code></pre>
+<p>The <em>interleaving</em> — no single step — orphaned C: its only path now leaves an object the collector has finished with. A <strong>write barrier</strong> is the mutator's obligation to notify the prover on the stores that could break monotonicity:</p>
+<div class="table-wrap"><table><thead><tr><th>barrier</th><th>intercepts</th><th>action</th><th>per-store cost</th><th>deployed</th></tr></thead><tbody><tr><td>Dijkstra (1978, insertion)</td><td>step 1</td><td>shade (grey) the stored target if src black, dst white</td><td>2 color checks + enqueue; 3-10 ns hot, ~20 ns triggered</td><td>CMS; needs a <strong>remark</strong> rescan</td></tr><tr><td>Steele (1975, decremental)</td><td>step 1</td><td>re-grey the <em>source</em>, forcing a rescan</td><td>1 check (src color); rescan lands later</td><td>rarely alone</td></tr><tr><td>Yuasa (1990, snapshot-at-the-beginning)</td><td>step 2</td><td>grey the <em>old value overwritten</em>, if white</td><td>1 load + null test + enqueue; no color tests</td><td>G1, Shenandoah — the deployed one</td></tr></tbody></table></div>
+<p>Honest instrumented-store overhead: <strong>~2-20 ns</strong>, a few percent of throughput on pointer-heavy programs. Yuasa wins structurally: no color tests, no remark phase, and it composes with generations — the same store notification that protects concurrent marking also dirties a remembered-set card. Its price, <strong>floating garbage</strong> — objects that die during marking float one extra cycle — is bounded and cheaper than the alternatives' machinery.</p>
+<h2 id="the-pause-is-proof-latency-generations-make-the-proof-small">The pause is proof latency; generations make the proof small</h2>
+<p>Run the whole proof stop-the-world: a <strong>serial</strong> collector on a 2 GB live heap at ~500 MB/s marking pauses every thread for <strong>2 GB / 500 MB/s = 4 s</strong> — the number that motivated CMS and G1. Parallel marking divides by workers (8 → ~500 ms), still 5x past a human-perceptible SLO, and the rate is miss-ladder-capped. So shrink the proof's <em>subject</em>. The <strong>generational</strong> idea rests on an empirical law, not a theorem — the <strong>weak generational hypothesis</strong>: in real programs, 95-99% of objects die young. The proof "this nursery object is unreachable" is cheap to <em>find</em> because it is nearly everything in the nursery.</p>
+<p>Hence GC's most counterintuitive law: <strong>cost tracks <em>survivors</em>, not garbage and not allocation volume.</strong> A copying young collection scans roots and cards, copies the survivors out, and reclaims the whole nursery in one gesture — the dead majority is freed as a side effect of copying the live minority. Verified in this chapter's lab: a 256 MB G1 young collection reclaims 253 MB in ~4-7 ms because ~3 MB was copied. Garbage is cheap; liveness is expensive.</p>
+<p>Copying survivors needs the old-to-young census (old objects are part of the root set). The <strong>card table</strong>: divide old space into 512-byte <strong>cards</strong>; a Yuasa-style barrier on old-object stores marks the containing card dirty; young collections scan only dirty cards. On an 8 GiB heap:</p>
+<pre><code class="language-text">  8 GiB heap
+    / 512 B per card =&gt; 2^33 / 2^9 = 2^24 = 16,777,216 cards
+  one byte per card  =&gt; 16 MiB of card table
+  16 MiB / 8 GiB     = 1/512 = 0.195% ~ 0.2% of heap, always mapped
+
+  heap:  | card0 | card1 | card2 | card3 | ...   (512 B each)
+                 v store of a young ptr into an old object
+  cards: [ 00 ][ 01 ][ 00 ][ 00 ] ...   &lt;- 1 dirty byte = 1 card scanned
+         a dirty card costs a 512 B scan at the next young GC</code></pre>
+<p>8 GB of heap bought 16 MB of proof bookkeeping — 0.2% — and one stray pointer costs one 512-byte scan. That is also why the granularity is 512 B and not 4 KB (an 8x worse false-positive scan per stray pointer).</p>
+<h2 id="proving-while-running-moving-the-proof-counting-instead-of-searching">Proving while running; moving the proof; counting instead of searching</h2>
+<p><strong>Concurrent collectors</strong> run the proof beside the mutator, paying barriers for the invariant. CMS (2002) marked and swept concurrently with two short STW phases — and never compacted, so old space fragmented until promotion could not fit: <strong>concurrent mode failure</strong>, falling back to a full <em>serial</em> compacting STW collection on an already-huge heap. Those multi-second pauses are the 2010s LinkedIn/Twitter war stories, visible in <code>jstat -gcutil</code> as the <code>O</code> column pinned near 100 with <code>FGC</code>/<code>FGCT</code> spiking; CMS was deprecated in JDK 9, removed in 14. <strong>G1</strong> instead sets a <em>proof budget</em>: the heap becomes ~2048 equal regions (1-32 MB; verified here: 1 MB regions on a 2 GB heap), and <code>-XX:MaxGCPauseMillis</code> (default 200 ms) is the budget the collection-set picker spends — region evacuation costs are predicted from measured history, and only as many regions as fit are collected (young, plus some old in <strong>mixed</strong> collections). The pause becomes an incremental slice of the proof, sized to an SLO, not the heap.</p>
+<p><strong>Compaction is the address proof.</strong> Object identity <em>is</em> an address (module 01 ch 06), so sliding compaction (Lisp 2) means <strong>every pointer is a lemma that must be rewritten</strong>:</p>
+<pre><code class="language-text">pass 1 (slide):   walk heap low-&gt;high, compute each object's new
+                  address, stash it as a forwarding pointer
+pass 2 (rewrite): visit every reference (roots + live objects'
+                  fields), replace each with the forwarded address
+pass 3 (move):    copy the bytes into contiguous homes</code></pre>
+<p>Three passes, no copy buffer, allocation order preserved. <strong>Pinning breaks it</strong>: one immovable object mid-heap is a hole the slide must keep; enough pins and compaction is impossible — .NET's Large Object Heap is not compacted by default (module 01 ch 13), and G1's dialect is the humongous object (insiders, below).</p>
+<p><strong>Reference counting is proof by construction</strong> rather than search. Each object carries its own proof count: every reference copies one unit of proof in (retain), every drop removes one (release); zero = refuted, freed <em>immediately and deterministically</em>. The cost model inverts tracing's — RC pays per <em>pointer mutation</em> (always, atomic, cache-line-poisoned under contention); tracing pays per <em>live object</em>, only at collection. And RC's blind spot is structural: cycles are unrefutable, by hand on <code>A.b = B</code>, <code>B.c = C</code>, <code>C.a = A</code>, after the last external reference to A drops:</p>
+<pre><code class="language-text">A's count = 1 (held by C)   B's count = 1 (held by A)
+C's count = 1 (held by B)   -- a stable triangle of dead objects
+no count reaches 0: the cycle IS its own proof of liveness</code></pre>
+<p>Swift's <strong>ARC</strong> inlines the proof into the binary: the compiler places every retain/release as emitted instructions. The chapter's mandated artifact — five lines (Swift 5.10; reproduce with <code>swiftc -emit-sil</code>; trimmed to the ARC operations):</p>
+<pre><code class="language-swift">final class Blob { var n = 0 }          // 1: born with refcount 1
+
+func work(_ b: Blob) -&gt; Int {           // 2: param borrowed from caller
+    let a = b                           // 3: strong copy -&gt; +1
+    let c = a                           // 4: strong copy -&gt; +1
+    c.n += 1                            // 5: ...
+    return c.n                          //    scope exit: a, c die -&gt; -2
+}</code></pre>
+<pre><code class="language-text">// SIL, swiftc -Onone, mangled name elided — the proof as instructions:
+sil hidden @$s... : $@convention(thin) (@guaranteed Blob) -&gt; Int {
+bb0(%0 : $Blob):
+  ...
+  strong_retain %0 : $Blob     // 'let a = b'   count 1 -&gt; 2
+  strong_retain %0 : $Blob     // 'let c = a'   count 2 -&gt; 3
+  ...                            // load n, add, store
+  strong_release %0 : $Blob    // 'c' dies      3 -&gt; 2
+  strong_release %0 : $Blob    // 'a' dies      2 -&gt; 1
+}
+// -Onone arm64:  bl _swift_retain x2 / bl _swift_release x2
+// -O: the ARC optimizer PROVES both pairs redundant and DELETES
+//     them (a proof of a proof's redundancy); surviving ops inline
+//     to one ldadda — an atomic add on the header's refcount word</code></pre>
+<p>That <code>-O</code> line is the chapter in miniature: proofs cost; proofs <em>about</em> proofs delete cost. CPython runs the same contract at runtime (<code>Py_INCREF</code>/<code>Py_DECREF</code> — the same inserts, executed not compiled — module 01 ch 16); its no-GIL branch adds <strong>biased RC</strong> (owner-thread increments non-atomic, others atomic) to stop refcount ping-pong between cores, and <strong>deferred RC</strong> (ignore short-lived local refs, scan stacks periodically) to drop the hottest increments. Cycles need an <em>out-of-band registry</em>: Swift's <code>weak</code> references resolve through <strong>side tables</strong> — a hash keyed by object address, zeroed on dealloc, the liveness proof living outside the object — and CPython's cycle detector is the same move: an external scanner for the one proof shape counting cannot build.</p>
+<h2 id="the-design-space-allocation-is-free-because-free-space-is-the-proof">The design space: allocation is free because free space IS the proof</h2>
+<p>One beauty spot: in a copying nursery, <strong>allocation is a bump</strong> — free space is one contiguous extent and allocating is <code>top += size</code>: O(1), ~10 ns, no list, no per-object metadata. The unallocated tail <em>is</em> the proof that the next allocation is safe — proof construction costs nothing per object, which is why copying nurseries win twice: collection tracks survivors, allocation is a bump (the JVM's TLAB gives each thread its own bump extent, no lock). Contrast malloc's <strong>bin-fit</strong> (module 01 ch 19): size classes, free lists, per-chunk headers, fragmentation — 10-100 ns of <em>bookkeeping per allocation</em>, because free space is many extents rather than one proof. Tracing never asks "is this chunk free?" — it asks, wholesale, "which objects are dead?" — making allocation trivial by making deallocation batch.</p>
+<p>Closing, the three-axis design space — <strong>throughput</strong> (proof amortization), <strong>latency</strong> (proof scheduling: worst pause), <strong>footprint</strong> (proof overhead: headers, bitmaps, cards, barriers, remembered sets) — with every collector from module 01's survey placed:</p>
+<div class="table-wrap"><table><thead><tr><th>collector</th><th>throughput</th><th>max pause</th><th>footprint overhead</th></tr></thead><tbody><tr><td>Serial (STW)</td><td>good (no barriers)</td><td>heap/rate: 2 GB / 500 MB/s = 4 s</td><td>mark bitmap</td></tr><tr><td>Parallel</td><td>best</td><td>seconds at large heap</td><td>bitmaps + stacks</td></tr><tr><td>CMS (concurrent)</td><td>-5-10%</td><td>~100 ms goal, until mode failure</td><td>+ free-list fragmentation</td></tr><tr><td>G1</td><td>-5-15%</td><td>budgeted: 200 ms default</td><td>regions, cards, remembered sets</td></tr><tr><td>ZGC</td><td>~-10%</td><td>~10 us (verified below)</td><td>colored ptrs + forwarding</td></tr><tr><td>Epsilon</td><td>maximum</td><td>none — no proof</td><td>none</td></tr></tbody></table></div>
+<p>ZGC's instrument earns its line: <strong>colored pointers</strong> park four color bits (Marked0, Marked1, Remapped, Finalizable) in the pointer's upper bits, clear of the 44 bits a 16 TB heap needs — module 01 ch 06's tagged pointers returning as a <strong>load-barrier certificate</strong>: every reference load checks the tag; if stale, the barrier heals it (forward to the new address, mark). Validity becomes a per-load check instead of a global pause — sub-10-µs pauses, bought with ~10% throughput and a barrier on every load the JIT cannot elide. Epsilon, the last row, is the "no proof" collector: allocation and nothing else, which is what makes it a profiler (insiders, below).</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>System.gc()</code> is a hint that lies.</strong> On HotSpot it defaults to a <em>full</em> GC; the caller nobody reads is RMI's distributed GC, which invokes it hourly by default (<code>sun.rmi.dgc.server.gcInterval</code> = 3,600,000 ms). Ops seeing hourly multi-second pauses add <code>-XX:+DisableExplicitGC</code> — and months later hit the trap: RMI DGC depends on those explicit GCs to reap unreferenced remote objects, so suppression leaks the remote-object tables until OOM. Surgical fixes: raise <code>gcInterval</code>, or <code>-XX:+ExplicitGCInvokesConcurrent</code> — the flag that "fixed" the incident caused the next one.</li>
+<li><strong>Safepoints are proof points.</strong> Roots are only readable where the JIT guarantees a walkable frame — a <strong>safepoint</strong>, catalogued by <strong>oop maps</strong> (which slots hold pointers: the proof's certificates for one PC). Insiders split the pause into <em>time-to-safepoint</em> and <em>at-safepoint</em> (<code>-Xlog:safepoint</code>, module 10 ch 04): a 4 ms GC with 40 ms TTSP is a safepoint bug, not a GC bug. The classic: an <code>int</code> <strong>counting loop</strong> carries no interior poll, so one long iteration stalls every thread — fixed by JDK 10's loop strip mining; before that, insiders forced polls with a <code>long</code> induction variable. Adjacent trap: <em>safepoint bias</em> — profilers sampling at safepoints see where threads stop, not where they run.</li>
+<li><strong>G1's humongous threshold is ½ region.</strong> Objects at or above half a region go to contiguous humongous regions, collected lazily, fragmenting eagerly. On this chapter's 2 GB lab heap (1 MB regions): 512 KB; on 8 GB (4 MB regions): 2 MB — <code>byte[4_000_000]</code> is old-generation pressure in disguise; .NET's LOH (85,000+ bytes) speaking Java: big objects don't move, don't fit, don't play.</li>
+<li><strong>Epsilon is a profiler, not a joke.</strong> <code>-XX:+UnlockExperimentalVMOptions -XX:+UseEpsilonGC</code> runs no proof: bump until the heap fills, then OOM by design. A workload run to its Epsilon death measures raw allocation rate; the throughput delta under a real collector is that collector's proof cost in seconds — "no proof" makes every row of the design table a measurement instead of a claim.</li>
+<li><strong>The JIT deletes proofs it can prove redundant.</strong> Card-mark and SATB barriers compile to test-and-mark, but the compiler elides the mark when the stored value provably cannot be young (null, constants, provably-old values), and G1 batches barriers into per-thread buffers flushed at safepoints. The ~2-20 ns per-store figure is the instrumented worst case, not the steady-state hit.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>All labs ran on this chapter's platform (OpenJDK 21.0.12, 2-core sandbox; CPython 3.12.15). Your numbers will differ; the <em>shapes</em> are the deliverable.</p>
+<p><strong>Lab 1 — read a real young collection.</strong> 12 rounds of 4M <code>byte[32]</code> allocations, 64 live arrays, <code>-Xms2g -Xmx2g -Xmn256m</code>:</p>
+<pre><code class="language-console">$ java -Xms2g -Xmx2g -Xmn256m -Xlog:gc,gc+heap Churn.java
+[0.621s][info][gc,heap] GC(0) Survivor regions: 0-&gt;3(32)
+[0.621s][info][gc] GC(0) Pause Young (Normal) (G1 Evacuation Pause) 257M-&gt;3M(2048M) 7.531ms</code></pre>
+<p>Annotate: <strong>257M-&gt;3M</strong> — 253 MB died, ~3 MB survived (the 64 newest arrays plus JVM young flotsam), and the pause tracks the 3, not the 253: cost ∝ survivors, measured. <strong>3 of 32 survivor regions</strong> — a capped slice; <code>-Xlog:gc+age</code> shows the rule: <code>Desired survivor size 16777216 bytes, new threshold 15</code>. Rerun with <code>-Xlog:gc+phases=debug</code> for the card scan:</p>
+<pre><code class="language-console">[0.542s][info ][gc,phases] GC(0) Evacuate Collection Set: 4.31ms
+[0.542s][debug][gc,phases] GC(0) Scan Heap Roots (ms): Sum: 0.15
+[0.542s][debug][gc,phases] GC(0) Scanned Cards: Sum: 425
+[0.542s][debug][gc,phases] GC(0) Object Copy (ms): Sum: 5.12</code></pre>
+<p>425 dirty cards × 512 B = ~218 KB of old space re-scanned in 0.15 ms — the card table working exactly as drawn.</p>
+<p><strong>Lab 2 — the collector pause table (the deliverable).</strong> Same churn, three collectors; sorted pauses from <code>-Xlog:gc:file=...</code> (Serial, G1) and <code>-Xlog:gc+phases:file=...</code> (ZGC):</p>
+<div class="table-wrap"><table><thead><tr><th>collector</th><th>pauses</th><th>min</th><th>median</th><th>max</th></tr></thead><tbody><tr><td>Serial</td><td>4</td><td>2.75 ms</td><td>2.76 ms</td><td>7.47 ms</td></tr><tr><td>G1</td><td>4</td><td>4.91 ms</td><td>6.57 ms</td><td>7.53 ms</td></tr><tr><td>ZGC</td><td>9 (3/cycle)</td><td>0.005 ms</td><td>0.006 ms</td><td>0.010 ms</td></tr></tbody></table></div>
+<p>Serial's median only "wins" because the live set is microscopic — scale it and Serial grows linearly while ZGC stays flat: the ZGC lines are literally <code>Pause Mark Start 0.008ms</code> — a max pause of <strong>10 microseconds</strong>. Notice what is absent from ZGC's pauses: heap size.</p>
+<p><strong>Lab 3 — Python's thresholds, and the leak the cycle detector cannot see.</strong> The defaults, then module 01 ch 14's closure leak in four lines:</p>
+<pre><code class="language-console">$ python3 - &lt;&lt;'EOF'
+import gc, tracemalloc
+print(gc.get_threshold(), gc.get_count())  # (700, 10, 10) (688, 10, 0)
+def make(size):                  # 1
+    buf = bytearray(size)        # 2  1 MiB, "dies with the closure"
+    def hold(): return len(buf)  # 3  ...in theory
+    return hold                  # 4
+leaks = [make(1 &lt;&lt; 20) for _ in range(200)]    # static root: the list
+tracemalloc.start(); s1 = tracemalloc.take_snapshot()
+leaks += [make(1 &lt;&lt; 20) for _ in range(200)]
+print(tracemalloc.take_snapshot().compare_to(s1, "lineno")[:1])
+print("cycles collected:", gc.collect())      # 0
+EOF
+&lt;stdin&gt;:2: size=200 MiB (+200 MiB), count=400 (+400)
+cycles collected: 0</code></pre>
+<p>Read it: 700 = gen0 fires after 700 net container allocations; each 10 = one generation up per 10 collections below (gen2 ≈ every 100 gen0s). <code>gc.collect() == 0</code> is the point: there is <strong>no cycle</strong> — 200 MiB of reachable-but-dead retained garbage; tracemalloc names the allocation site, <code>gc</code> never will. With <code>gc.set_threshold(5, 5, 5)</code> gen0 fired 85 times during 200 appends (measured) and freed nothing — the counter is about <em>allocation</em>, not cycles; tightening it cannot free a byte. Fix = sever the edge: cap the list, <code>weakref</code>, or capture <code>len(buf)</code> instead of the buffer.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>In an incident, read the GC log as a proof transcript.</strong> <code>-Xlog:gc*</code> and <code>jstat -gcutil</code> tell you which proof ran (Pause Young / Mixed / Full), its subject (M-&gt;M), and its cost. 257M-&gt;3M in 4 ms is healthy; 3M-&gt;3M in 400 ms means liveness, not garbage, is slow — shrink the live set; no GC flag fixes that.</li>
+<li><strong>Leak triage is root triage.</strong> When RSS climbs and <code>gc.collect()</code> frees nothing, don't hunt cycles first — hunt the three shapes (static registry, listener list, closure capture). tracemalloc or a heap histogram names the <em>class</em>; this chapter tells you to find the <em>root</em> proving it.</li>
+<li><strong>Pick collectors by SLO, not folklore.</strong> 200 ms budget → G1; single-digit ms → ZGC/Shenandoah; 10 GB batch analytics with no users attached → Parallel (barriers are pure waste there). Each is a row of the 3-axis table, and the rows are measurable with the Epsilon trick.</li>
+<li><strong>Design allocation with the laws in mind.</strong> Cost ∝ survivors: keep transients genuinely transient — die in the nursery, don't store them anywhere old. Avoid the humongous/LOH cliff (½ G1 region; 85 KB in .NET): chunk big arrays or budget for the fragmentation.</li>
+<li><strong>In interviews, derive, don't recite.</strong> "A pause is liveness-proof latency: heap over mark rate. Concurrency needs the tri-color invariant and a barrier. Generations exploit the empirical death curve; cost tracks survivors" — checkable arithmetic, and almost nobody can produce it.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 19 ch 01</strong> — liveness's uncomputability is the halting problem's heap dialect; where chapter 01's machine reaches memory.</li>
+<li><strong>Module 19 ch 02</strong> — "black never points to white" is a <em>preservation</em> property proved one mutator step at a time.</li>
+<li><strong>Module 19 ch 03</strong> — memory safety as a theorem used ownership proofs at compile time; this chapter is the runtime side.</li>
+<li><strong>Module 19 ch 05</strong> — exact liveness is undecidable: every leak is an impossibility result made livable.</li>
+<li><strong>Module 01 ch 02</strong> — the ~100 ns miss ladder re-derived as the mark-rate floor; pointer-chasing <em>is</em> the GC cost model.</li>
+<li><strong>Module 01 ch 12 / 14 / 15 / 16</strong> — the mandated collector re-derivations: JVM generations/CMS/G1 (12), CPython refcount + cycle detector (14), V8 scavenger nursery (15), Swift ARC (16) — each reread as a proof strategy: by-search, by-construction plus external cycle scan, by-search-on-a-nursery, by-construction.</li>
+<li><strong>Module 01 ch 23</strong> — the grand table's "who proves what" column rereads as proof strategies: manual = hand-written lemmas, RC = proof by construction, tracing = periodic proof search, ownership = compile-time proof. (Orphan repaired: the table reported the models' <em>costs</em>; the proof reading is its missing theory column — <em>why</em> those costs have the shapes they do.)</li>
+<li><strong>Module 10 ch 04</strong> — safepoints and oop maps are this chapter's proof points and certificates; TTSP is the pause before the pause.</li>
+<li><strong>Module 09 ch 01/02</strong> — ch 01's happens-before race detector (TSan) is runtime proof in this chapter's exact sense: an over-approximating checker whose imprecision is the price of decidability; ch 02's lock discipline is the barrier obligation at thread granularity.</li>
+<li><strong>Module 16 ch 04</strong> — the forgotten-listener leak shape, from browser page-memory teardown.</li>
+<li><strong>Module 01 ch 06 / 13 / 19 / 20</strong> — tagged pointers as ZGC's color bits (06), LOH pinning (13), malloc bin-fit as the allocation contrast (19), biased refcounting as the no-GIL repair (20).</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>(Concept)</strong> A reviewer says: "Your GC freed an object the program was about to use — the collector is broken." Under what condition is that impossible for a correct collector? What is the <em>opposite</em> case called — the collector refuses to free something the program will never use again — and why can no collector eliminate it?</li>
+</ol>
+<ol>
+<li><strong>(Concept)</strong> Name the invariant incremental marking must hold, why the mutator must help enforce it, and why Yuasa's barrier — which can retain floating garbage the others would free — is the one modern collectors deploy anyway.</li>
+</ol>
+<ol>
+<li><strong>(Derive — GC cost computation)</strong> A service has a 1.2 GiB live heap; one marking thread sustains 400 MB/s. (a) The serial collector's full-collection pause? (b) With 8 parallel marking threads, ideally divided? (c) The SLO is 100 ms — is (b) acceptable, and which two <em>structural</em> moves does the field use instead of more threads? (d) The nursery is 256 MB with 4 MB of survivors; evacuation runs at 1 GB/s — roughly the young pause, and why does the answer not contain the 256 MB?</li>
+</ol>
+<ol>
+<li><strong>(Derive)</strong> A 16 GiB heap uses 512-byte cards, one byte each. (a) Card-table size, and what fraction of the heap? (b) One old-to-young store dirties one card — how many bytes of old space re-scan at the next young collection, worst case? (c) Why would 4 KB cards make (b) worse, and by what factor?</li>
+</ol>
+<ol>
+<li><strong>(Derive)</strong> Nodes A, B, C with <code>A.b = B</code>, <code>B.c = C</code>, <code>C.a = A</code>, and one external root holding A. Walk the reference counts: initial, after the external root drops, and what pure RC concludes. What mechanism refutes the cycle, and which two production runtimes pair it with RC?</li>
+</ol>
+<ol>
+<li><strong>(Diagnose)</strong> A Java service shows 8-second full-GC pauses exactly on the hour; <code>jstat -gcutil</code> shows <code>FGC</code> incrementing hourly; the code never calls <code>System.gc()</code>; the service exposes RMI endpoints. Ops proposes <code>-XX:+DisableExplicitGC</code>. What is happening, what will the flag break within weeks, and what is the correct fix?</li>
+</ol>
+<ol>
+<li><strong>(Diagnose)</strong> A Python worker's RSS grows 200 MB/day. Forced <code>gc.collect()</code> returns 0; a tracemalloc diff shows one line growing: a function returning a closure over a parsed config dict, stored in a module-level callback list. Explain the leak in the live/reachable vocabulary, why neither the cycle detector nor tighter thresholds can help, and the one-line fix.</li>
+</ol>
+<ol>
+<li><strong>(Cross-chapter)</strong> Users report 40 ms hitches; the GC log shows <code>Pause Young ... 4.1ms</code>. Module 10 ch 04's tooling shows <code>Reaching safepoint: 36ms</code> for the same events. Where did the other 36 ms go, what property of a <em>counting loop</em> caused it, and which JDK change fixed that stall class (plus the pre-fix workaround)?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>A correct collector frees only <strong>unreachable</strong> objects — no reference path from any root — and by definition the program cannot reach an unreachable object to use it (if it does, that is use-after-free: a broken collector or a safepoint/barrier bug). The opposite — reachable but dead — is <strong>retained garbage</strong>, the formal leak. No collector eliminates it: "will ever be read" is liveness, which is the halting problem; reachability, an over-approximation, is the only computable proof. The repair severs an edge from a root, never tunes the collector.</li>
+</ol>
+<ol>
+<li>The invariant: <strong>a black object never points to a white object</strong> (monotonicity of proof construction). The mutator must help because it interleaves with marking: a store into a black object creates a black→white edge the collector will never revisit — the 4-step lost-object interleaving — so sweep frees a live object; the barrier restores monotonicity. Yuasa shades the <em>old value</em> on overwrite, snapshotting the graph at mark start: no color tests (cheapest per store), no remark rescan (Dijkstra needs one), and it composes with generational remembered sets. Its cost — dead-during-mark objects float one extra cycle — is bounded, preferred to correctness machinery.</li>
+</ol>
+<ol>
+<li>(a) 1.2 GiB / 400 MB/s ≈ <strong>3.1 s</strong>. (b) 3.1 s / 8 ≈ <strong>390 ms</strong> (ideal; realistically worse — root contention, shared mark stacks). (c) No — ~4x the SLO, and the rate is miss-ladder- capped, so more threads stop paying. The moves: <strong>generational</strong> (prove only the nursery — subject shrinks, cost tracks survivors) and <strong>concurrent/incremental</strong> (run the proof with the mutator, paying write barriers — CMS, G1, ZGC). (d) ≈ 4 MB / 1 GB/s = <strong>4 ms</strong> plus root/card scan: the young collection <em>copies survivors</em>; the other 252 MB are reclaimed as the side effect of emptying the nursery — cost ∝ survivor bytes, not allocation volume.</li>
+</ol>
+<ol>
+<li>(a) 16 GiB / 512 B = 2^25 cards → one byte each = <strong>32 MiB</strong>; 32 MiB / 16 GiB = 1/512 ≈ <strong>0.2%</strong>. (b) One card = one <strong>512-byte</strong> span re-scanned for pointers into the nursery. (c) 4 KB cards: a single stray old-to-young pointer flags 4096 B — an <strong>8x</strong> worse false-positive scan — which is why HotSpot chose 512 B: the byte-per-card tax is fixed and tiny, but the false-positive cost scales with card size.</li>
+</ol>
+<ol>
+<li>Initial: A = 2 (C's reference + external root), B = 1, C = 1. After the external drop: A = 1, B = 1, C = 1 — a stable triangle where each object's only reference comes from another member. No count reaches 0, so RC concludes all three are live: the cycle is its own proof of liveness, unrefutable by construction. The refuting mechanism is an external tracing scanner over the suspect subgraph (trial deletion). Production pairings: CPython (RC + generational cycle detector in <code>gc</code>) and Swift/ObjC (RC + programmer-declared <code>weak</code>, side tables zeroed at dealloc).</li>
+</ol>
+<ol>
+<li>RMI's distributed GC calls <code>System.gc()</code> on a timer — default <code>sun.rmi.dgc.server.gcInterval</code> = 3,600,000 ms, hourly — and a default HotSpot <code>System.gc()</code> is a full collection: the pauses are RMI's timer, not your code. <code>-XX:+DisableExplicitGC</code> stops them, then breaks RMI DGC: remote-object reaping depends on those explicit collections, so unreferenced remote objects and their transport bookkeeping accumulate — OOM weeks later. Correct fixes: raise <code>gcInterval</code>, or <code>-XX:+ExplicitGCInvokesConcurrent</code> so the hint runs concurrently.</li>
+</ol>
+<ol>
+<li>The closures and their captured dicts are <strong>reachable</strong> (module-level list = static root → closure → cell → dict) but <strong>dead</strong> (no callback will ever fire again): retained garbage, the leak definition — not a cycle. The refcounts are all ≥ 1 for reasons that are <em>correct</em> given the root, so there is nothing to collect, and tighter thresholds change only <em>when</em> collection runs, never what is provable. One-line fix: sever the edge — <code>weakref.ref</code> (or capture only needed fields, or expire entries) so the list no longer proves liveness for the config.</li>
+</ol>
+<ol>
+<li>Pause = GC work + time-to-safepoint: 36 of the 40 ms was bringing threads to the safepoint where the young GC could read their roots — a TTSP stall, not collector work. The cause: an <code>int</code>-induction <strong>counted loop</strong> contains no safepoint poll, so a thread in one long iteration cannot stop while every other thread waits at the quorum. JDK 10's loop strip mining added polls to counted loops; before that, insiders forced the loop to be non-counted — a <code>long</code> induction variable — so the JIT emitted polls. (Module 10 ch 04: read <code>Reaching safepoint</code> separately from <code>At safepoint</code>; here the second is innocent.)</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 19 — PL theory &amp; type systems</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

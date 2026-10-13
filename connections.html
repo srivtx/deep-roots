@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The connections map — deep-roots</title>
+<meta name="description" content="The cross-reference graph of the whole program: 1129 module-to-module citations across 132 chapters, the strongest ties, and the load-bearing chapters.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The connections map — deep-roots">
+<meta property="og:description" content="The cross-reference graph of the whole program: 1129 module-to-module citations across 132 chapters, the strongest ties, and the load-bearing chapters.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The connections map — deep-roots">
+<meta name="twitter:description" content="The cross-reference graph of the whole program: 1129 module-to-module citations across 132 chapters, the strongest ties, and the load-bearing chapters.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="index.html#module-01">Module 01</a><a href="index.html#roadmap">Modules</a><a href="quiz.html">Quiz</a><a href="roadmap.html">Roadmap</a><a href="connections.html">Map</a><a href="index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="page-main">
+<h1 class="page-title">The connections map</h1>
+<p class="page-sub">One root, twenty-two trees, 1129 cross-references: every number in this
+table is a place one chapter reached into another and said <em>you already know this —
+use it here</em>. Computed live from the chapter markdown at build time.</p>
+
+<div class="section-head"><h2>The dependency matrix</h2><div class="rule"></div></div>
+<p class="section-intro">Row = the citing module, column = the cited module. Module 01 is
+the root: every module reaches into it (column 01), and — after the connection retrofit —
+it reaches forward into all twenty-one trees (row 01). Darker cells are stronger ties.</p>
+<table class="xmap"><thead><tr><th class="xh">&rarr; cites</th>
+<th class="xh"><a href="index.html#module-01" title="Memory models of programming languages">01</a></th>
+<th class="xh"><a href="m02/index.html" title="Memory security &amp; exploitation">02</a></th>
+<th class="xh"><a href="m03/index.html" title="Software bugs: the taxonomy of failure">03</a></th>
+<th class="xh"><a href="m04/index.html" title="Decompilation &amp; reverse engineering">04</a></th>
+<th class="xh"><a href="m05/index.html" title="Android internals">05</a></th>
+<th class="xh"><a href="m06/index.html" title="iOS internals">06</a></th>
+<th class="xh"><a href="m07/index.html" title="Desktop OS internals">07</a></th>
+<th class="xh"><a href="m08/index.html" title="COBOL &amp; the mainframe world">08</a></th>
+<th class="xh"><a href="m09/index.html" title="Concurrency &amp; distributed memory">09</a></th>
+<th class="xh"><a href="m10/index.html" title="Compilers &amp; runtime internals">10</a></th>
+<th class="xh"><a href="m11/index.html" title="Database storage engines">11</a></th>
+<th class="xh"><a href="m12/index.html" title="GPU &amp; AI accelerator memory">12</a></th>
+<th class="xh"><a href="m13/index.html" title="Networking internals">13</a></th>
+<th class="xh"><a href="m14/index.html" title="File systems &amp; storage">14</a></th>
+<th class="xh"><a href="m15/index.html" title="Virtualization, containers &amp; the cloud">15</a></th>
+<th class="xh"><a href="m16/index.html" title="Browser engine internals">16</a></th>
+<th class="xh"><a href="m17/index.html" title="Digital hardware: from transistors to silicon">17</a></th>
+<th class="xh"><a href="m18/index.html" title="Cryptography internals">18</a></th>
+<th class="xh"><a href="m19/index.html" title="PL theory &amp; type systems">19</a></th>
+<th class="xh"><a href="m20/index.html" title="Embedded &amp; firmware">20</a></th>
+<th class="xh"><a href="m21/index.html" title="Formal verification">21</a></th>
+<th class="xh"><a href="m22/index.html" title="ML systems &amp; training infrastructure">22</a></th>
+</tr></thead><tbody>
+<tr><th class="xh"><a href="index.html#module-01" title="Memory models of programming languages">01 Memory models of programming languages</a></th>
+<td class="x0"></td>
+<td class="x1"><a href="m02/index.html" title="Memory models of programming languages &rarr; Memory security &amp; exploitation: 7 refs">7</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m04/index.html" title="Memory models of programming languages &rarr; Decompilation &amp; reverse engineering: 3 refs">3</a></td>
+<td class="x1"><a href="m05/index.html" title="Memory models of programming languages &rarr; Android internals: 1 refs">1</a></td>
+<td class="x1"><a href="m06/index.html" title="Memory models of programming languages &rarr; iOS internals: 1 refs">1</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m08/index.html" title="Memory models of programming languages &rarr; COBOL &amp; the mainframe world: 1 refs">1</a></td>
+<td class="x1"><a href="m09/index.html" title="Memory models of programming languages &rarr; Concurrency &amp; distributed memory: 5 refs">5</a></td>
+<td class="x1"><a href="m10/index.html" title="Memory models of programming languages &rarr; Compilers &amp; runtime internals: 2 refs">2</a></td>
+<td class="x1"><a href="m11/index.html" title="Memory models of programming languages &rarr; Database storage engines: 1 refs">1</a></td>
+<td class="x1"><a href="m12/index.html" title="Memory models of programming languages &rarr; GPU &amp; AI accelerator memory: 1 refs">1</a></td>
+<td class="x1"><a href="m13/index.html" title="Memory models of programming languages &rarr; Networking internals: 1 refs">1</a></td>
+<td class="x1"><a href="m14/index.html" title="Memory models of programming languages &rarr; File systems &amp; storage: 2 refs">2</a></td>
+<td class="x1"><a href="m15/index.html" title="Memory models of programming languages &rarr; Virtualization, containers &amp; the cloud: 2 refs">2</a></td>
+<td class="x1"><a href="m16/index.html" title="Memory models of programming languages &rarr; Browser engine internals: 3 refs">3</a></td>
+<td class="x1"><a href="m17/index.html" title="Memory models of programming languages &rarr; Digital hardware: from transistors to silicon: 4 refs">4</a></td>
+<td class="x1"><a href="m18/index.html" title="Memory models of programming languages &rarr; Cryptography internals: 5 refs">5</a></td>
+<td class="x1"><a href="m19/index.html" title="Memory models of programming languages &rarr; PL theory &amp; type systems: 12 refs">12</a></td>
+<td class="x1"><a href="m20/index.html" title="Memory models of programming languages &rarr; Embedded &amp; firmware: 4 refs">4</a></td>
+<td class="x1"><a href="m21/index.html" title="Memory models of programming languages &rarr; Formal verification: 3 refs">3</a></td>
+<td class="x1"><a href="m22/index.html" title="Memory models of programming languages &rarr; ML systems &amp; training infrastructure: 7 refs">7</a></td>
+</tr>
+<tr><th class="xh"><a href="m02/index.html" title="Memory security &amp; exploitation">02 Memory security &amp; exploitation</a></th>
+<td class="x4"><a href="index.html#module-01" title="Memory security &amp; exploitation &rarr; Memory models of programming languages: 43 refs">43</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m03/index.html" title="Memory security &amp; exploitation &rarr; Software bugs: the taxonomy of failure: 3 refs">3</a></td>
+<td class="x1"><a href="m04/index.html" title="Memory security &amp; exploitation &rarr; Decompilation &amp; reverse engineering: 2 refs">2</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m03/index.html" title="Software bugs: the taxonomy of failure">03 Software bugs</a></th>
+<td class="x3"><a href="index.html#module-01" title="Software bugs: the taxonomy of failure &rarr; Memory models of programming languages: 32 refs">32</a></td>
+<td class="x1"><a href="m02/index.html" title="Software bugs: the taxonomy of failure &rarr; Memory security &amp; exploitation: 9 refs">9</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m04/index.html" title="Software bugs: the taxonomy of failure &rarr; Decompilation &amp; reverse engineering: 1 refs">1</a></td>
+<td class="x1"><a href="m05/index.html" title="Software bugs: the taxonomy of failure &rarr; Android internals: 1 refs">1</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m08/index.html" title="Software bugs: the taxonomy of failure &rarr; COBOL &amp; the mainframe world: 2 refs">2</a></td>
+<td class="x1"><a href="m09/index.html" title="Software bugs: the taxonomy of failure &rarr; Concurrency &amp; distributed memory: 2 refs">2</a></td>
+<td class="x1"><a href="m10/index.html" title="Software bugs: the taxonomy of failure &rarr; Compilers &amp; runtime internals: 10 refs">10</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m04/index.html" title="Decompilation &amp; reverse engineering">04 Decompilation &amp; reverse engineering</a></th>
+<td class="x2"><a href="index.html#module-01" title="Decompilation &amp; reverse engineering &rarr; Memory models of programming languages: 19 refs">19</a></td>
+<td class="x1"><a href="m02/index.html" title="Decompilation &amp; reverse engineering &rarr; Memory security &amp; exploitation: 7 refs">7</a></td>
+<td class="x1"><a href="m03/index.html" title="Decompilation &amp; reverse engineering &rarr; Software bugs: the taxonomy of failure: 2 refs">2</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m05/index.html" title="Decompilation &amp; reverse engineering &rarr; Android internals: 1 refs">1</a></td>
+<td class="x1"><a href="m06/index.html" title="Decompilation &amp; reverse engineering &rarr; iOS internals: 1 refs">1</a></td>
+<td class="x1"><a href="m07/index.html" title="Decompilation &amp; reverse engineering &rarr; Desktop OS internals: 1 refs">1</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m10/index.html" title="Decompilation &amp; reverse engineering &rarr; Compilers &amp; runtime internals: 2 refs">2</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m05/index.html" title="Android internals">05 Android internals</a></th>
+<td class="x2"><a href="index.html#module-01" title="Android internals &rarr; Memory models of programming languages: 25 refs">25</a></td>
+<td class="x1"><a href="m02/index.html" title="Android internals &rarr; Memory security &amp; exploitation: 3 refs">3</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m04/index.html" title="Android internals &rarr; Decompilation &amp; reverse engineering: 4 refs">4</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m06/index.html" title="Android internals &rarr; iOS internals: 5 refs">5</a></td>
+<td class="x1"><a href="m07/index.html" title="Android internals &rarr; Desktop OS internals: 3 refs">3</a></td>
+<td class="x1"><a href="m08/index.html" title="Android internals &rarr; COBOL &amp; the mainframe world: 1 refs">1</a></td>
+<td class="x1"><a href="m09/index.html" title="Android internals &rarr; Concurrency &amp; distributed memory: 1 refs">1</a></td>
+<td class="x1"><a href="m10/index.html" title="Android internals &rarr; Compilers &amp; runtime internals: 1 refs">1</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m06/index.html" title="iOS internals">06 iOS internals</a></th>
+<td class="x3"><a href="index.html#module-01" title="iOS internals &rarr; Memory models of programming languages: 31 refs">31</a></td>
+<td class="x1"><a href="m02/index.html" title="iOS internals &rarr; Memory security &amp; exploitation: 4 refs">4</a></td>
+<td class="x1"><a href="m03/index.html" title="iOS internals &rarr; Software bugs: the taxonomy of failure: 3 refs">3</a></td>
+<td class="x1"><a href="m04/index.html" title="iOS internals &rarr; Decompilation &amp; reverse engineering: 4 refs">4</a></td>
+<td class="x1"><a href="m05/index.html" title="iOS internals &rarr; Android internals: 13 refs">13</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m07/index.html" title="iOS internals &rarr; Desktop OS internals: 4 refs">4</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m09/index.html" title="iOS internals &rarr; Concurrency &amp; distributed memory: 2 refs">2</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m07/index.html" title="Desktop OS internals">07 Desktop OS internals</a></th>
+<td class="x2"><a href="index.html#module-01" title="Desktop OS internals &rarr; Memory models of programming languages: 27 refs">27</a></td>
+<td class="x1"><a href="m02/index.html" title="Desktop OS internals &rarr; Memory security &amp; exploitation: 10 refs">10</a></td>
+<td class="x1"><a href="m03/index.html" title="Desktop OS internals &rarr; Software bugs: the taxonomy of failure: 5 refs">5</a></td>
+<td class="x1"><a href="m04/index.html" title="Desktop OS internals &rarr; Decompilation &amp; reverse engineering: 6 refs">6</a></td>
+<td class="x1"><a href="m05/index.html" title="Desktop OS internals &rarr; Android internals: 4 refs">4</a></td>
+<td class="x2"><a href="m06/index.html" title="Desktop OS internals &rarr; iOS internals: 19 refs">19</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m11/index.html" title="Desktop OS internals &rarr; Database storage engines: 3 refs">3</a></td>
+<td class="x1"><a href="m12/index.html" title="Desktop OS internals &rarr; GPU &amp; AI accelerator memory: 4 refs">4</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m08/index.html" title="COBOL &amp; the mainframe world">08 COBOL &amp; the mainframe world</a></th>
+<td class="x3"><a href="index.html#module-01" title="COBOL &amp; the mainframe world &rarr; Memory models of programming languages: 30 refs">30</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m03/index.html" title="COBOL &amp; the mainframe world &rarr; Software bugs: the taxonomy of failure: 8 refs">8</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m05/index.html" title="COBOL &amp; the mainframe world &rarr; Android internals: 3 refs">3</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m09/index.html" title="Concurrency &amp; distributed memory">09 Concurrency &amp; distributed memory</a></th>
+<td class="x2"><a href="index.html#module-01" title="Concurrency &amp; distributed memory &rarr; Memory models of programming languages: 24 refs">24</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m03/index.html" title="Concurrency &amp; distributed memory &rarr; Software bugs: the taxonomy of failure: 11 refs">11</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m05/index.html" title="Concurrency &amp; distributed memory &rarr; Android internals: 3 refs">3</a></td>
+<td class="x1"><a href="m06/index.html" title="Concurrency &amp; distributed memory &rarr; iOS internals: 2 refs">2</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m10/index.html" title="Concurrency &amp; distributed memory &rarr; Compilers &amp; runtime internals: 2 refs">2</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m12/index.html" title="Concurrency &amp; distributed memory &rarr; GPU &amp; AI accelerator memory: 1 refs">1</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m10/index.html" title="Compilers &amp; runtime internals">10 Compilers &amp; runtime internals</a></th>
+<td class="x3"><a href="index.html#module-01" title="Compilers &amp; runtime internals &rarr; Memory models of programming languages: 33 refs">33</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m03/index.html" title="Compilers &amp; runtime internals &rarr; Software bugs: the taxonomy of failure: 11 refs">11</a></td>
+<td class="x1"><a href="m04/index.html" title="Compilers &amp; runtime internals &rarr; Decompilation &amp; reverse engineering: 14 refs">14</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m09/index.html" title="Compilers &amp; runtime internals &rarr; Concurrency &amp; distributed memory: 7 refs">7</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m12/index.html" title="Compilers &amp; runtime internals &rarr; GPU &amp; AI accelerator memory: 1 refs">1</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m11/index.html" title="Database storage engines">11 Database storage engines</a></th>
+<td class="x2"><a href="index.html#module-01" title="Database storage engines &rarr; Memory models of programming languages: 27 refs">27</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m03/index.html" title="Database storage engines &rarr; Software bugs: the taxonomy of failure: 2 refs">2</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m07/index.html" title="Database storage engines &rarr; Desktop OS internals: 4 refs">4</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m09/index.html" title="Database storage engines &rarr; Concurrency &amp; distributed memory: 1 refs">1</a></td>
+<td class="x1"><a href="m10/index.html" title="Database storage engines &rarr; Compilers &amp; runtime internals: 3 refs">3</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m12/index.html" title="GPU &amp; AI accelerator memory">12 GPU &amp; AI accelerator memory</a></th>
+<td class="x2"><a href="index.html#module-01" title="GPU &amp; AI accelerator memory &rarr; Memory models of programming languages: 26 refs">26</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m03/index.html" title="GPU &amp; AI accelerator memory &rarr; Software bugs: the taxonomy of failure: 2 refs">2</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m06/index.html" title="GPU &amp; AI accelerator memory &rarr; iOS internals: 4 refs">4</a></td>
+<td class="x1"><a href="m07/index.html" title="GPU &amp; AI accelerator memory &rarr; Desktop OS internals: 3 refs">3</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m09/index.html" title="GPU &amp; AI accelerator memory &rarr; Concurrency &amp; distributed memory: 2 refs">2</a></td>
+<td class="x1"><a href="m10/index.html" title="GPU &amp; AI accelerator memory &rarr; Compilers &amp; runtime internals: 2 refs">2</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m13/index.html" title="Networking internals">13 Networking internals</a></th>
+<td class="x2"><a href="index.html#module-01" title="Networking internals &rarr; Memory models of programming languages: 16 refs">16</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m07/index.html" title="Networking internals &rarr; Desktop OS internals: 5 refs">5</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m12/index.html" title="Networking internals &rarr; GPU &amp; AI accelerator memory: 3 refs">3</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m15/index.html" title="Networking internals &rarr; Virtualization, containers &amp; the cloud: 11 refs">11</a></td>
+<td class="x1"><a href="m16/index.html" title="Networking internals &rarr; Browser engine internals: 2 refs">2</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m14/index.html" title="File systems &amp; storage">14 File systems &amp; storage</a></th>
+<td class="x2"><a href="index.html#module-01" title="File systems &amp; storage &rarr; Memory models of programming languages: 23 refs">23</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x2"><a href="m11/index.html" title="File systems &amp; storage &rarr; Database storage engines: 22 refs">22</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m15/index.html" title="File systems &amp; storage &rarr; Virtualization, containers &amp; the cloud: 3 refs">3</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m15/index.html" title="Virtualization, containers &amp; the cloud">15 Virtualization, containers &amp; the cloud</a></th>
+<td class="x2"><a href="index.html#module-01" title="Virtualization, containers &amp; the cloud &rarr; Memory models of programming languages: 27 refs">27</a></td>
+<td class="x1"><a href="m02/index.html" title="Virtualization, containers &amp; the cloud &rarr; Memory security &amp; exploitation: 7 refs">7</a></td>
+<td class="x1"><a href="m03/index.html" title="Virtualization, containers &amp; the cloud &rarr; Software bugs: the taxonomy of failure: 4 refs">4</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m07/index.html" title="Virtualization, containers &amp; the cloud &rarr; Desktop OS internals: 1 refs">1</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m12/index.html" title="Virtualization, containers &amp; the cloud &rarr; GPU &amp; AI accelerator memory: 2 refs">2</a></td>
+<td class="x1"><a href="m13/index.html" title="Virtualization, containers &amp; the cloud &rarr; Networking internals: 8 refs">8</a></td>
+<td class="x1"><a href="m14/index.html" title="Virtualization, containers &amp; the cloud &rarr; File systems &amp; storage: 5 refs">5</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m16/index.html" title="Browser engine internals">16 Browser engine internals</a></th>
+<td class="x2"><a href="index.html#module-01" title="Browser engine internals &rarr; Memory models of programming languages: 24 refs">24</a></td>
+<td class="x1"><a href="m02/index.html" title="Browser engine internals &rarr; Memory security &amp; exploitation: 5 refs">5</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m10/index.html" title="Browser engine internals &rarr; Compilers &amp; runtime internals: 6 refs">6</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m13/index.html" title="Browser engine internals &rarr; Networking internals: 8 refs">8</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m15/index.html" title="Browser engine internals &rarr; Virtualization, containers &amp; the cloud: 8 refs">8</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m17/index.html" title="Digital hardware: from transistors to silicon">17 Digital hardware</a></th>
+<td class="x2"><a href="index.html#module-01" title="Digital hardware: from transistors to silicon &rarr; Memory models of programming languages: 26 refs">26</a></td>
+<td class="x1"><a href="m02/index.html" title="Digital hardware: from transistors to silicon &rarr; Memory security &amp; exploitation: 4 refs">4</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m12/index.html" title="Digital hardware: from transistors to silicon &rarr; GPU &amp; AI accelerator memory: 9 refs">9</a></td>
+<td class="x1"><a href="m13/index.html" title="Digital hardware: from transistors to silicon &rarr; Networking internals: 2 refs">2</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m18/index.html" title="Cryptography internals">18 Cryptography internals</a></th>
+<td class="x1"><a href="index.html#module-01" title="Cryptography internals &rarr; Memory models of programming languages: 12 refs">12</a></td>
+<td class="x1"><a href="m02/index.html" title="Cryptography internals &rarr; Memory security &amp; exploitation: 6 refs">6</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m04/index.html" title="Cryptography internals &rarr; Decompilation &amp; reverse engineering: 1 refs">1</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m13/index.html" title="Cryptography internals &rarr; Networking internals: 3 refs">3</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m15/index.html" title="Cryptography internals &rarr; Virtualization, containers &amp; the cloud: 1 refs">1</a></td>
+<td class="x1"><a href="m16/index.html" title="Cryptography internals &rarr; Browser engine internals: 4 refs">4</a></td>
+<td class="x1"><a href="m17/index.html" title="Cryptography internals &rarr; Digital hardware: from transistors to silicon: 4 refs">4</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m19/index.html" title="PL theory &amp; type systems">19 PL theory &amp; type systems</a></th>
+<td class="x3"><a href="index.html#module-01" title="PL theory &amp; type systems &rarr; Memory models of programming languages: 30 refs">30</a></td>
+<td class="x1"><a href="m02/index.html" title="PL theory &amp; type systems &rarr; Memory security &amp; exploitation: 3 refs">3</a></td>
+<td class="x1"><a href="m03/index.html" title="PL theory &amp; type systems &rarr; Software bugs: the taxonomy of failure: 1 refs">1</a></td>
+<td class="x1"><a href="m04/index.html" title="PL theory &amp; type systems &rarr; Decompilation &amp; reverse engineering: 1 refs">1</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m09/index.html" title="PL theory &amp; type systems &rarr; Concurrency &amp; distributed memory: 2 refs">2</a></td>
+<td class="x1"><a href="m10/index.html" title="PL theory &amp; type systems &rarr; Compilers &amp; runtime internals: 6 refs">6</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m16/index.html" title="PL theory &amp; type systems &rarr; Browser engine internals: 3 refs">3</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m20/index.html" title="Embedded &amp; firmware">20 Embedded &amp; firmware</a></th>
+<td class="x2"><a href="index.html#module-01" title="Embedded &amp; firmware &rarr; Memory models of programming languages: 22 refs">22</a></td>
+<td class="x1"><a href="m02/index.html" title="Embedded &amp; firmware &rarr; Memory security &amp; exploitation: 4 refs">4</a></td>
+<td class="x1"><a href="m03/index.html" title="Embedded &amp; firmware &rarr; Software bugs: the taxonomy of failure: 5 refs">5</a></td>
+<td class="x1"><a href="m04/index.html" title="Embedded &amp; firmware &rarr; Decompilation &amp; reverse engineering: 4 refs">4</a></td>
+<td class="x1"><a href="m05/index.html" title="Embedded &amp; firmware &rarr; Android internals: 2 refs">2</a></td>
+<td class="x1"><a href="m06/index.html" title="Embedded &amp; firmware &rarr; iOS internals: 1 refs">1</a></td>
+<td class="x1"><a href="m07/index.html" title="Embedded &amp; firmware &rarr; Desktop OS internals: 8 refs">8</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m09/index.html" title="Embedded &amp; firmware &rarr; Concurrency &amp; distributed memory: 11 refs">11</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m13/index.html" title="Embedded &amp; firmware &rarr; Networking internals: 2 refs">2</a></td>
+<td class="x1"><a href="m14/index.html" title="Embedded &amp; firmware &rarr; File systems &amp; storage: 3 refs">3</a></td>
+<td class="x1"><a href="m15/index.html" title="Embedded &amp; firmware &rarr; Virtualization, containers &amp; the cloud: 3 refs">3</a></td>
+<td class="x1"><a href="m16/index.html" title="Embedded &amp; firmware &rarr; Browser engine internals: 2 refs">2</a></td>
+<td class="x1"><a href="m17/index.html" title="Embedded &amp; firmware &rarr; Digital hardware: from transistors to silicon: 7 refs">7</a></td>
+<td class="x1"><a href="m18/index.html" title="Embedded &amp; firmware &rarr; Cryptography internals: 4 refs">4</a></td>
+<td class="x1"><a href="m19/index.html" title="Embedded &amp; firmware &rarr; PL theory &amp; type systems: 5 refs">5</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m21/index.html" title="Formal verification">21 Formal verification</a></th>
+<td class="x1"><a href="index.html#module-01" title="Formal verification &rarr; Memory models of programming languages: 10 refs">10</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m04/index.html" title="Formal verification &rarr; Decompilation &amp; reverse engineering: 3 refs">3</a></td>
+<td class="x1"><a href="m05/index.html" title="Formal verification &rarr; Android internals: 1 refs">1</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m07/index.html" title="Formal verification &rarr; Desktop OS internals: 1 refs">1</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m09/index.html" title="Formal verification &rarr; Concurrency &amp; distributed memory: 2 refs">2</a></td>
+<td class="x1"><a href="m10/index.html" title="Formal verification &rarr; Compilers &amp; runtime internals: 3 refs">3</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m17/index.html" title="Formal verification &rarr; Digital hardware: from transistors to silicon: 4 refs">4</a></td>
+<td class="x1"><a href="m18/index.html" title="Formal verification &rarr; Cryptography internals: 6 refs">6</a></td>
+<td class="x3"><a href="m19/index.html" title="Formal verification &rarr; PL theory &amp; type systems: 29 refs">29</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+<tr><th class="xh"><a href="m22/index.html" title="ML systems &amp; training infrastructure">22 ML systems &amp; training infrastructure</a></th>
+<td class="x3"><a href="index.html#module-01" title="ML systems &amp; training infrastructure &rarr; Memory models of programming languages: 36 refs">36</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x1"><a href="m07/index.html" title="ML systems &amp; training infrastructure &rarr; Desktop OS internals: 3 refs">3</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m09/index.html" title="ML systems &amp; training infrastructure &rarr; Concurrency &amp; distributed memory: 2 refs">2</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m11/index.html" title="ML systems &amp; training infrastructure &rarr; Database storage engines: 2 refs">2</a></td>
+<td class="x1"><a href="m12/index.html" title="ML systems &amp; training infrastructure &rarr; GPU &amp; AI accelerator memory: 4 refs">4</a></td>
+<td class="x1"><a href="m13/index.html" title="ML systems &amp; training infrastructure &rarr; Networking internals: 11 refs">11</a></td>
+<td class="x1"><a href="m14/index.html" title="ML systems &amp; training infrastructure &rarr; File systems &amp; storage: 2 refs">2</a></td>
+<td class="x1"><a href="m15/index.html" title="ML systems &amp; training infrastructure &rarr; Virtualization, containers &amp; the cloud: 2 refs">2</a></td>
+<td class="x0"></td>
+<td class="x1"><a href="m17/index.html" title="ML systems &amp; training infrastructure &rarr; Digital hardware: from transistors to silicon: 2 refs">2</a></td>
+<td class="x1"><a href="m18/index.html" title="ML systems &amp; training infrastructure &rarr; Cryptography internals: 1 refs">1</a></td>
+<td class="x1"><a href="m19/index.html" title="ML systems &amp; training infrastructure &rarr; PL theory &amp; type systems: 3 refs">3</a></td>
+<td class="x0"></td>
+<td class="x0"></td>
+<td class="x0"></td>
+</tr>
+</tbody></table>
+
+<div class="section-head"><h2>The strongest ties</h2><div class="rule"></div></div>
+<p class="section-intro">The pairs that carry the most cross-references — where two fields
+turn out to be the same idea wearing different clothes.</p>
+<table class="xties"><thead><tr><th>module</th><th></th><th>cites</th><th>refs</th></tr></thead><tbody><tr><td><a href="m02/index.html">02 Memory security &amp; exploitation</a></td><td class="xarrow">&rarr;</td><td><a href="index.html#module-01">01 Memory models of programming languages</a></td><td class="xc">43</td></tr><tr><td><a href="m22/index.html">22 ML systems &amp; training infrastructure</a></td><td class="xarrow">&rarr;</td><td><a href="index.html#module-01">01 Memory models of programming languages</a></td><td class="xc">36</td></tr><tr><td><a href="m10/index.html">10 Compilers &amp; runtime internals</a></td><td class="xarrow">&rarr;</td><td><a href="index.html#module-01">01 Memory models of programming languages</a></td><td class="xc">33</td></tr><tr><td><a href="m03/index.html">03 Software bugs: the taxonomy of failure</a></td><td class="xarrow">&rarr;</td><td><a href="index.html#module-01">01 Memory models of programming languages</a></td><td class="xc">32</td></tr><tr><td><a href="m06/index.html">06 iOS internals</a></td><td class="xarrow">&rarr;</td><td><a href="index.html#module-01">01 Memory models of programming languages</a></td><td class="xc">31</td></tr><tr><td><a href="m19/index.html">19 PL theory &amp; type systems</a></td><td class="xarrow">&rarr;</td><td><a href="index.html#module-01">01 Memory models of programming languages</a></td><td class="xc">30</td></tr><tr><td><a href="m08/index.html">08 COBOL &amp; the mainframe world</a></td><td class="xarrow">&rarr;</td><td><a href="index.html#module-01">01 Memory models of programming languages</a></td><td class="xc">30</td></tr><tr><td><a href="m21/index.html">21 Formal verification</a></td><td class="xarrow">&rarr;</td><td><a href="m19/index.html">19 PL theory &amp; type systems</a></td><td class="xc">29</td></tr><tr><td><a href="m07/index.html">07 Desktop OS internals</a></td><td class="xarrow">&rarr;</td><td><a href="index.html#module-01">01 Memory models of programming languages</a></td><td class="xc">27</td></tr><tr><td><a href="m15/index.html">15 Virtualization, containers &amp; the cloud</a></td><td class="xarrow">&rarr;</td><td><a href="index.html#module-01">01 Memory models of programming languages</a></td><td class="xc">27</td></tr><tr><td><a href="m11/index.html">11 Database storage engines</a></td><td class="xarrow">&rarr;</td><td><a href="index.html#module-01">01 Memory models of programming languages</a></td><td class="xc">27</td></tr><tr><td><a href="m12/index.html">12 GPU &amp; AI accelerator memory</a></td><td class="xarrow">&rarr;</td><td><a href="index.html#module-01">01 Memory models of programming languages</a></td><td class="xc">26</td></tr></tbody></table>
+
+<div class="section-head"><h2>The load-bearing chapters</h2><div class="rule"></div></div>
+<p class="section-intro">The chapters the rest of the program leans on hardest. These are
+the pages to read twice: almost every other chapter assumes them.</p>
+<table class="xties"><thead><tr><th>the load-bearing chapters</th><th>inbound refs</th></tr></thead><tbody><tr><td><a href="chapters/ch03.html">m01 ch03 — Virtual memory: the grand illusion</a></td><td class="xc">139</td></tr><tr><td><a href="chapters/ch02.html">m01 ch02 — The hierarchy: latency is the tax, locality is the loophole</a></td><td class="xc">61</td></tr><tr><td><a href="chapters/ch04.html">m01 ch04 — The stack: the shape of call lifetimes</a></td><td class="xc">56</td></tr><tr><td><a href="chapters/ch05.html">m01 ch05 — The heap: the everything-else machine</a></td><td class="xc">46</td></tr><tr><td><a href="chapters/ch19.html">m01 ch19 — Allocators: the machinery under malloc</a></td><td class="xc">38</td></tr><tr><td><a href="chapters/ch20.html">m01 ch20 — The hardware memory model: why cores disagree about memory</a></td><td class="xc">31</td></tr><tr><td><a href="m03/ch02.html">m03 ch02 — The memory-bug family</a></td><td class="xc">27</td></tr><tr><td><a href="chapters/ch12.html">m01 ch12 — Java: the generational heap of the JVM</a></td><td class="xc">26</td></tr><tr><td><a href="chapters/ch14.html">m01 ch14 — Python: everything is a PyObject</a></td><td class="xc">22</td></tr><tr><td><a href="m19/ch03.html">m19 ch03 — Memory safety as a theorem</a></td><td class="xc">19</td></tr><tr><td><a href="m02/ch06.html">m02 ch06 — The mitigation ladder</a></td><td class="xc">18</td></tr><tr><td><a href="chapters/ch06.html">m01 ch06 — Object layout: what a "value" really looks like in RAM</a></td><td class="xc">18</td></tr><tr><td><a href="chapters/ch01.html">m01 ch01 — Memory from silicon</a></td><td class="xc">17</td></tr><tr><td><a href="m06/ch02.html">m06 ch02 — Jetsam &amp; the compressor</a></td><td class="xc">15</td></tr></tbody></table>
+
+<div class="section-head"><h2>How to read the map</h2><div class="rule"></div></div>
+<p class="section-intro">Start anywhere: pick a module you care about, read its chapters,
+and follow its citations backward to the roots (they nearly all end at module 01, chapter
+03 or chapter 05). Then follow them forward: the same page you just read is the
+prerequisite for three modules you have not opened yet. That is the whole design of this
+program: one root layer, twenty-two fields, and a thousand doors between them.</p>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="index.html">Home</a>
+      <a href="index.html#module-01">Module 01</a>
+      <a href="quiz.html">Quiz</a>
+      <a href="roadmap.html">Roadmap</a>
+      <a href="connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="assets/theme.js"></script>
+</body>
+</html>

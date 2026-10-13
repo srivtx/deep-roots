@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 19 final exam — deep-roots</title>
+<meta name="description" content="Final exam for module 19 (why the rules are theorems), with worked answers.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 19 final exam — deep-roots">
+<meta property="og:description" content="Final exam for module 19 (why the rules are theorems), with worked answers.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 19 final exam — deep-roots">
+<meta name="twitter:description" content="Final exam for module 19 (why the rules are theorems), with worked answers.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 19 &middot; why the rules are theorems &middot; final exam</div>
+<h1 class="post-title">Module 19 final exam</h1>
+<div class="post-meta">every chapter &middot; worked answers behind the fold</div>
+<p>Twelve questions in five parts — three on the minimal machine (chapter 01), three on types as theorems (chapter 02), two on memory safety as a theorem (03), two on GC as proof search (04), two on the limits (05). Closed book; every answer is worked, not stated — the derivations are the point. Scoring: 11+ = you own this module; 8-10 = solid, revisit the flagged chapters; &lt;8 = the chapter quizzes are the study path.</p>
+<p><strong>Part I — the minimal machine (chapter 01)</strong></p>
+<ol>
+<li><strong>Predict.</strong> With <code>TRUE = λa.λb.a</code>, <code>FALSE = λa.λb.b</code>, define <code>AND = λp.λq. p q FALSE</code> and <code>OR = λp.λq. p TRUE q</code>, and let <code>Ω = (λx.x x)(λx.x x)</code>. For each of <code>AND FALSE Ω</code>, <code>AND TRUE Ω</code>, <code>OR TRUE Ω</code>: does normal order terminate? Give the normal form with a short trace, then state in one sentence which argument position each operator is strict in. Finally: why must <code>&amp;&amp;</code> in C be syntax rather than a function?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A log scanner ships v1 and is refactored to v2 "for consistency"; after the change the service hangs on a live tail where v1 answered in milliseconds:</li>
+</ol>
+<pre><code class="language-python">   hit = any(is_bad(l) for l in tail_log(sys.stdin))   # v1: returns fast
+   lines = [l for l in tail_log(sys.stdin)]            # v2: hangs here
+   hit = any(is_bad(l) for l in lines)</code></pre>
+<p>In evaluation-order terms: which redexes moved, from what position to what position? What is <code>any</code>'s short-circuit in λ terms (name the chapter-01 shape)? What property of the argument does v2 wait for that Ω also never acquires?</p>
+<ol>
+<li><strong>Derive.</strong> Strict languages cannot ship <code>Y</code>; they ship <code>Z</code>. (a) Unfold <code>Y g</code> one β-step, then show that evaluating the result under applicative order never applies <code>g</code> — trace two more steps and name the regrowing pattern. (b) Unfold <code>Z g</code> one step, where <code>Z = λf.(λx.f (λv.x x v))(λx.f (λv.x x v))</code>, and show that <code>g</code> now receives a value. (c) Which conversion is the <code>λv</code> wrapper an instance of, and why does call-by-value need it?</li>
+</ol>
+<p><strong>Part II — types as theorems (chapter 02)</strong></p>
+<ol>
+<li><strong>Derive.</strong> Prove preservation for the <code>if</code> construct in full: given <code>⊢ if t₁ then t₂ else t₃ : T</code> by rule T-If, with premise derivations D₁ : <code>⊢ t₁ : Bool</code>, D₂ : <code>⊢ t₂ : T</code>, D₃ : <code>⊢ t₃ : T</code>, and <code>if t₁ then t₂ else t₃ → t'</code>, case on the three evaluation rules and show <code>⊢ t' : T</code> each time — naming where the induction hypothesis is used, where a premise does the work alone, and where T-If's branches-have-the-same-type premise is load-bearing.</li>
+</ol>
+<ol>
+<li><strong>Derive.</strong> (a) Derive the function-subtyping rule in three lines from what callers may pass and what they need back: exactly when is <code>S₁→S₂ &lt;: T₁→T₂</code>? (b) Apply it to records: work the store that makes depth subtyping on a <em>mutable</em> field unsound — alias an <code>Employee {birthday: RichDate}</code> as a <code>Person {birthday: Date}</code>, write a plain <code>Date</code> through the narrow view, then use the wide view — and say which two positions a mutable field occupies at once. (c) One sentence: why does C#'s <code>IEnumerable&lt;out T&gt;</code> escape the problem?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A Java library ships <code>static &lt;T&gt; T first(List&lt;T&gt; xs)</code> documented as "first element, or null if empty"; callers de-reference and NPE. Diagnose with (a) parametricity — enumerate what a genuine inhabitant of <code>∀α. List&lt;α&gt; → α</code> can compute, and what <code>null</code> therefore is; (b) why no runtime check catches it — what erasure did to the proof, and which chapter-02 soundness hole <code>null</code> is; (c) the honest return type, and what it re-introduces from module 01 ch06.</li>
+</ol>
+<p><strong>Part III — memory safety as a theorem (chapter 03)</strong></p>
+<ol>
+<li><strong>Derive.</strong> Suppose <code>&amp;mut T</code> were covariant in <code>T</code>, so <code>&amp;mut &amp;'long i32</code> coerced to <code>&amp;mut &amp;'short i32</code> and back. Both programs below must end in a use-after-free with no <code>unsafe</code> block and no cast anywhere. (a) <em>Shortening, write side</em> — complete <code>plant</code>, then name the line that plants the dangling reference and the line that reads it:</li>
+</ol>
+<pre><code class="language-rust">   fn plant(r: &amp;mut &amp;'long i32, s: &amp;'short i32) { /* coercion + store */ }
+   fn main() {
+       let long_lived = 42;                      // outlives everything below
+       let mut slot: &amp;'long i32 = &amp;long_lived;   // slot's type promises 'long
+       { let temp = 7;
+         plant(&amp;mut slot, &amp;temp); }              // temp dies at this brace
+       println!("{}", slot);                     // the read
+   }</code></pre>
+<p>(b) <em>Lengthening, read side</em> — construct the symmetric program in which <code>&amp;mut &amp;'short i32</code> coerced to <code>&amp;mut &amp;'long i32</code> lets a short reference escape its region <em>through</em> the slot: fill in the coercion-and-read in <code>escape</code> and the body of the block, and mark the plant and read lines:</p>
+<pre><code class="language-rust">   fn escape(r: &amp;mut &amp;'short i32) -&gt; &amp;'long i32 { /* coercion + read */ }
+   fn main() {
+       let dangling: &amp;'long i32 = {
+           let temp = 7;
+           /* declare slot; plant; call escape */
+       };                                        // temp dies at this brace
+       println!("{}", dangling);                 // the read
+   }</code></pre>
+<p>(c) State the rule both programs force. (d) Why is the identical coercion on a <em>shared</em> <code>&amp; &amp;'long i32</code> safe — and which chapter-02 runtime exception is that rule the compile-time version of?</p>
+<ol>
+<li><strong>Diagnose.</strong> Place Zig on the chapter's safety spectrum, justifying each clause from its design: allocations go through explicit allocator parameters with manual frees; slices carry lengths and indexing is bounds-checked in Debug and ReleaseSafe but the checks are compiled out in ReleaseFast; there is no GC and no aliasing or lifetime proof; C interop is a first-class feature. For each of the four clauses (a-d): who proves it, when — or nobody? Which two existing spectrum rows sit nearest, and how does Zig differ from each? What is ReleaseFast choosing, in chapter 05's proof-schedule frame? Which mitigation-ladder rungs belong in a Zig CI?</li>
+</ol>
+<p><strong>Part IV — GC as proof search (chapter 04)</strong></p>
+<ol>
+<li><strong>Derive.</strong> A JVM service: 12 GiB live heap; one marking thread sustains 400 MB/s. (a) The serial full-collection pause? (b) With 16 parallel markers, ideally? (c) The SLO is 200 ms — verdict, and what wall do additional threads hit? (d) The two structural moves the field uses instead? (e) The nursery is 1 GiB with 8 MiB of survivors; evacuation runs at 2 GiB/s — the young-collection pause, and why does the answer not contain the 1 GiB? (f) Card table: 512-byte cards, one byte each — table size, fraction of the heap, and the cost of one stray old-to-young store.</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A 2013-era Java service on CMS: under traffic spikes the GC log shows <code>concurrent mode failure</code> and pauses jump from ~100 ms to 8 s; <code>jstat -gcutil</code> shows the old generation (O) pinned near 100. What exactly failed, in proof terms? Why is the fallback the worst possible collection — which number from question 9 does it re-create? Which structural property of CMS, connected to the address proof, made failure inevitable? What did G1 change — and what does the write barrier keep correct but never make fast?</li>
+</ol>
+<p><strong>Part V — what types cannot do (chapter 05)</strong></p>
+<ol>
+<li><strong>Predict.</strong> A static proof costs 90 s once per release; the equivalent runtime check costs 20 ns per execution. (a) Break-even execution count? (b) A nightly batch job run for ten years: which schedule wins, by roughly how much? (c) A service at 4,000 calls/s: when does it cross the break-even, and what does one year of dynamic proof cost against the 90 s? (d) Only 30% of the code's branches ever execute in production — how does that change each side's bill, and which side is pre-paying for exactly the paths you hope never run?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A rover-control team must choose: (A) Rust plus a hardware watchdog, or (B) a total language (termination-checked, Agda-style) with the control loop as codata. For each: what does the type system prove, and what is left for the watchdog, the fuel argument, or the runtime? Why can't (B) write the loop as ordinary recursion — what does lying look like, and what does codata's productivity promise? Which impossibility are both responding to, and which two more does neither touch?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<p><strong>Part I</strong></p>
+<ol>
+<li><code>AND FALSE Ω</code> → <code>(λq. FALSE q FALSE) Ω</code> → <code>FALSE Ω FALSE</code> → <code>(λb.b) FALSE</code> → <strong>FALSE</strong> — Ω was substituted into <code>FALSE</code>'s argument slot and discarded without being entered. <code>AND TRUE Ω</code> → <code>TRUE Ω FALSE</code> → <code>(λb.Ω) FALSE</code> → <strong>Ω: diverges</strong> — <code>TRUE</code> returns its first argument, so the body <em>uses</em> q, and the substituted Ω becomes the result and reduces forever. <code>OR TRUE Ω</code> → <code>TRUE TRUE Ω</code> → <code>(λb.TRUE) Ω</code> → <strong>TRUE</strong>, Ω discarded at the last step. Strictness: <strong>AND is strict in its second argument exactly when the first is TRUE; OR exactly when the first is FALSE</strong> — short-circuiting is a property of the encoded operators, not special syntax. It only holds under normal order: strict languages evaluate every argument before the call fires, so an <code>and(f, g)</code> function would run <code>g</code> regardless — why <code>&amp;&amp;</code>, <code>?:</code>, and <code>if</code> must be syntax in C-family languages (ch01).</li>
+</ol>
+<ol>
+<li>The refactor moved the <code>is_bad(l)</code> redexes from a <strong>substituted, demanded-lazily position to an evaluated-before-the-call position</strong>. v1: the generator hands <code>any</code> one element at a time; <code>any</code> stops at the first truthy value, so every later <code>is_bad(l)</code> redex is dead-branch material, never fired — question 1's <code>AND FALSE Ω</code> shape, with <code>any</code>'s short-circuit as the <code>IF</code> consumer. v2: Python is applicative order — the argument <code>[l for l in tail_log(...)]</code> must reduce to a <strong>value</strong> before <code>any</code> is even entered, and an infinite tail never becomes one: exactly the property Ω never acquires. The fix is to pass the generator, not the materialized list — diagnose hangs by asking <em>which redex moved</em> (ch01).</li>
+</ol>
+<ol>
+<li>(a) <code>Y g →β (λx. g (x x)) (λx. g (x x))</code> — call that argument A. A is a λ, hence a value, so the application fires: <code>→β g (A A)</code>. Now applicative order demands the <em>argument</em> <code>A A</code> be a value before <code>g</code> runs; <code>A A →β g (A A)</code> — each evaluation of the argument regrows the same application: <strong>the argument is its own reduct, Ω-shaped; <code>g</code> is never called</strong>. (b) <code>Z g →β (λx. g (λv.x x v)) B</code> (B the second half), which fires to <code>g (λv. B B v)</code> — the argument is a λ, <strong>a value</strong>: <code>g</code> is applied immediately. When <code>g</code>'s body invokes that thunk on a value <code>v</code>, <code>B B v →β g (λv. B B v) v</code> — one unfolding per recursive call, on demand. (c) <strong>η-expansion</strong> (<code>λv. x x v ≡ x x</code>, <code>v ∉ FV(x x)</code>): it delays self-application from "now" to "when the recursion is demanded" — exactly what call-by-value needs, why OCaml's and Scala's <code>fix</code> are Z, not Y (ch01).</li>
+</ol>
+<p><strong>Part II</strong></p>
+<ol>
+<li>Case on the step rule: - <strong>E-IfTrue</strong> (<code>t₁ = true</code>, <code>t' = t₂</code>): D₂ is already a derivation of <code>⊢ t₂ : T</code> — the conclusion, directly. <strong>No IH needed</strong>: the step <em>selects</em> an already-typed premise. - <strong>E-IfFalse</strong>: symmetric; D₃ supplies <code>⊢ t₃ : T</code>. - <strong>E-If</strong> (congruence, <code>t₁ → t₁'</code>): <strong>IH on D₁</strong> gives <code>⊢ t₁' : Bool</code>; re-apply T-If with D₂, D₃ unchanged: <code>⊢ if t₁' then t₂ else t₃ : T</code> — preserved. The same-type premise is load-bearing in the first two cases: the term has type T, the step yields t₂ (or t₃), and only the premise guarantees the selected branch <em>has</em> type T — drop it and E-IfTrue steps to an arbitrary-typed branch with nothing checked: preservation dead. The moral matches the application case: work rules select premises, congruence rules need the IH (ch02's Wright–Felleisen section).</li>
+</ol>
+<ol>
+<li>(a) Use <code>f : S₁→S₂</code> where <code>T₁→T₂</code> is expected. The context passes <code>T₁</code> values; <code>f</code> must accept every one: <strong><code>T₁ &lt;: S₁</code> — argument contravariant</strong>. <code>f</code> returns <code>S₂</code>; the context needs <code>T₂</code> back: <strong><code>S₂ &lt;: T₂</code> — result covariant</strong>. ∴ <code>S₁→S₂ &lt;: T₁→T₂ iff T₁ &lt;: S₁ and T₂ &lt;: S₂</code> — inputs flip, outputs don't. (b) <code>Employee &lt;: Person</code> requires <code>RichDate &lt;: Date</code> (depth subtyping). Through the Person view the field is writable: <code>personView.birthday = plainDate</code> typechecks — it is a <code>Date</code> field there. Through the Employee view, <code>emp.birthday.richOnly()</code> — a plain <code>Date</code> has no <code>richOnly</code>: the "well-typed" call detonates. A mutable field is <strong>an input and an output position at once</strong> — stored into and read from — so it must be invariant: the function rule applied to a field carrying both arrows. (c) <code>IEnumerable&lt;out T&gt;</code> exposes <code>T</code> only in <em>output</em> position — nothing consumes a <code>T</code>, so there is no store to lie through, and covariance is sound by the same derivation (ch02's variance section).</li>
+</ol>
+<ol>
+<li>(a) A parametric <code>first</code> receives only the list — elements are opaque α; it cannot inspect, compare, or <strong>construct</strong> an α. It can only return one of the elements (a position-shaped move) or diverge/throw — in a total world the type is uninhabited, which is why honest list-heads return <code>Maybe α</code>. <strong><code>null</code> is a fabricated α</strong> — a value claiming membership in every type, Hoare's billion-dollar lie: the theorem <code>∀α. List&lt;α&gt; → α</code> became provable with evidence that proves nothing. (b) Erasure compiled <code>T</code> to <code>Object</code>, so <code>first</code> returns an untagged reference and the call site's <code>checkcast</code> is the only proof — and <strong>null passes every cast</strong> (the universal inhabitant cannot be refuted). Reified arrays <em>do</em> catch wrong element types at the store (<code>ArrayStoreException</code>); erased generics cannot. (c) <code>Optional&lt;T&gt;</code> — the honest sum "value or absent" whose cases the caller must at least see; its cost is the discriminant: <strong>module 01 ch06's tagged-value layout returning as the certificate</strong> (ch02's null repair).</li>
+</ol>
+<p><strong>Part III</strong></p>
+<ol>
+<li>(a) The completion is <code>let shrunk: &amp;mut &amp;'short i32 = r; *shrunk = s;</code> — covariance would coerce <code>r</code> down, and the store writes a <code>&amp;'short</code> into a slot whose declared type still says <code>&amp;'long</code>. <strong>Plant line: <code>*shrunk = s</code>.</strong> <code>temp</code> dies at the inner brace; <strong>read line: <code>println!("{}", slot)</code></strong> — legal, because the slot's type promises <code>'long</code>; it reads <code>&amp;temp</code>: use-after-free, no cast anywhere. (b) The symmetric construction: <code>fn escape(r: &amp;mut &amp;'short i32) -&gt; &amp;'long i32 { let widened: &amp;mut &amp;'long i32 = r; *widened }</code> — the coercion at the binding, the extraction at <code>*widened</code>. Caller: inside the block, <code>let mut slot: &amp;'short i32 = &amp;temp;</code> (<strong>the plant — a short-lived reference enters a channel now typed long</strong>), then <code>escape(&amp;mut slot)</code>; the block's value binds outside as <code>dangling: &amp;'long i32</code>, so it may outlive <code>temp</code>'s brace; <strong>read line: the final <code>println!</code></strong>. Shortening corrupts the slot <em>for better-informed readers</em>; lengthening exports the short reference <em>past its region</em> — both manufacture dangling pointers through the type's own promises. (c) <strong><code>&amp;'a mut T</code> is invariant in <code>T</code></strong>: a mutable slot must accept exactly what its type says, in both directions, or every write becomes a runtime check. (d) A shared <code>&amp; &amp;'long i32</code> cannot be <em>written through</em> — shortening it only forgets precision nobody can act on; readers holding the longer type still read the true, longer-lived value. That is chapter 02's covariant-arrays theorem hoisted to compile time: <strong>invariance is <code>ArrayStoreException</code> refused at the door</strong> (ch03's variance section).</li>
+</ol>
+<ol>
+<li>Clause by clause: <strong>(a) own-access — nobody</strong>: wild pointers survive to the MMU's 3-bit, 4 KiB-page check, C's row. <strong>(b) bounds — the runtime, at each access, in Debug/ReleaseSafe</strong>: slices carry lengths and the check fires on access — Go's row; in ReleaseFast, nobody — C's row again. <strong>(c) byte-level punning — nobody, but explicit</strong>: casts must be written (<code>@bitCast</code>), so the proof can only be suspended at greppable sites — an <code>unsafe</code>-shaped membrane without a compiler-held invariant list. <strong>(d) post-lifetime — nobody</strong>: manual frees make use-after-free first-class; <code>defer</code> gives scope-end determinism for frees you still must <em>remember to write</em> — RAII's intuition with no aliasing proof, C++'s row minus the refcount. Nearest rows: <strong>C</strong> — same (a), (c), (d), but Zig buys (b) the way Go does; and <strong>Go</strong> — same runtime bounds answer, but Go's GC closes clause (d) where Zig leaves it manual. ReleaseFast is not "a faster proof" — it is <strong>the proof rescheduled to never</strong>: check deleted, guarantee gone — ch04's Epsilon "no proof" row as a build mode; Debug vs ReleaseFast is one proof at two schedules (ch05's frame). CI ladder: suite in Debug (checks on), ASan for (b) and (d), MTE where present (15/16 caught), fuzz the C-interop membrane — that is the TCB (ch03).</li>
+</ol>
+<p><strong>Part IV</strong></p>
+<ol>
+<li>(a) 12 GiB = 12,288 MiB; 12,288 / 400 MB/s ≈ <strong>31 s</strong> stop-the-world. (b) 12,288 / 16 ≈ 768 MiB per marker → <strong>~1.9 s</strong>, ideal. (c) <strong>9.6× over the 200 ms SLO</strong>, and more threads buy little: each visit is a compulsory ~100 ns DRAM miss, so pointer-chasing marking is <strong>miss-ladder-capped</strong> — the memory bus, not the algorithm, limits the rate. (d) <strong>Generational</strong> — shrink the proof's subject: prove only the nursery, where 95-99% of objects are already dead and cost tracks survivors; <strong>concurrent</strong> — run the proof beside the mutator, paying a write barrier (CMS, G1, ZGC). (e) 8 MiB / 2 GiB/s = <strong>4 ms</strong>, plus root and dirty-card scan: a young collection <em>copies survivors</em>; the other ~1,020 MiB is reclaimed as the side effect of emptying the nursery — <strong>cost ∝ survivor bytes, not allocation volume</strong>, which is why the 1 GiB appears nowhere. (f) 12 GiB / 512 B = 25,165,824 cards, one byte each = <strong>24 MiB</strong> = 24 MiB / 12 GiB = 1/512 ≈ <strong>0.2%</strong> of heap, always mapped; one stray old-to-young store dirties one card — a <strong>512-byte</strong> re-scan at the next young GC (ch04).</li>
+</ol>
+<ol>
+<li><strong>Concurrent mode failure</strong>: the concurrent mark-and-sweep could not finish before allocation filled the old generation — the proof could not keep pace with its subject's growth. The collector abandons the cycle and falls back to a <strong>full serial stop-the-world compacting</strong> collection on the already-huge heap — question 9(a)'s ~31 s at the worst moment, plus compaction. The structural cause: <strong>CMS never compacted old space</strong> — object identity is an address, compaction rewrites every pointer (forwarding pointers, Lisp-2's three passes), a cost CMS refused in the steady state; fragmentation accumulated until promotion could not fit in the holes — the O column pinned near 100 was the failure announced in advance. G1's redesign: ~2048 equal regions and a <strong>pause budget</strong> — <code>-XX:MaxGCPauseMillis</code> (default 200 ms), spent by a collection-set picker that predicts each region's evacuation cost and evacuates only what fits (young plus mixed old): a pause that is a slice of the proof sized to an SLO, at -5-15% throughput. The write barrier (Yuasa's snapshot: grey the overwritten value, ~2-20 ns/store) keeps the tri-color invariant — <strong>black never points to white</strong> — the proof <em>correct</em>; pace is not its job, and pace is what failed (ch04).</li>
+</ol>
+<p><strong>Part V</strong></p>
+<ol>
+<li>(a) 90 s / 20 ns = <strong>4.5 × 10⁹ executions</strong>. (b) Ten years nightly ≈ 3,650 runs: dynamic pays 3,650 × 20 ns ≈ <strong>73 µs against 90 s once</strong> — dynamic wins by ~10⁶×. (c) 4,000 calls/s = 3.5 × 10⁸/day: break-even crossed in <strong>~13 days</strong>; a year is 1.26 × 10¹¹ executions paying 2,520 s ≈ <strong>42 min versus 90 s once</strong> — static wins ~28×, never billing mid-request. (d) The static bill already covered all paths — the 70% never executed cost the same 90 s, since static pays for <strong>all paths, including never-executed ones</strong>; dynamic pays nothing for them, but the 30% that do run pay forever. The unexecuted 70% are the error handlers you hope never fire: <strong>static is pre-payment for the disaster path</strong>, failing as a rejected build rather than a mid-request TypeError (ch05).</li>
+</ol>
+<ol>
+<li>(A) Rust proves <strong>soundness — never stuck — hence memory safety, not termination</strong>: <code>fn f() -&gt; ! { f() }</code> typechecks (the never type advertises divergence); a wedged control loop violates no Rust theorem. The watchdog is the <strong>termination proof scheduled in hardware</strong> — "no progress by T, then reset" — the one check no type system can give you; the <code>unsafe</code> census remains the audit surface. (B) The total language makes termination a typing obligation — calls on <strong>structurally smaller</strong> arguments — so the loop cannot be written without lying; the lie is <strong>fuel</strong> (<code>serve n</code> bounds iterations: a watchdog moved into the type). The honest form is <strong>codata</strong>: the control loop as a coinductive process whose every observation delivers its next step in finite time — <strong>productivity</strong>: not "it stops," but "every step arrives." Both respond to <strong>impossibility 1 (termination)</strong>; industry chose (A): over-accept, pay at runtime. Neither touches <strong>impossibility 3, the world</strong> — sensor reads and bus faults cross the process boundary no type cages — nor <strong>impossibility 2</strong>: "never command a burn that empties the tank" is a spec, not a type — filled by tests, module 21's machinery, or nothing (ch05; ch01's diagonalization, one last time).</li>
+</ol>
+</details>
+<div class="post-footer"><p>Chapter list: <a href="index.html">Module 19</a>. Module 01 also has the <a href="../quiz.html">interactive quiz</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

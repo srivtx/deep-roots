@@ -26,7 +26,7 @@
 <header class="site-header">
   <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
   <div class="header-right">
-    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
     <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -37,7 +37,7 @@
 <article class="post">
 <div class="post-kicker">module 01 &middot; memory models &middot; Part II · the languages</div>
 <h1 class="post-title">Chapter 09 — C++: lifetime is scope (RAII)</h1>
-<div class="post-meta">chapter 09 &middot; ~22 min read &middot; deep-roots learning program</div>
+<div class="post-meta">chapter 09 &middot; ~23 min read &middot; deep-roots learning program</div>
 <blockquote><strong>The 30-second version.</strong> C++ starts from C's memory model — same pointers, same stack frames (Chapter 04), same heap machinery (Chapter 05), same layouts (Chapter 06) — and changes one thing: <em>who is responsible for cleanup</em>. RAII ("resource acquisition is initialization") ties every resource to an object, and every object's lifetime to its scope: the closing brace of a block becomes a compiler-generated sequence of destructor calls in reverse construction order. Because scopes exit even when an exception tears the stack apart, cleanup is deterministic and impossible to forget. Smart pointers, move semantics, guaranteed copy elision, and the rule of zero all fall out of that one decision. There is no garbage collector — and after this chapter you will rarely miss one.</blockquote>
 <h2 id="scope-is-a-destructor-call">Scope is a destructor call</h2>
 <p>Chapter 04 ended on the fact all of C++ stands on: the compiler knows, statically, the layout of every stack frame, so it knows the exact instant each local dies — the closing brace, when the frame pops. C (Chapter 08) threw that knowledge away and made <code>free</code> your problem. C++ cashes it in: <strong>the destructor is a function the compiler calls for you at scope exit, for every fully constructed local, no matter how the scope exits.</strong></p>
@@ -372,6 +372,12 @@ g++ -std=c++17 -g -fsanitize=address leak.cpp -o leak-asan &amp;&amp; ./leak-asa
 <li><strong>Chapter 21 (memory security):</strong> new/delete mismatches and the weak-pinned use-after-free are entry points for the attacks covered there.</li>
 <li><strong>Module 04 (decompilation, queued):</strong> vtable + RTTI reconstruction of C++ classes starts from this chapter's diagram.</li>
 </ul>
+<p><em>Forward links — where the rest of the program picks this chapter up:</em></p>
+<ul>
+<li><strong>Module 02 ch05 (use-after-free)</strong> — the destructor that runs twice and the object that dies once: C++ lifetimes are where the modern bug class lives.</li>
+<li><strong>Module 19 ch03 (the safety spectrum)</strong> — RAII is scope-based affine intuition without an aliasing proof — shared_ptr is the runtime patch for the missing theorem.</li>
+<li><strong>Module 04 ch04 (vtable reconstruction)</strong> — the virtual dispatch this chapter emits is what a reverse engineer rebuilds: RTTI and the vtable walk.</li>
+</ul>
 <h2 id="quiz">Quiz</h2>
 <ol>
 <li>Your teammate wants <code>finally</code> blocks in C++ and proposes wrapping every cleanup in <code>try { ... } catch(...) { cleanup(); throw; }</code>. In terms of stack unwinding, explain why the language instead bound destructors to scope — and name one guarantee a scope-bound destructor gives that a hand-written cleanup call cannot.</li>
@@ -446,6 +452,7 @@ g++ -std=c++17 -g -fsanitize=address leak.cpp -o leak-asan &amp;&amp; ./leak-asa
       <a href="../index.html#module-01">Module 01</a>
       <a href="../quiz.html">Quiz</a>
       <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
       <a href="https://github.com/srivtx/deep-roots">GitHub</a>
       <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
     </div>

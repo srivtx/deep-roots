@@ -9,7 +9,7 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MD = os.path.join(BASE, 'modules', '01-memory-models')
 OUT = os.path.join(BASE, 'chapters')
 SITE = 'https://srivtx.github.io/deep-roots'
-BUILD_DATE = '2026-10-13'
+BUILD_DATE = '2026-10-14'
 
 PARTS = {
     1: 'Part I · the machine', 2: 'Part I · the machine', 3: 'Part I · the machine',
@@ -67,6 +67,11 @@ ROADMAP_MODULES = [
     ('M15', 'Virtualization, containers &amp; the cloud', 'LIVE', 'VT-x, EPT, virtio rings, namespaces and cgroups, Firecracker — who owns the bytes at every layer.'),
     ('M16', 'Browser engine internals', 'LIVE', 'An OS that renders: process-per-site, Oilpan, the 16.6 ms budget, layout thrashing, site isolation.'),
     ('M17', 'Digital hardware: from transistors to silicon', 'LIVE', 'The root under the root: CMOS, pipelines, the FIFO ring in RTL, the cache born, yield arithmetic.'),
+    ('M18', 'Cryptography internals', 'LIVE', 'The memory model of trust: entropy from physics, AES and its modes, bignum layouts as attack surface, TLS 1.3 as key erasure, the failure catalog.'),
+    ('M19', 'PL theory &amp; type systems', 'LIVE', 'Types as theorems: soundness proved, null as the billion-dollar lie, memory safety as a theorem, GC as proof search, the limits.'),
+    ('M20', 'Embedded &amp; firmware', 'LIVE', 'The world with no MMU: the memory map in silicon, linker scripts as the memory model, interrupts and DMA, the RTOS, secure boot.'),
+    ('M21', 'Formal verification', 'LIVE', 'The machines that prove programs: Hoare logic, model checking and the state explosion, seL4, the borrow checker as separation logic, CompCert.'),
+    ('M22', 'ML systems &amp; training infrastructure', 'LIVE', 'The distributed memory machine: tensors, the autograd tape, ZeRO and the five parallel axes, the KV cache, collectives and the datacenter.'),
 ]
 
 # modules 02-17: (id, dir-suffix, display title, short card line, section tag)
@@ -87,6 +92,11 @@ MODULES_META = [
     ('15', 'virtualization-cloud', 'Virtualization, containers &amp; the cloud', 'one machine, many owners'),
     ('16', 'browser-internals', 'Browser engine internals', 'an OS that renders'),
     ('17', 'hardware-design', 'Digital hardware: from transistors to silicon', 'the root under the root'),
+    ('18', 'cryptography-internals', 'Cryptography internals', 'the memory model of trust'),
+    ('19', 'pl-type-systems', 'PL theory &amp; type systems', 'why the rules are theorems'),
+    ('20', 'embedded-firmware', 'Embedded &amp; firmware', 'the world with no MMU'),
+    ('21', 'formal-verification', 'Formal verification', 'the machines that prove programs'),
+    ('22', 'ml-systems', 'ML systems &amp; training infrastructure', 'the distributed memory machine'),
 ]
 
 ROW_RE = re.compile(r'^\|\s*(\d+)\s*\|\s*\[([^\]]+)\]\(chapters/([^)]+?)\.md\)\s*\|\s*(.+?)\s*\|\s*$')
@@ -217,7 +227,7 @@ def build_modules():
                       '<div class="chapter-list">\n' + chapter_rows + '\n</div>\n', exam_html,
                       mod_dir, mod_dir))
         with open(os.path.join(out_dir, 'index.html'), 'w', encoding='utf-8') as f:
-            f.write(page('Module %s — %s — deep-roots' % (mid, mtitle),
+            f.write(page('Module %s — %s — deep-roots' % (mid, mtitle.replace('&amp;', '&')),
                          'Module %s of the deep-roots program: %s — %d chapters from first principles, with labs, quizzes, and a final exam.' % (mid, tag, len(manifest)),
                          landing, root='../'))
         manifests[mid] = manifest
@@ -252,7 +262,7 @@ HEAD = """<meta charset="UTF-8">
 HEADER = """<header class="site-header">
   <a class="brand" href="{root}index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
   <div class="header-right">
-    <nav><a href="{root}index.html#module-01">Module 01</a><a href="{root}index.html#roadmap">Modules</a><a href="{root}quiz.html">Quiz</a><a href="{root}roadmap.html">Roadmap</a><a href="{root}index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <nav><a href="{root}index.html#module-01">Module 01</a><a href="{root}index.html#roadmap">Modules</a><a href="{root}quiz.html">Quiz</a><a href="{root}roadmap.html">Roadmap</a><a href="{root}connections.html">Map</a><a href="{root}index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
     <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -275,6 +285,7 @@ FOOTER = """<footer class="site-footer">
       <a href="{root}index.html#module-01">Module 01</a>
       <a href="{root}quiz.html">Quiz</a>
       <a href="{root}roadmap.html">Roadmap</a>
+      <a href="{root}connections.html">Map</a>
       <a href="https://github.com/srivtx/deep-roots">GitHub</a>
       <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
     </div>
@@ -568,8 +579,8 @@ def build_index(manifest, mod_manifests):
     total_words = sum(w for _, _, _, _, w in manifest) + sum(
         w for m in mod_manifests.values() for (_, _, _, _, w) in m)
     facts = [
-        ('%d' % total_chapters, 'chapters'), ('17', 'modules'), ('~%dk' % (total_words // 1000), 'words'),
-        ('17', 'final exams'),
+        ('%d' % total_chapters, 'chapters'), ('%d' % (len(MODULES_META) + 1), 'modules'), ('~%dk' % (total_words // 1000), 'words'),
+        ('%d' % (len(MODULES_META) + 1), 'final exams'),
     ]
     facts_html = ''.join('<div class="fact"><div class="n">%s</div><div class="l">%s</div></div>' % f for f in facts)
 
@@ -625,10 +636,12 @@ def build_index(manifest, mod_manifests):
     Every technical field has a root layer its practitioners know and everyone else waves away.
     deep-roots goes down and stays there: each module rebuilds one field from the physics up,
     so that what others memorize, we <strong>derive</strong>. Module 01 — the memory models of
-    programming languages — is the root of them all, and sixteen more modules are now live:
+    programming languages — is the root of them all, and twenty-one more modules are now live:
     security, bugs, decompilation, Android, iOS, desktop kernels, COBOL, concurrency,
     compilers, databases, GPUs, networking, file systems, virtualization, browsers,
-    hardware. <strong>What insiders know, written down.</strong>
+    hardware, cryptography, type systems, embedded, verification, ML infrastructure —
+    connected by a thousand-plus cross-references (see the <a href="connections.html">connections map</a>).
+    <strong>What insiders know, written down.</strong>
   </p>
   <div class="hero-facts">__FACTS__</div>
 </section>
@@ -645,15 +658,18 @@ def build_index(manifest, mod_manifests):
 </section>
 
 <section class="section" id="roadmap">
-  <div class="section-head"><h2>The other sixteen fields — all live</h2><div class="rule"></div></div>
+  <div class="section-head"><h2>The other twenty-one fields — all live</h2><div class="rule"></div></div>
   <p class="section-intro">
     Memory first because everything else is a consequence: security bugs are memory bugs,
     decompilation reads stack frames and vtables, mobile OSes are memory-driven schedulers,
     COBOL is a memory model, distributed consistency is the memory model at scale, and
     compilers, databases, and GPUs are the factory, the disk-scale, and the new wing of the
     same tower. The second round went further: networking, file systems, virtualization,
-    browsers, and hardware — the stack is now complete from transistors to distributed
-    systems. Every module below is fully written, quizzed, and final-examined.
+    browsers, and hardware. The third round closed the ring: cryptography (where a cache
+    miss is a breach), type systems (the theory under every language the program taught),
+    embedded (the safety net removed), verification (the proofs behind the promises), and
+    ML infrastructure (the tower rebuilt at datacenter scale). Every module below is fully
+    written, quizzed, and final-examined.
   </p>
   <div class="module-grid">
 __ROADMAP__
@@ -720,14 +736,128 @@ def build_roadmap():
                 + body + '\n</main>')
     with open(os.path.join(BASE, 'roadmap.html'), 'w', encoding='utf-8') as f:
         f.write(page('The roadmap — deep-roots',
-                     'Seventeen modules from memory models to silicon: the build order and why each module is a consequence of the one before it.',
+                     'Twenty-two modules from memory models to the datacenter: the build order and why each module is a consequence of the one before it.',
                      pagebody))
     print('  roadmap.html')
 
 
+def build_connections(mod_manifests):
+    """The program-wide connections map, computed from the actual cross-reference
+    graph in the chapter markdown ('Module NN chYY' references).
+    Output: connections.html"""
+    import glob
+    mods = {}   # num -> title (from MODULES_META + module 01)
+    mods[1] = 'Memory models of programming languages'
+    for (mid, msuf, mtitle, _tag) in MODULES_META:
+        mods[int(mid)] = mtitle.replace('&amp;', '&')
+    pairs = {}  # (src, dst) -> count
+    inbound = {}  # (mod, ch) -> count
+    total_refs = 0
+    for f in glob.glob(os.path.join(BASE, 'modules', '*', 'chapters', '*.md')):
+        src_mod = int(re.match(r'.*modules[\\/](\d+)-', f).group(1))
+        text = open(f, encoding='utf-8').read()
+        for m in re.finditer(r'[Mm]odule\s+(\d+)\s+ch(?:apter)?\s*(\d+)', text):
+            dm, dc = int(m.group(1)), int(m.group(2))
+            if dm == src_mod or dm not in mods:
+                continue
+            total_refs += 1
+            pairs[(src_mod, dm)] = pairs.get((src_mod, dm), 0) + 1
+            inbound[(dm, dc)] = inbound.get((dm, dc), 0) + 1
+    n = len(mods)
+    matrix_html = ['<table class="xmap"><thead><tr><th class="xh">&rarr; cites</th>']
+    for d in range(1, n + 1):
+        matrix_html.append('<th class="xh"><a href="%s" title="%s">%02d</a></th>'
+                           % ('m%02d/index.html' % d if d > 1 else 'index.html#module-01', esc(mods[d]), d))
+    matrix_html.append('</tr></thead><tbody>')
+    maxc = max(pairs.values()) if pairs else 1
+    for s in range(1, n + 1):
+        cells = ['<tr><th class="xh"><a href="%s" title="%s">%02d %s</a></th>'
+                 % ('m%02d/index.html' % s if s > 1 else 'index.html#module-01', esc(mods[s]), s, esc(mods[s].split(':')[0]))]
+        for d in range(1, n + 1):
+            c = pairs.get((s, d), 0)
+            if c == 0:
+                cells.append('<td class="x0"></td>')
+            else:
+                inten = min(4, 1 + int(3 * c / maxc))
+                cells.append('<td class="x%d"><a href="%s" title="%s &rarr; %s: %d refs">%d</a></td>'
+                             % (inten, 'm%02d/index.html' % d if d > 1 else 'index.html#module-01',
+                                esc(mods[s]), esc(mods[d]), c, c))
+        cells.append('</tr>')
+        matrix_html.extend(cells)
+    matrix_html.append('</tbody></table>')
+    matrix_html = '\n'.join(matrix_html)
+
+    # strongest ties
+    top = sorted(pairs.items(), key=lambda kv: -kv[1])[:12]
+    ties_rows = []
+    for (s, d), c in top:
+        ties_rows.append('<tr><td><a href="%s">%02d %s</a></td>'
+                         '<td class="xarrow">&rarr;</td>'
+                         '<td><a href="%s">%02d %s</a></td>'
+                         '<td class="xc">%d</td></tr>'
+                         % ('m%02d/index.html' % s if s > 1 else 'index.html#module-01', s, esc(mods[s]),
+                            'm%02d/index.html' % d if d > 1 else 'index.html#module-01', d, esc(mods[d]), c))
+    ties_html = '<table class="xties"><thead><tr><th>module</th><th></th><th>cites</th><th>refs</th></tr></thead><tbody>' + ''.join(ties_rows) + '</tbody></table>'
+
+    # roots: which chapters every program leans on (top inbound)
+    hub_rows = []
+    hubs = sorted(inbound.items(), key=lambda kv: -kv[1])[:14]
+    for (m, c), cnt in hubs:
+        try:
+            title = ''
+            for f in glob.glob(os.path.join(BASE, 'modules', '%02d-*' % m, 'chapters', '%02d-*.md' % c)):
+                title = re.sub(r'^#\s+Chapter\s+\d+\s+[—-]\s+', '', open(f, encoding='utf-8').readline().strip())
+                break
+        except Exception:
+            title = ''
+        hub_rows.append('<tr><td><a href="%s">m%02d ch%02d%s</a></td><td class="xc">%d</td></tr>'
+                        % ('m%02d/ch%02d.html' % (m, c) if m > 1 else 'chapters/ch%02d.html' % c,
+                           m, c, (' — ' + esc(title)) if title else '', cnt))
+    hubs_html = ('<table class="xties"><thead><tr><th>the load-bearing chapters</th><th>inbound refs</th></tr></thead><tbody>'
+                 + ''.join(hub_rows) + '</tbody></table>')
+
+    body = """<main class="page-main">
+<h1 class="page-title">The connections map</h1>
+<p class="page-sub">One root, twenty-two trees, %d cross-references: every number in this
+table is a place one chapter reached into another and said <em>you already know this —
+use it here</em>. Computed live from the chapter markdown at build time.</p>
+
+<div class="section-head"><h2>The dependency matrix</h2><div class="rule"></div></div>
+<p class="section-intro">Row = the citing module, column = the cited module. Module 01 is
+the root: every module reaches into it (column 01), and — after the connection retrofit —
+it reaches forward into all twenty-one trees (row 01). Darker cells are stronger ties.</p>
+%s
+
+<div class="section-head"><h2>The strongest ties</h2><div class="rule"></div></div>
+<p class="section-intro">The pairs that carry the most cross-references — where two fields
+turn out to be the same idea wearing different clothes.</p>
+%s
+
+<div class="section-head"><h2>The load-bearing chapters</h2><div class="rule"></div></div>
+<p class="section-intro">The chapters the rest of the program leans on hardest. These are
+the pages to read twice: almost every other chapter assumes them.</p>
+%s
+
+<div class="section-head"><h2>How to read the map</h2><div class="rule"></div></div>
+<p class="section-intro">Start anywhere: pick a module you care about, read its chapters,
+and follow its citations backward to the roots (they nearly all end at module 01, chapter
+03 or chapter 05). Then follow them forward: the same page you just read is the
+prerequisite for three modules you have not opened yet. That is the whole design of this
+program: one root layer, twenty-two fields, and a thousand doors between them.</p>
+</main>""" % (total_refs, matrix_html, ties_html, hubs_html)
+
+    with open(os.path.join(BASE, 'connections.html'), 'w', encoding='utf-8') as f:
+        f.write(page('The connections map — deep-roots',
+                     'The cross-reference graph of the whole program: %d module-to-module citations '
+                     'across %d chapters, the strongest ties, and the load-bearing chapters.' % (total_refs, sum(len(m) for m in mod_manifests.values()) + 23),
+                     body))
+    print('  connections.html (%d cross-refs, %d pairs)' % (total_refs, len(pairs)))
+    return total_refs
+
+
 def build_misc(mod_manifests):
     urls = [SITE + '/', SITE + '/index.html', SITE + '/quiz.html', SITE + '/roadmap.html',
-            SITE + '/chapters/final-exam.html']
+            SITE + '/connections.html', SITE + '/chapters/final-exam.html']
     for (num, slug, _oneliner) in CHAPTERS:
         urls.append(SITE + '/chapters/ch%02d.html' % num)
     for mid, mrows in mod_manifests.items():
@@ -798,6 +928,7 @@ def main():
     mod_manifests = build_modules()
     build_index(manifest, mod_manifests)
     build_roadmap()
+    build_connections(mod_manifests)
     build_misc(mod_manifests)
     build_og()
     total_words = sum(w for _, _, _, _, w in manifest) + sum(

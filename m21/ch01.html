@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What is a proof of a program — deep-roots</title>
+<meta name="description" content="Chapter 01 of module 21: What is a proof of a program">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="What is a proof of a program — deep-roots">
+<meta property="og:description" content="Chapter 01 of module 21: What is a proof of a program">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="What is a proof of a program — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of module 21: What is a proof of a program">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 21 &middot; the machines that prove programs</div>
+<h1 class="post-title">What is a proof of a program</h1>
+<div class="post-meta">chapter 01 &middot; ~18 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A test proves one thing: this input, on this build, behaved this way — an existence proof, ∃ a good run. A verification proves a universal claim, ∀ inputs — that quantifier jump is the whole discipline. The machinery is small: Hoare triples {P} S {Q}, one rule per statement shape, run <em>backward</em> from the postcondition until the program compiles into a formula (wp — the same graph walk a compiler does, emitting formulas instead of code). Formulas go to a solver or proof assistant, and the non-negotiable property is <em>soundness</em>: the checking machine never accepts a false proof. The field's answer is LCF (Milner, 1972): a kernel so small its trusted computing base is a line count (~2,500 Isabelle, ~30,000 Coq), below which everything is untrusted and cannot forge a theorem. You already run one: the JVM bytecode verifier is a proof checker of this shape.</blockquote>
+<h2 id="the-quantifier-jump-one-good-run-vs-all-runs">The quantifier jump: one good run vs all runs</h2>
+<p>Module 19 ended with the specification gap: types prove ∀-over-inputs properties, but only the weak ones; testing comes from the other direction and stays there. Pin the difference as logic — it decides every tool choice later:</p>
+<ul>
+<li><strong>A test is ∃.</strong> "Test 7 passed" asserts: ∃ input (this one) such that program(input) = expected. Green CI is a <em>finite set</em> of such points — each real, none saying anything about the inputs between them. The bug lives in the gaps by construction.</li>
+<li><strong>A proof is ∀.</strong> {P} program {Q} asserts: ∀ states s satisfying P, if the run from s terminates, it ends in a state satisfying Q. One theorem covers the continuum — 2^32 values of a <code>uint32</code> argument, unbounded streams, all interleavings.</li>
+</ul>
+<p>The asymmetry runs both ways. A single counterexample kills a ∀-claim — which is why tests, fuzzers, and model checkers (chapter 02) are <em>bug finders</em>: they refute. But nothing finite can <em>confirm</em> a ∀-claim over an infinite input space, and Rice's theorem (module 19 ch01) guarantees no machine can decide one. A proof must be <em>built</em>: a ∀-statement plus a derivation — an object a small machine can check; in the LCF design below, that trust boundary is literally a data type.</p>
+<h2 id="hoare-logic-the-postcondition-flows-upstream">Hoare logic: the postcondition flows upstream</h2>
+<p>A <strong>Hoare triple</strong> {P} S {Q} reads: if S starts where P holds and terminates, the final state satisfies Q (partial correctness; termination is separate, below). Each statement shape gets one derivation rule.</p>
+<p><strong>The assignment rule.</strong> For <code>x := E</code>, the rule is:</p>
+<p>{ Q[x := E] }  x := E  { Q }</p>
+<p>Read it right-to-left: to make Q true <em>after</em>, make Q[x := E] true <em>before</em>. The postcondition flows upstream because assignment is deterministic: the final state is a known function of the initial one, so any claim about the final state <em>is</em> a claim about the initial one, computable by substitution. Three examples, mechanical:</p>
+<ol>
+<li><code>{ ? }  x := x + 1  { x = 5 }</code> — (x = 5)[x := x+1] = x+1 = 5, so the derived precondition is <strong>x = 4</strong>: the future of x as a claim about its present.</li>
+<li><code>{ ? }  x := 5  { x = 5 }</code> — (x = 5)[x := 5] = (5 = 5) = <strong>True</strong>: the assignment manufactures the fact from nothing.</li>
+<li><code>{ ? }  x := y - 1  { x &gt; 2 }</code> — (x &gt; 2)[x := y−1] = y−1 &gt; 2, i.e. <strong>y &gt; 3</strong>: the claim jumped to y — the variable you <em>read</em> upstream, not the one you're about to overwrite.</li>
+</ol>
+<p>The derived condition is the <em>weakest</em> that works: {x ≥ 0} x := x+1 {x &gt; 0} because backward substitution gives x+1 &gt; 0 = x ≥ 0 over ℤ.</p>
+<p><strong>The while rule — the concept of the chapter.</strong> A loop runs 0..∞ times; no fixed substitution can flow a postcondition through it — you supply the missing information:</p>
+<p>{ I /\ B }  body  { I }   |-   { I }  while B do body  { I /\ ¬B }</p>
+<p><strong>I is the loop invariant</strong>: true at loop entry and after <em>every</em> iteration — a fixed point of the body's meaning. If I survives one iteration it survives all; at exit B is false, so you exit holding I ∧ ¬B. The sum loop:</p>
+<pre><code>i := 0;  s := 0;
+while i &lt; n do
+    s := s + a[i];
+    i := i + 1
+od</code></pre>
+<p>Invariant: <strong>I ≡ s = Σ_{k=0}^{i−1} a[k] ∧ 0 ≤ i ≤ n</strong> — "s is the sum of the first i elements, i in range." Three obligations, each a first-order formula checkable by eye:</p>
+<ol>
+<li><strong>Initiation</strong> — the initialization establishes I: <code>i = 0 ∧ s = 0 ∧ n ≥ 0 → (s = Σ_{k=0}^{−1} a[k] ∧ 0 ≤ 0 ≤ n)</code>. The sum of zero elements is 0: s = 0 = the empty sum.</li>
+<li><strong>Consecution</strong> — one iteration preserves I (the assignment rule, run backward through both statements): <code>(s = Σ_{k&lt;i} a[k] ∧ 0 ≤ i &lt; n) → (s + a[i] = Σ_{k&lt;i+1} a[k] ∧ 0 ≤ i+1 ≤ n)</code>. Load-bearing fact: <code>Σ_{k=0}^{i} = Σ_{k=0}^{i−1} + a[i]</code> — the recursive definition of Σ; the guard supplies i+1 ≤ n. Check it by eye.</li>
+<li><strong>Termination</strong> — partial correctness permits infinite loops, so add a <strong>variant</strong> (measure) v = n − i: <code>(I ∧ i &lt; n) → (0 ≤ v_after &lt; v_before)</code> with v_after = v−1. The guard gives v ≥ 1, each iteration decrements it by 1, ℕ is well-founded — the loop terminates.</li>
+</ol>
+<p>At exit: I ∧ ¬(i &lt; n) = <code>s = Σ_{k&lt;n} a[k] ∧ i = n</code>. Initiation + consecution + termination = the ∀-claim: every execution respecting the precondition ends with the total sum. seL4 is thousands of these (chapter 03).</p>
+<h2 id="the-weakest-precondition-a-program-to-formula-compiler">The weakest precondition: a program-to-formula compiler</h2>
+<p>Run those rules through sequences and conditionals and you get the <strong>weakest precondition</strong> calculus — wp(S, Q), the weakest formula guaranteeing Q after S:</p>
+<ul>
+<li><code>wp(x := E, Q) = Q[x := E]</code> (the rule you just derived)</li>
+<li><code>wp(S1; S2, Q) = wp(S1, wp(S2, Q))</code> (compose backward)</li>
+<li><code>wp(if B then S1 else S2, Q) = (B → wp(S1,Q)) ∧ (¬B → wp(S2,Q))</code></li>
+</ul>
+<p>By hand on a five-line program, postcondition Q = <code>y &gt; 1</code>, integers:</p>
+<pre><code>1  y := x + 1;
+2  y := y * 2;
+3  if y &gt; 4 then
+4      y := y - 1
+5  else x := 0</code></pre>
+<p>Work from the bottom of the program upward:</p>
+<ul>
+<li>Line 5, <code>x := 0</code>: Q[x:=0] = <code>y &gt; 1</code>.</li>
+<li>Line 4, <code>y := y−1</code>: (y&gt;1)[y:=y−1] = <code>y &gt; 2</code>.</li>
+<li>Line 3, the if: <code>(y&gt;4 → y&gt;2) ∧ (y≤4 → y&gt;1)</code> ≡ <code>y &gt; 1</code> (the first conjunct is valid).</li>
+<li>Line 2, <code>y := y*2</code>: (y&gt;1)[y:=2y] = 2y &gt; 1, i.e. <code>y ≥ 1</code> over ℤ.</li>
+<li>Line 1, <code>y := x+1</code>: (y≥1)[y:=x+1] = x+1 ≥ 1 = <strong><code>x ≥ 0</code></strong>.</li>
+</ul>
+<p>The whole program, proved, collapsed to a two-character formula — and note <em>how</em>: you walked the control flow in a fixed order, emitting one formula per construct, exactly like a compiler's backend pass except the emission is <em>predicates</em> instead of <em>instructions</em> (the front half is module 10 ch01's frontend: same AST, same CFG, same walk order):</p>
+<pre><code>                source program  (one AST / one CFG)
+                        |
+        +---------------+--------------------+
+        |                                    |
+   COMPILER (module 10)              VERIFIER (this module)
+   walks the graph,                  walks the SAME graph,
+   emits code                         emits formulas
+        |                                    |
+        v                                    v
+   load/store/add/jmp               wp / verification conditions
+   machine executes them            SMT solver / kernel checks them
+        |                                    |
+        v                                    v
+   "the program ran"                "the program is proved"
+   (one run = one point)            (checked = all runs)</code></pre>
+<h2 id="soundness-vs-completeness-the-halting-problem-picks-your-side">Soundness vs completeness: the halting problem picks your side</h2>
+<p>Two properties you must not confuse:</p>
+<ul>
+<li><strong>Soundness</strong> — everything the tool <em>accepts</em> is true; it never certifies a false proof. The <em>trust</em> question.</li>
+<li><strong>Completeness</strong> — everything <em>true</em> the tool can prove. The <em>coverage</em> question.</li>
+</ul>
+<p>For programs, completeness is not on the menu: a complete verifier for any non-trivial ∀-property decides the halting problem (module 19 ch01), so every real tool is incomplete. Soundness is fully achievable, and the field's position is forced and uniform across Coq, Isabelle, Dafny, Frama-C: <strong>sound by construction, incomplete by necessity</strong>. You buy a tool that may say "no" but never lies. A failed verification is not a bug report, and any tool marketing "fully automatic, proves everything" has quietly moved to a decidable fragment (chapter 04 shows the Rust borrow checker is one).</p>
+<h2 id="the-lcf-kernel-trust-measured-in-lines">The LCF kernel: trust measured in lines</h2>
+<p>Everything so far produced formulas; now the machine that consumes them. Milner's 1972 Stanford LCF design: stop trying to make the <em>prover</em> trustworthy (it searches, backtracks, runs for hours — unverifiable); make <strong>theorem an abstract data type</strong>. The <code>thm</code> type has <em>no public constructor</em>; only the kernel's rules (assume, reflexivity, modus ponens, instantiation, ...) return a <code>thm</code>. Any program, however buggy or adversarial, can only compute theorems the rules derive — a broken tactic wastes CPU, it cannot forge <code>0 = 1</code>. Milner built a language whose type system enforces this: <strong>ML</strong>, the meta-language of LCF (Edinburgh LCF, 1978 — abstract types, closures, exceptions for failed tactics, all for this).</p>
+<p>The field's memory-model insight: the assistant is a trust kernel in memory, and the TCB — module 19 ch05's concept — becomes a line count:</p>
+<div class="table-wrap"><table><thead><tr><th>System</th><th>Kernel size (order of, version-dependent)</th><th>What you must trust</th></tr></thead><tbody><tr><td>HOL Light</td><td>~400 lines of OCaml</td><td>the core inference rules</td></tr><tr><td>Isabelle/Pure</td><td>~2,500 lines of ML</td><td>rules + term representation</td></tr><tr><td>HOL4 (classic HOL)</td><td>~5,000 lines</td><td>the LCF discipline, grown</td></tr><tr><td>Coq</td><td>~30,000 lines of OCaml</td><td>rules + guard/universe checks</td></tr><tr><td>(for scale) gcc</td><td>~15,000,000 lines</td><td>everything, all passes</td></tr></tbody></table></div>
+<p>A kernel bug matters like a compiler bug, but the surface is 2,500 lines you can read in a week versus 15 million nobody has read: you don't trust the prover, you trust the checker — and you make the checker tiny.</p>
+<p><strong>The de Bruijn criterion</strong> names the discipline: keep the checking kernel small, and make the proof object independent of the prover — proofs as files, checkable offline by anyone's small checker; the kernel's output is a <strong>certificate</strong>, evidence that travels with the claim. The TLA+/TLC vs Coq/Isabelle split: TLC (chapter 02) is a <em>checker</em> — fully automatic, no proof object; you trust its ~50k lines of Java, and it only checks a finite model. The assistants are incomplete but tiny-TCB. Automatic-and-bounded vs manual-and-unbounded — an engineering decision, not a law.</p>
+<p><strong>The assistant as a memory artifact.</strong> A proof in progress is a <em>state</em>: a stack of unproved goals, each a formula plus its assumption context; a tactic is a state transformer — pop, split, push. A proof is a search through goal states, the same shape as a debugger's call stack. A Coq session as snapshots:</p>
+<pre><code class="language-coq">Theorem plus_0_r : forall n : nat, n + 0 = n.
+Proof.
+  intros n.  induction n as [| n' IH].
+  - simpl. reflexivity.
+  - simpl. rewrite IH. reflexivity.
+Qed.</code></pre>
+<pre><code>after `intros n`:            after `induction n as [|n' IH]`:
++-----------------------+    +-----------------------------------+
+| forall-bound: n:nat   |    | goal 2/2: S n' + 0 = S n'         |
+|   goal: n + 0 = n     |    |   ctx: n':nat, IH: n' + 0 = n'    |
++-----------------------+    +-----------------------------------+
+                             | goal 1/1: 0 + 0 = 0               |
+                             |   ctx: (no assumptions)           |
+                             +-----------------------------------+</code></pre>
+<p><code>simpl</code> reduces the top goal, <code>rewrite IH</code> rewrites by the hypothesis, <code>reflexivity</code> closes a t = t goal, popping the stack. When the stack empties, <code>Qed</code>: the tactic script is <em>discarded</em>, and the kernel checks the <strong>proof term</strong> — a λ-term whose type is the theorem statement (Curry-Howard, module 19 ch02, now load-bearing: the proof <em>is</em> a program; <code>plus_0_r</code>'s term is <code>nat_ind</code>, the recursion principle of <code>nat</code>, applied to motive, base and step). The kernel type-checks it against the <code>Prop</code>/universe discipline and seals the theorem. Tactic-layer bugs are irrelevant: tactics never touch the <code>thm</code> constructor; they <em>propose</em> terms, the kernel disposes.</p>
+<p><strong>Proof-carrying code: the identification you already run.</strong> Necula &amp; Lee (1996): untrusted code ships <em>with a proof</em> of a safety policy; the consumer checks before executing. The JVM (module 01 ch12), component by component:</p>
+<ul>
+<li>the class file = program <strong>plus</strong> type annotations; the StackMapTable (mandatory since Java 7) is the <strong>certificate</strong> — per-branch snapshots of operand-stack and local types;</li>
+<li>the bytecode verifier = the <strong>small checker</strong>: module 01 ch12's one <em>linear abstract interpretation</em> of the operand stack — a single pass over the certificate, the proof work already done by the (untrusted) javac;</li>
+<li>the theorem = a per-method <strong>type-safety proof</strong>: no instruction pops a type the stack doesn't hold, so the JIT may compile assuming no type confusion — memory safety is a checked theorem, not a runtime guard;</li>
+<li>the JIT = full-speed execution <em>after</em> the check: the entire PCC payoff.</li>
+</ul>
+<p>LCF's architecture, one level down. You have been running a proof checker every time you ran Java — verification machinery is load-bearing infrastructure you already depend on.</p>
+<h2 id="specifications-the-program-3-longer-than-the-program">Specifications: the program 3× longer than the program</h2>
+<p>The formulas above were toy postconditions. Real specification languages — <strong>JML</strong> for Java, <strong>ACSL</strong> for C (Frama-C), <strong>Dafny's</strong> built-in contracts — attach pre/postconditions and loop invariants; the verifier emits the obligations we derived by hand. Binary search, fully specified in Dafny:</p>
+<pre><code class="language-dafny">method BinarySearch(a: array&lt;int&gt;, target: int) returns (r: int)
+  requires forall i, j :: 0 &lt;= i &lt; j &lt; a.Length ==&gt; a[i] &lt;= a[j]
+  ensures 0 &lt;= r &lt; a.Length ==&gt; a[r] == target
+  ensures r &lt; 0 ==&gt; forall k :: 0 &lt;= k &lt; a.Length ==&gt; a[k] != target
+{
+  var lo, hi := 0, a.Length;
+  while lo &lt; hi
+    invariant 0 &lt;= lo &lt;= hi &lt;= a.Length
+    invariant forall k :: 0 &lt;= k &lt; lo ==&gt; a[k] &lt; target
+    invariant forall k :: hi &lt;= k &lt; a.Length ==&gt; a[k] &gt; target
+    decreases hi - lo
+  {
+    var mid := lo + (hi - lo) / 2;
+    if a[mid] &lt; target { lo := mid + 1; }
+    else if a[mid] &gt; target { hi := mid; }
+    else { return mid; }
+  }
+  return -1;
+}</code></pre>
+<p>Count it: three lines of logic, ten of contract — <strong>that is normal</strong>. The <code>invariant</code> lines are the sum-loop discipline verbatim; <code>requires</code> is the caller's obligation, <code>ensures</code> the callee's promise, <code>decreases</code> the variant. The honest economics:</p>
+<div class="table-wrap"><table><thead><tr><th>What you write</th><th>Size vs code</th><th>Gets you</th></tr></thead><tbody><tr><td>Types (module 19)</td><td>~0.1–0.3×</td><td>memory safety, weak properties</td></tr><tr><td>Defensive contracts (pre/post)</td><td>~0.5–1×</td><td>API discipline</td></tr><tr><td>Full functional spec + invariants</td><td>1–5×</td><td>the behavior, ∀-shaped</td></tr><tr><td>Machine-checked proof of it</td><td>10–40×</td><td>seL4: 400k proof lines / 10k C</td></tr></tbody></table></div>
+<p>Porting note: Dafny's <code>int</code> is mathematical — the classic <code>(lo+hi)/2</code> overflow can't happen — but port that shape to C and the ACSL spec must carry <code>lo &lt;= hi</code> bounds into the arithmetic proofs.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The escape hatches, and the CI rule.</strong> Coq's <code>admit</code>/<code>Admitted</code>, Isabelle's <code>sorry</code>, Lean's <code>sorry</code>, Dafny's <code>assume</code>: every assistant ships an axiom-shaped back door for work-in-progress. Teams that ship proofs fail CI on <code>git grep -nE 'sorry|admit|Admitted|assume'</code> and ticket survivors as <em>proof debt</em>. <code>sorry</code> compiles to an axiom: the "theorem" is a hypothesis from that point.</li>
+<li><strong>"Machine-checked" ≠ "the spec was right."</strong> The kernel certifies P ⊢ Q; nothing certifies that Q was what the customer wanted. The VDM-era lesson (the Vienna conference case study): a system delivered correct <em>with respect to its specification</em>, where the spec itself was the bug — a requirement-level error no kernel can catch. Review specs like code.</li>
+<li><strong>The kernel-bug list is short, and that's the argument.</strong> 2000–2020 produced roughly a handful of real soundness bugs in the major kernels — Isabelle's axiomatic-type-class interaction (~2002), Coq guard-checker escapes admitting false fixpoints (several, 2018–2021). Each was an <em>implementation</em> bug in a rule, found by review or adversarial testing, fixed in days; none shipped a false theorem. Small TCB = short, reviewable incident list — and once fixed, every old proof re-checks from its stored term.</li>
+<li><strong>The SAT-solver-in-the-kernel debate.</strong> Solvers (Z3: ~500k lines of C++) would collapse the TCB if trusted. Two live answers: <em>certificates</em> — proof logs (DRAT for SAT, SMT certificates) re-checked by small, sometimes verified checkers — and <em>reflection</em> — verified checker code running <em>inside</em> the logic (SMTCoq: the external solver becomes an untrusted hint generator). Still research-grade in places; ask which pattern a tool uses before counting its TCB.</li>
+<li><strong><code>coqchk</code> exists because the de Bruijn criterion is load-bearing.</strong> <code>.vo</code> files store proof <em>terms</em>, not scripts; <code>coqchk</code> re-typechecks a whole development without loading any tactic code — the artifact must survive the checker alone.</li>
+<li><strong>The <code>thm</code> discipline has one classic exception: axioms.</strong> <code>Axiom</code> in Coq, <code>axiomatization</code> in Isabelle add rules with no derivation; <code>Print Assumptions</code> lists what a "theorem" secretly rests on. seL4's proof runs axiom-light; some crypto proofs run axiom-heavy. The list is the honesty.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Labs verified on z3-solver 5.1.0, Python 3.12.</p>
+<p><strong>Lab 1 — Z3 from Python.</strong> <code>pip install z3-solver</code>; primality as an UNSAT question ("no nontrivial divisor exists"), with the unsat core as the explanation:</p>
+<pre><code class="language-python">from z3 import *
+
+n = 13
+d = Int('d')                  # a hypothetical nontrivial divisor
+a1, a2, a3, a4 = Bools('a1 a2 a3 a4')
+s = Solver()
+s.set(unsat_core=True)        # track refutations
+
+s.add(Implies(a1, d &gt; 1))     # a1: nontrivial (&gt;1)
+s.add(Implies(a2, d &lt; n))     # a2: proper (&lt;n)
+s.add(Implies(a3, n % d == 0))# a3: divides n
+s.add(Implies(a4, d * 2 == d * 2))  # a4: filler, useless
+
+print(s.check(a1, a2, a3, a4))  # -&gt; unsat  == 13 is prime
+print(s.unsat_core())           # -&gt; [a1, a2, a3]   (a4 dropped)
+print(s.check(a1, a3))          # -&gt; sat, d = 13 (drop a2: trivial divisor)</code></pre>
+<p>Verified output: <code>unsat</code>, <code>[a1, a2, a3]</code>, then <code>sat</code>, <code>d = 13</code>. UNSAT says the ∀-claim holds; the core names the load-bearing hypotheses; the dropped <code>a4</code> was irrelevant. Set <code>n = 15</code> — <code>sat</code>, <code>d = 3</code>: a counterexample, the testing quantifier.</p>
+<p><strong>Lab 2 — the sum-loop invariant as an SMT implication.</strong> Encode consecution: prove <code>I ∧ B → I'</code> by refuting its negation; the running sum is axiomatized by its recurrence — which <em>is</em> the definition of Σ:</p>
+<pre><code class="language-python">from z3 import *
+
+A = Function('A', IntSort(), IntSort())  # A(k) = a[k]
+S = Function('S', IntSort(), IntSort())  # S(i) = sum of a[0..i)
+s, i, n = Ints('s i n')
+k = Int('k')
+
+slv = Solver()
+slv.add(S(0) == 0)                        # empty sum = 0
+slv.add(ForAll(k, Implies(k &gt;= 0,
+        S(k + 1) == S(k) + A(k))))        # sigma's recurrence
+
+# consecution, NEGATED: the body maps I /\ B to I
+slv.add(Not(Implies(And(s == S(i), 0 &lt;= i, i &lt;= n, i &lt; n),
+                    And(s + A(i) == S(i + 1), i + 1 &lt;= n))))
+print("consecution:", slv.check())        # unsat == obligation holds</code></pre>
+<p>Output (verified): <code>consecution: unsat</code>; initiation likewise. The termination measure (v = n−i) needs induction over well-founded ℕ — the boundary between chapter 02's automatic world and the assistant world.</p>
+<p><strong>Lab 3 — one Dafny method (or the paper version).</strong> With .NET (<code>dotnet tool install -g dafny</code>), save the binary search as <code>bsearch.dfy</code>, run <code>dafny bsearch.dfy</code> — expect <code>Dafny program verifier finished with 0 verified, 0 errors</code>. Then break it: <code>lo := mid + 1</code> → <code>lo := mid</code> and rerun — Dafny blames the <code>decreases hi - lo</code> clause (when <code>hi−lo = 1</code>, <code>mid = lo</code>, the window stops shrinking): the off-by-one found by proof obligation, not by testing. No .NET? Write the three while-rule obligations for the invariants above by hand and find the failing one.</p>
+<p><strong>Lab 4 — touch the proof object.</strong> With Coq (<code>apt install coq</code> or opam):</p>
+<pre><code class="language-coq">Theorem two : 1 + 1 = 2.
+Proof. reflexivity. Qed.
+Print two.
+Print Assumptions two.</code></pre>
+<p>Expected: <code>two = eq_refl : 1 + 1 = 2</code> — all the evidence is one λ-term (<code>eq_refl</code>), re-checkable by <code>coqchk</code> without the tactic machinery. <code>Print Assumptions two</code> → <code>Closed under the global context</code>: zero axioms. Run it on any "big" theorem you meet.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Read verification claims as TCB questions.</strong> Any "machine-checked" result — seL4, CompCert, verified crypto — is a conditional: sound kernel + stated axioms + given spec. Ask which of the three is doing the work; <code>Print Assumptions</code> is the confession mechanism.</li>
+<li><strong>Annotate loops you review.</strong> If you can state what is true at the top of every iteration, boundary and termination bugs surface on paper — the <code>lo := mid</code> class dies at <code>decreases</code> before any test run.</li>
+<li><strong>Debug with wp.</strong> Compute the weakest precondition of the <em>intended</em> postcondition and compare with what the entry code establishes — the divergence is the bug's location, derived not guessed.</li>
+<li><strong>Interview-grade answers.</strong> "What does seL4's proof guarantee?" — a sound, incomplete checker certified an executable spec against a kernel model; the TCB is a ~2,500-line kernel plus the spec; the 100:1 ratio is the price, not the product.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 19 ch02</strong> — Curry-Howard load-bearing: the proof term <em>is</em> a λ-term, <code>Qed</code> <em>is</em> type-checking; the easy instance generalized.</li>
+<li><strong>Module 01 ch12</strong> — the JVM bytecode verifier as the LCF-style kernel: class file = certificate, StackMapTable = proof term, check-then-JIT = proof-carrying code.</li>
+<li><strong>Module 10 ch01</strong> — the compiler frontend: wp/VC generation is the same CFG traversal with a formula backend.</li>
+<li><strong>Module 19 ch05</strong> — the TCB concept, returning as a line count.</li>
+<li><strong>Module 19 ch01</strong> — undecidability: why the sound/incomplete position is forced.</li>
+<li><strong>Module 21 ch02</strong> — model checking: brute-force ∀ over finite state, memory budget as the frontier.</li>
+<li><strong>Module 21 ch03</strong> — these economics at full size: seL4's 40:1, person-years.</li>
+<li><strong>Module 21 ch04</strong> — the borrow checker as a sound, <em>decidable</em> fragment: the completeness sacrifice made concrete.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> "The suite is green, that's proven." State what the suite and what a proof establish, as quantified formulas, and name the one thing a suite can do that a sound incomplete prover cannot.</li>
+<li><strong>Concept.</strong> Why does the assignment rule substitute into the <em>postcondition</em>? What property of assignment makes backward the only mechanical direction?</li>
+<li><strong>Predict/derive.</strong> Compute the weakest precondition by hand, showing every intermediate formula, for postcondition <code>y &gt; 2</code> (integers): ``<code> 1  x := x + 2; 2  x := x - 1; 3  if x &gt; 3 then 4      y := x - 1 5  else y := x + 1 </code>``</li>
+<li><strong>Predict/derive.</strong> A colleague proposes <code>I_w ≡ 0 ≤ i ≤ n</code> for the sum loop. Check the three obligations for <code>I_w</code>, state what the while rule lets you conclude at exit, and why <code>s = Σ_{k&lt;n} a[k]</code> does not follow.</li>
+<li><strong>Predict/derive.</strong> Derived precondition of each: (a) <code>{ ? } x := 7 { x mod 2 = 1 }</code>, (b) <code>{ ? } x := x - 1 { x &gt; 0 }</code>, (c) <code>{ ? } x := y { x = 3 }</code>.</li>
+<li><strong>Diagnose.</strong> Dafny rejects the binary search after one edit: <code>lo := mid + 1</code> became <code>lo := mid</code>; the report blames the <code>decreases hi - lo</code> clause, not any invariant. Name the execution that kills the measure (window size, what <code>mid</code> equals) and why the invariants survive.</li>
+<li><strong>Diagnose.</strong> A Dafny-verified <code>BinarySearch</code> returns a wrong index in production: kernel sound, no <code>assume</code>/<code>sorry</code>, CI grep clean, code byte-identical to the verified artifact. Give two failure modes — one at the contract boundary, one at the spec level.</li>
+<li><strong>Cross-chapter.</strong> Map the JVM's load-time machinery (module 01 ch12) onto the LCF architecture: (a) the certificate, (b) the kernel, (c) the theorem, (d) the untrusted producer — and why the JIT needs no per-instruction type re-checking.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>A suite establishes a finite disjunction of <em>points</em>: ∃x₁...∃xₖ (k = tests) with program(xᵢ) correct. A proof of {P} S {Q} establishes ∀s (P(s) → Q(final(s))) — every input, including ones no test author imagined. The suite can <em>refute</em>: a failing test is a concrete witness of ¬∀, which a sound incomplete prover is not obligated to produce.</li>
+<li>Assignment is deterministic: the final state is a <em>function</em> of the initial state (x' = E, rest fixed), so any predicate on the final state pulls back to a unique weakest precondition by substitution. Forward, no single best postcondition exists — choosing one loses the old x.</li>
+<li>Line 4: (y&gt;2)[y:=x−1] = x &gt; 3. Line 5: (y&gt;2)[y:=x+1] = x &gt; 1. Line 3: (x&gt;3 → x&gt;3) ∧ (x≤3 → x&gt;1) ≡ x &gt; 1. Line 2: (x&gt;1)[x:=x−1] = x &gt; 2. Line 1: (x&gt;2)[x:=x+2] = x &gt; 0 — over ℤ, <strong><code>x ≥ 1</code></strong>.</li>
+<li>All three hold: initiation (0 ≤ 0 ≤ n), consecution (i &lt; n gives 0 ≤ i+1 ≤ n), termination (v = n−i). But the while rule hands back <em>your own</em> invariant: I_w ∧ ¬(i&lt;n) = <code>i = n</code>, nothing about s. <code>s = Σ</code> was never in I_w, so it cannot appear in the conclusion.</li>
+<li>(a) 7 mod 2 = 1 ≡ <strong>True</strong> — manufactured. (b) <strong>x &gt; 1</strong> — shifted upstream by one. (c) <strong>y = 3</strong> — the claim jumps to the variable copied in.</li>
+<li>With <code>hi − lo = 1</code>: <code>mid = lo + 0 = lo</code>. If a[mid] &lt; target, <code>lo := mid</code> assigns lo := lo — window unchanged, v stuck at 1: an infinite loop. The invariants survive because they only classify the <em>unexamined</em> regions, and a[mid] &lt; target keeps "all below lo are &lt; target" true. Preserved invariant + broken measure = partial correctness without termination, hence the <code>decreases</code> failure alone.</li>
+<li>Contract boundary: the proof is conditional on <code>requires sorted(a)</code> — a proof-time assumption checked nowhere at runtime; a caller passing an unsorted array gets garbage-out from a "verified" component. Spec level: machine-checked ≠ the spec was right — if <code>ensures</code> formalizes the wrong behavior, the kernel certifies a theorem about a spec nobody wanted (the VDM lesson).</li>
+<li>(a) Certificate: StackMapTable frames — operand-stack/local types at branch targets (Java 7+). (b) Kernel: the bytecode verifier, one linear abstract-interpretation pass against the frames. (c) Theorem: per-method type safety — nothing pops a type the stack doesn't hold; memory safety follows from the JVM type discipline. (d) Producer: javac or any bytecode generator. The JIT skips re-checking because the theorem was proven once, at load time — the PCC payoff.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 21 — Formal verification</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

@@ -504,6 +504,12 @@ copied into your heap.
 - **ch23** — the unification table is this chapter's through-line, systematized.
 - **ROADMAP** — the queued functional-programming and mainframe modules start here.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 19 ch01 (the lambda calculus)** — Lisp and Haskell's root: the three-conversion machine that every elder language is sugar on.
+- **Module 09 ch04 (actors and channels)** — Erlang's model in the concurrency lineage: ownership transfer as a message.
+- **Module 21 ch01 (the LCF birth)** — ML was built to host a proof checker — the elders list contains the birth of both the language and the verifier.
+
 ## Quiz
 
 1. Fortran through Fortran 77 forbids recursive procedures outright. Give the

@@ -430,6 +430,12 @@ that release-mode hardware would have let sail through.
 - **Queued cybersecurity module** — exploits needing memory unsafety, and attacking
   safe-Rust targets.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 19 ch03 (the safety theorem)** — the borrow checker is an affine type system: this chapter's rules are the visible surface of a machine-checked proof.
+- **Module 21 ch04 (separation logic)** — the proof-theoretic reading: ownership is the decidable fragment of Reynolds' logic, NLL is constraint solving, Miri is the operational model.
+- **Module 09 ch03 (lock-free)** — Send and Sync are the type system's concurrency proof rules — the compiler's answer to this chapter's 'who may share what.'
+
 ## Quiz
 
 **1. (Concept)** Your teammate proposes making `String: Copy` "because memcpy works

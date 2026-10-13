@@ -430,6 +430,11 @@ storage map.
 - **ch21** — no use-after-free surface; unchecked subscripts still corrupt.
 - **ROADMAP** — the queued mainframe module builds on this chapter.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 08 ch02 (storage sections)** — WORKING-STORAGE/LOCAL-STORAGE/LINKAGE with exact semantics — this chapter's fixed record, taught at mainframe depth.
+- **Module 19 ch03 (the safety spectrum)** — safety by impoverishment: no pointers, no heap — the PICTURE clause is the type system, and it never lies.
+
 ## Quiz
 
 1. COBOL 85 forbids a program from calling itself, directly or indirectly. Give the

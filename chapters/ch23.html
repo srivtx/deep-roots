@@ -26,7 +26,7 @@
 <header class="site-header">
   <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
   <div class="header-right">
-    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
     <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -37,7 +37,7 @@
 <article class="post">
 <div class="post-kicker">module 01 &middot; memory models &middot; Part IV · the payoffs</div>
 <h1 class="post-title">Chapter 23 — The unification: one table, every language, every payoff</h1>
-<div class="post-meta">chapter 23 &middot; ~12 min read &middot; deep-roots learning program</div>
+<div class="post-meta">chapter 23 &middot; ~13 min read &middot; deep-roots learning program</div>
 <blockquote><strong>The 30-second version.</strong> Twenty-two chapters ago, memory was a mystery; now it is a design space with named axes. Every language is a point in that space, chosen under constraints you can reconstruct. This chapter compresses the whole module into one comparison table, traces the connections forward into every queued module, and turns the knowledge into a working toolkit: the profilers, the flags, the practice path, and the questions that separate people who have this module from people who don't.</blockquote>
 <h2 id="the-four-questions-one-last-time">The four questions, one last time</h2>
 <p>Every language's memory model is its answers to four questions — you can now interview any language in four sentences:</p>
@@ -97,6 +97,16 @@
 <li><strong>Module 10 (compilers)</strong> — the machine that <em>manufactures</em> Chapters 06-07's layouts: register allocation, escape analysis, barrier insertion.</li>
 <li><strong>Module 11 (databases)</strong> — Chapter 02's hierarchy at disk scale; Chapter 03's COW as MVCC; Chapter 05's page management as buffer pools.</li>
 <li><strong>Module 12 (GPU/AI)</strong> — Chapter 01-02's economics rebuilt in HBM and SMEM; coalescing is cache-line arithmetic for a different wire.</li>
+<li><strong>Module 13 (networking)</strong> — the buffers <em>moved</em>: Chapter 05's allocator questions, the Chapter 04 stack discipline, and Chapter 02's hierarchy now measured in wire time — a packet is memory in motion.</li>
+<li><strong>Module 14 (file systems)</strong> — the heap that outlives the process: Chapter 19's allocators persisted to disk, Chapter 03's COW as Btrfs/ZFS snapshots.</li>
+<li><strong>Module 15 (virtualization &amp; cloud)</strong> — Chapter 03 sold as a product: the second page table, ballooning as GC for VMs, oversubscription as the bank run model.</li>
+<li><strong>Module 16 (browsers)</strong> — Chapter 05-06's object graphs at page scale: the DOM heap, two collectors, one wrapper problem, and the 16.6 ms budget.</li>
+<li><strong>Module 17 (hardware design)</strong> — Chapters 01-03 derived from transistors: the cache you measured, built in RTL; the power equation behind every "why is it slow" this module ever answered.</li>
+<li><strong>Module 18 (cryptography)</strong> — the one field where Chapter 02's cache line is a <em>breach</em> and Chapter 05's heap over-read cost a billion dollars: memory discipline as the security boundary.</li>
+<li><strong>Module 19 (PL theory)</strong> — this module's table, theorized: every language row is a point on the guarantees frontier, every collector a proof search, every rule a theorem you already use.</li>
+<li><strong>Module 20 (embedded)</strong> — this module with the safety net removed: one address space, the stack pointer in a file, the memory map in silicon.</li>
+<li><strong>Module 21 (formal verification)</strong> — the machines that prove what this module's languages only promise: kernels, compilers, and the borrow checker itself, as theorems.</li>
+<li><strong>Module 22 (ML systems)</strong> — the unification at datacenter scale: the tensor as the 17th object model, sharding as the 175-billion-object heap, the KV cache as virtual memory for tokens.</li>
 </ul>
 <p>That is the entire program thesis in one paragraph: <strong>memory is the root layer of computer science, and every field is a branch that forgot it has roots.</strong></p>
 <h2 id="what-insiders-know-the-module-sized-version">What insiders know (the module-sized version)</h2>
@@ -152,6 +162,7 @@
       <a href="../index.html#module-01">Module 01</a>
       <a href="../quiz.html">Quiz</a>
       <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
       <a href="https://github.com/srivtx/deep-roots">GitHub</a>
       <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
     </div>

@@ -26,7 +26,7 @@
 <header class="site-header">
   <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
   <div class="header-right">
-    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
     <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -37,7 +37,7 @@
 <article class="post">
 <div class="post-kicker">module 01 &middot; memory models &middot; Part I · the machine</div>
 <h1 class="post-title">Chapter 05 — The heap: the everything-else machine</h1>
-<div class="post-meta">chapter 05 &middot; ~11 min read &middot; deep-roots learning program</div>
+<div class="post-meta">chapter 05 &middot; ~12 min read &middot; deep-roots learning program</div>
 <blockquote><strong>The 30-second version.</strong> The stack handles lifetimes that nest; everything else — objects that outlive their creating function, sizes unknown until runtime — needs a different machine: a pool of blocks that die in unknowable order. That pool is the heap, and its two hard problems are <em>which freed bytes satisfy the next request</em> (allocation policy) and <em>what happens when no contiguous bytes can</em> (fragmentation). Every language in Part II is a different answer to one question: who manages this machine? Chapter 19 goes inside the allocators; this chapter builds the problem they solve.</blockquote>
 <h2 id="the-heap-problem-stated-from-first-principles">The heap problem, stated from first principles</h2>
 <p>Write down what the stack could not do: a function creates a buffer that must survive its return (return the data, not the pointer to a dead frame — Chapter 04); a parser discovers at runtime that the message contains 13,000 items; a cache holds objects for hours with no call-graph relationship to each other. The common shape: <strong>allocation and deallocation are not nested, not predictable, and not compile-time-known.</strong></p>
@@ -120,6 +120,13 @@ int main(void) {
 <li><strong>Chapter 19</strong> — the allocators in depth: this chapter's three duties, done for real.</li>
 <li><strong>Chapter 21</strong> — the chunk header as attack surface; tcache poisoning.</li>
 </ul>
+<p><em>Forward links — where the rest of the program picks this chapter up:</em></p>
+<ul>
+<li><strong>Module 11 ch02 (B-trees)</strong> — the disk as the new heap: page splits are the allocator's fragmentation math at 4 KiB granularity.</li>
+<li><strong>Module 14 ch02 (VFS and allocators)</strong> — file systems are allocators that outlive the process — ext4's block bitmap is this chapter's free list, persisted.</li>
+<li><strong>Module 22 ch01 (the tensor)</strong> — PyTorch's caching allocator is the arena flavor of this chapter's taxonomy, with 512-byte blocks and a fragmented OOM.</li>
+<li><strong>Module 19 ch04 (GC as proof search)</strong> — the bump-pointer nursery is allocation with no per-object cost because free space itself is the proof.</li>
+</ul>
 <h2 id="quiz">Quiz</h2>
 <ol>
 <li><strong>Concept.</strong> Why must <code>free()</code> accept a bare pointer with no size, and what does that force the allocator to do?</li>
@@ -166,6 +173,7 @@ int main(void) {
       <a href="../index.html#module-01">Module 01</a>
       <a href="../quiz.html">Quiz</a>
       <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
       <a href="https://github.com/srivtx/deep-roots">GitHub</a>
       <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
     </div>

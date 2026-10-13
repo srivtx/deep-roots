@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The verified kernel — deep-roots</title>
+<meta name="description" content="Chapter 03 of module 21: The verified kernel">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The verified kernel — deep-roots">
+<meta property="og:description" content="Chapter 03 of module 21: The verified kernel">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The verified kernel — deep-roots">
+<meta name="twitter:description" content="Chapter 03 of module 21: The verified kernel">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 21 &middot; the machines that prove programs</div>
+<h1 class="post-title">The verified kernel</h1>
+<div class="post-meta">chapter 03 &middot; ~18 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Between 2004 and 2009, a team at NICTA proved — machine-checked, in Isabelle/HOL — that the seL4 microkernel's ~8,700 lines of C (plus ~600 of assembly) <em>always</em> behave exactly as its specification says. The proof took ~20-25 person-years, ~200k lines of script then (past ~400k now), found ~320 bugs before release, and, amortized across DARPA programs, turned the industry's most expensive bug class into a one-time line item. The fine print: the theorem says what the kernel <em>does</em>, not that it is <em>correct</em> — spec, compiler, the 600 asm lines, and hardware sit outside it.</blockquote>
+<h2 id="1-the-artifact-what-was-actually-proven">1. The artifact: what was actually proven</h2>
+<p>The lineage: Liedtke's L4 family (1990s) — kernels small enough to audit, fast enough to use; seL4 is NICTA's 2004-onward descendant with one twist: prove the layers instead of only reviewing them, finished 2009 (Klein et al., SOSP 2009 — functional correctness of a complete general-purpose kernel, a first).</p>
+<p><strong>Functional correctness</strong> here is precise: the C implementation is proven to <em>refine</em> an abstract specification — every behavior the C can exhibit is a behavior the spec permits. No buffer overflow, no off-by-one, no spec-violating state — not on tested paths, on <em>all</em> paths. The tower has three layers joined by two theorems:</p>
+<pre><code>+--------------------------------------------------------------+
+|  abstract specification    ~10k lines Isabelle, human-written |
+|  "what the kernel should do"                                 |
++--------------------------------------------------------------+
+            ^ THEOREM 1: refinement (forward simulation):
+            |   every Haskell-model step is allowed by the spec
++--------------------------------------------------------------+
+|  executable specification  Haskell model, runnable            |
++--------------------------------------------------------------+
+            ^ THEOREM 2: refinement (forward simulation again):
+            |   every C step is allowed by the Haskell model
++--------------------------------------------------------------+
+|  C implementation   ~8,700 lines C + ~600 lines asm           |
++--------------------------------------------------------------+</code></pre>
+<p>The team ran the Haskell layer as a tested, executable prototype, then wrote the C against it; the refinements compose — C ⊑ Haskell ⊑ abstract — and their composition is the functional correctness theorem.</p>
+<p>One component of theorem 2 earns every verification person's raised brow: <strong>the C parser.</strong> Isabelle needs the C <em>as a term</em> — the l4v tree includes a C-to-Isabelle parser that produces the syntax tree the proof is actually about. The parser is trusted infrastructure, not a verified component: mis-translate C, and the theorem is about a different program than the one you compiled. This is the CompCert-style semantics question in its seL4 form — <em>is the C semantics in the proof the same C your compiler implements?</em> The seL4 resolution: a small, scrutinized parser, a careful C subset, and the endgame — a verified compiler closing that rung — is chapter 05's CompCert story.</p>
+<h2 id="2-the-economics-proof-as-a-line-item-and-the-quiet-bombshell">2. The economics: proof as a line item, and the quiet bombshell</h2>
+<p>The field's economics as a table:</p>
+<div class="table-wrap"><table><thead><tr><th>line item</th><th>number (honest ranges)</th></tr></thead><tbody><tr><td>kernel implementation</td><td>~8,700 lines C + ~600 asm (2009; ~10k C today)</td></tr><tr><td>proof tree (l4v)</td><td>~200k lines Isabelle in 2009; ~370k-400k+ today</td></tr><tr><td>proof effort</td><td>~20 person-years of proof, ~25 total with design/code</td></tr><tr><td>cost</td><td>low single-digit US$ millions</td></tr><tr><td>proof:code ratio</td><td>the field's shorthand: ~100:1; raw arithmetic 400k / 9.3k ≈ 40:1 — honest range 40-100:1 depending on what you count. Measure it in the lab</td></tr><tr><td>the alternative</td><td>Heartbleed-class cleanup: post-incident estimates land at US$100M-scale <em>per event</em> — and the next CVE bills again</td></tr></tbody></table></div>
+<p>The business case is the last row: proof is a <strong>one-time cost</strong>; vulnerabilities are a <strong>recurring cost</strong>. A kernel proofed once in 2009 is reused across projects — DARPA's HACMS the flagship — with no re-proof per product: a theorem does not expire when you port the <em>system</em> built on it. Heartbleed is the comparison the industry understands: one missing bounds check in widely-audited C, and the world re-keyed itself. Against that, "25 person-years, once" is cheap for the artifact class that matters.</p>
+<p>The quiet bombshell, the number that decides whether verification is philosophy or engineering: <strong>the proof found ~160 implementation bugs and ~160 specification bugs, before release, in the most scrutinized microkernel of its era.</strong> The bugs the proof surfaced were the ones tests do not reach: initialization-order bugs in boot code (run once per machine, on the path every audit skims), rare interleavings in the IPC fast path, arithmetic corner cases at message-size boundaries. The ~160 spec bugs are the other half of the lesson: writing down what you meant, precisely enough to <em>prove</em>, found that you didn't mean what you wrote. Verification was the team's best debugging tool — module 03's "the bug is where the assumption is," mechanized: a machine that hunts assumptions exhaustively.</p>
+<h2 id="3-what-the-theorem-does-not-say-the-honesty-section-in-full">3. What the theorem does NOT say — the honesty section, in full</h2>
+<p>A verification engineer who cannot recite this section is selling something. Four rungs are outside the theorem:</p>
+<p><strong>(1) The spec is not proven correct.</strong> The theorem says the C matches the spec; it says nothing about the spec matching what you <em>want</em> — "what does a kernel want to do" is a human question. The abstract spec is ~10k lines of human-reviewed Isabelle — the remaining gap: a spec bug means the theorem faithfully proves the kernel does the wrong thing. Proof transfers trust; it does not create it.</p>
+<p><strong>(2) The compiler and the ~600 assembly lines escape.</strong> The proof covers C <em>source</em>; the binary is what runs. A miscompiling gcc produces a correct proof about the wrong artifact. And ~600 lines of hand-written assembly — kernel entry/exit, context switch, some fast paths — sit outside the proof entirely, human-reviewed only. The compiler rung's endgame is CompCert (chapter 05); the asm rung is kept small enough to audit by reading — why seL4 held it at ~600 lines.</p>
+<p>Draw the full stack with the proof covering the middle — keep this diagram:</p>
+<pre><code>+----------------------------------------------------------+
+| middleware / apps        UNPROVEN (by design)            |
++----------------------------------------------------------+
+| abstract spec            HUMAN-REVIEWED (~10k lines)     | &lt;- the gap that remains
++==========================================================+
+|          &gt;&gt;&gt; THE THEOREM COVERS THIS MIDDLE &lt;&lt;&lt;          |
+|  C kernel: every behavior refines the abstract spec      |
+|  ~8,700 lines, machine-checked in Isabelle/HOL           |
++==========================================================+
+| ~600 lines asm           UNPROVEN (hand-written)         |
++----------------------------------------------------------+
+| compiler (gcc/clang)     ASSUMED (CompCert: ch05)        |
++----------------------------------------------------------+
+| hardware                 ASSUMED FAULT-FREE              |
++----------------------------------------------------------+</code></pre>
+<p>Module 19 chapter 05's "unsafe kernel with a safe membrane" shape returns at OS scale — a thin unproven boundary around a proven core, the membrane this time made of a theorem.</p>
+<p><strong>(3) Timing is out of scope.</strong> Functional correctness has no clock: no worst-case execution time (WCET), no latency or jitter bounds. For the real-time world (module 20) that is a separate discipline: static WCET analysis on the binary, plus seL4's <em>time protection</em> (the MCS mixed-criticality variant) bounding interference so one compartment cannot leak timing to another. The functional theorem and the timing story are two artifacts; only the first is celebrated.</p>
+<p><strong>(4) The hardware is assumed.</strong> No Rowhammer (module 02: flipping DRAM bits from a co-tenant), no fault injection, no Bellcore-style attack (module 18 ch03). From 2019 on the seL4 community has published on glitch attacks — voltage and clock glitching to make a proven kernel skip an instruction — and their honest conclusion: the answer is <em>not more proof</em>; it is glitch-detection hardware, redundancy, and re-drawing the trust boundary below the silicon. A verified kernel on a glitchable chip is a proof about a machine that no longer exists.</p>
+<h2 id="4-inside-the-proof-the-invariant-the-capability-and-the-commute">4. Inside the proof: the invariant, the capability, and the commute</h2>
+<p>Two proof styles hold the tower up.</p>
+<p><strong>Invariants</strong> hold of <em>every reachable state</em>. The crown jewel of seL4's invariant work is its page-table theorem: <strong>every frame mapped into an address space is backed by a live capability.</strong> No sequence of syscalls — grant, revoke, map, CSpace surgery — can produce a state where a page table points at a frame whose owner no longer holds the right to it. Untyped memory cannot be aliased into two address spaces by construction; the invariant <em>is</em> the proof's memory-safety story (the <code>Inv</code> theories run to hundreds of pages in l4v).</p>
+<p>The identification this program has been building toward since module 19 chapter 03: <strong>a capability system is a runtime type system for memory.</strong> A capability is a proof object in kernel state — an unforgeable token that <em>is</em> the right to touch a specific object. Grant is subtyping, revoke is going out of scope, and the affine discipline (a cap moved to a child is gone from the parent — caps are linear, not copyable) is module 19 chapter 03's affine types, enforced at runtime instead of compile time. The kernel's entire state space is type-correct by theorem. The identification continues into silicon: CHERI (Cambridge's CHERI/CTSRD lineage, out of Capsicum's sandboxing work) implements capabilities <em>in the ISA</em> — tagged, bounded, 128-bit pointers that make out-of-bounds access a hardware fault. CHERI is seL4's runtime type system pushed into the instruction set: the software proof and the hardware mechanism are the same idea at different layers.</p>
+<p><strong>Refinement</strong> is the tower's mortar, proved by <em>forward simulation</em>: a correspondence relation <code>R</code> between concrete and abstract states, with the obligation that each concrete step is matched by an abstract one:</p>
+<pre><code>                    R  (correspondence relation)
+        c  ────────────────────────────────▶  a      c: concrete state
+        │                                      │     a: abstract state
+        │ one C step                          │ ∃ abstract step
+        ▼                                      ▼     (stuttering allowed)
+        c' ─────────────────────────────────▶  a'
+
+  obligation:  R(c,a) ∧ (c → c')  ⟹  ∃ a'. (a → a') ∧ R(c', a')</code></pre>
+<p>The diagram commutes in the "there exists" reading: the concrete machine may take small steps — or <em>stutter</em>, leaving the abstract state unchanged while the C grinds through one operation — but it can never step somewhere the abstract machine cannot follow; that is why the diagram <em>is</em> the proof's shape. Invariant proofs say "all reachable states are well-formed"; simulation proofs say "all behavior is accounted for." l4v uses both, and its directory names map onto the diagram (the lab walks it).</p>
+<h2 id="5-the-second-act-drones-certificates-and-the-monolith-s-answer">5. The second act: drones, certificates, and the monolith's answer</h2>
+<p><strong>The HACMS drone.</strong> DARPA's HACMS (2011-2015, a program measured in the tens of millions of dollars) was verification's amortization proof: Boeing helicopter and drone platforms retrofitted with an seL4-based separation architecture — the <em>verified</em> kernel at the bottom, <em>unverified</em> middleware and mission software in compartments above. Isolation is done by compartmentalization: each component holds only the capabilities it was granted, and the kernel is <em>proven</em> to enforce that. Red-team exercises planted malware in mission-app compartments; it could not reach flight control — not because the middleware was proven (it was not), but because the compartment boundaries and capability distribution were. Prove the small bottom once; let containment (module 15, now with teeth) handle the unprovable top.</p>
+<p><strong>Certification is not proof.</strong> The honest paragraph: DO-178C DAL A — avionics's highest assurance level — certifies <em>process</em>: reviews, MC/DC structural coverage, traceability, independent verification — evidence about how you worked, machine-checkable nowhere. A theorem is evidence about what the artifact <em>is</em>, checkable by anyone holding the proof and the checker. Marketing blurs them: Green Hills' INTEGRITY-178B, certified to DAL A and flown for two decades, is a <em>certified but not formally verified</em> kernel, and its advertising has let readers hear "proven." In 2023 the seL4 Foundation ran seL4 through a Common Criteria evaluation to EAL6+ — the first general-purpose kernel at that level — and the honest reading: the <em>theorem made the paperwork cheap</em> (EAL6+ demands formal design artifacts; seL4 had a formal <em>implementation</em>), while the certificate still adds what a proof cannot: independent eyes on the target and delivery chain.</p>
+<p>The comparison table the field deserves:</p>
+<div class="table-wrap"><table><thead><tr><th>system</th><th>the claim</th><th>what backs it</th><th>what it is <em>not</em></th></tr></thead><tbody><tr><td>seL4</td><td>functional correctness</td><td>Isabelle refinement proof, ~400k-line l4v tree, 20+ py</td><td>spec, compiler, asm, hardware all outside</td></tr><tr><td>CertiKOS (Yale)</td><td>verified concurrent kernel</td><td>Coq, <em>compositional</em> certified abstraction layers — prove layers, stack them</td><td>trade: composability and re-proof per configuration vs seL4's monolithic one-shot; smaller API</td></tr><tr><td>INTEGRITY-178B</td><td>certified</td><td>DO-178C DAL A, CC evaluations — process evidence, tests, reviews</td><td>no machine-checked theorem anywhere</td></tr><tr><td>Linux</td><td>none claimed</td><td>engineering at the largest scale</td><td>(see below)</td></tr></tbody></table></div>
+<p><strong>The Linux side — the field escaped the lab.</strong> The two camps are "microkernel-with-proof" and "monolith-with-knowledge," but the monolith quietly built the most-used formally specified artifact in existence: the Linux kernel memory model (LKMM), written in the Cat language, machine-checked with herd7 against litmus tests (Alglave, Maranget, McKenney, Parri, Stern; formalized 2017; lives in <code>tools/memory-model</code>). Maintainers run litmus tests — "may this reordering happen?" — against a formally defined concurrency model, daily, in the normal flow of kernel development. Nobody proved Linux's C; what happened is the kernel's <em>concurrency specification</em> became a machine-checked artifact, with the data-race-freedom arguments for core synchronization (RCU, locking discipline) made against it. The monolith uses a verified-model workflow as ordinary tooling while the proven kernel flies in drones — both camps won something.</p>
+<p><strong>SPARK: the subset discipline, and component-level economics.</strong> The Ada world took the other door: restrict the language until proof is cheap. SPARK is Ada's provable subset — classically no pointers, no aliasing (modern SPARK adds Rust-like ownership-checked pointers) — with flow analysis and proof obligations run through SMT solvers on every build. The flight-software pattern (NASA cubesat guidance work, JPL IRAD-style research among the cited cases): prove the guidance component, ~10-100x proof effort at component scale — one to two orders cheaper than a kernel. The sizing rule: <em>proof scales with the size of the thing you refuse to get wrong.</em></p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>Proofs are code, so they get CI, pinning, and review.</strong> The l4v tree regenerates in the release pipeline; the exact Isabelle/Pure version is pinned (proofs depend on library internals — simp sets, tactic behavior — that change between releases). A proof diff is a <em>semantic</em> diff in the theorem: shrink an <code>Inv</code> theory by 300 lines and you may have weakened an invariant — proof diffs get release-notes discipline, not rubber stamps.</li>
+<li><strong>The repo is the textbook.</strong> In <code>seL4/l4v</code>, the directory names <em>are</em> the commuting diagram: <code>ASpec</code> (abstract), <code>ExecSpec</code> (Haskell model), <code>CSpec</code> (parser output), <code>CRefine</code> (C-level refinement); invariants live in the <code>Inv</code> theories. The largest formally verified artifact in existence, browsable like documentation.</li>
+<li><strong>Career honesty.</strong> The "verification engineer" market is small — hundreds of jobs worldwide, not thousands: AdaCore, Galois, AWS Automated Reasoning, the seL4 ecosystem. The transferable skill is <em>specification writing</em> — deciding what to promise — the senior skill in any language.</li>
+<li><strong>The Rust-for-verification debate, placed.</strong> "Rust gives memory safety free" vs "the borrow checker proves a weaker theorem than functional correctness" — both right; the answer is composition: unverified Rust <em>confined by</em> verified seL4 (the Rust-on-seL4 line), verified Rust where it counts (Verus), CakeML as the other verified-language line. Type systems and theorems are layers, not rivals.</li>
+<li><strong>The bugs-found number is the sales number.</strong> Insiders quote ~160 + ~160 to executives, not the 400k line count — "proving found real bugs in the most-reviewed kernel alive" is the sentence that lands.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>All three labs are free — no Isabelle, no build.</p>
+<p><strong>Lab 1: the repo walk — measure the ratio yourself.</strong></p>
+<pre><code class="language-console">$ git clone --depth=1 https://github.com/seL4/l4v.git   # the proof tree
+$ git clone --depth=1 https://github.com/seL4/seL4.git  # the kernel
+$ ls l4v
+ASpec/  CRefine/  CSpec/  ExecSpec/  lib/  proof/  ...
+$ git -C l4v ls-files '*.thy' | xargs wc -l | tail -n1
+... total            # proof lines: 300k-600k
+$ git -C seL4 ls-files '*.c' | xargs wc -l | tail -n1
+... total            # kernel C: ~10k
+$ git -C seL4 ls-files '*.S' | xargs wc -l | tail -n1
+... total            # asm: ~600-1k
+$ wc -l l4v/CRefine/*.thy | tail -n1
+... total            # just the C-level refinement proof</code></pre>
+<p>Notice: (1) the directory names map to this chapter's diagrams; (2) divide the first count by the second — <em>your</em> proof:code ratio, measured, not quoted; (3) the asm count is small <em>on purpose</em> — the unproven residue, budgeted.</p>
+<p><strong>Lab 2: read one page of the spec.</strong> Open <code>l4v/ASpec/KernelState.thy</code> (or the session PDF on the project page). The abstract state is one large record, glossed here:</p>
+<pre><code class="language-isabelle">(* glossed: the kernel's whole state as one typed record *)
+record state =
+  kheap :: "obj_ref ⇒ kernel_object option"   (* memory as a typed map *)
+  (* ...plus the capability-derivation tree, scheduling state, etc. *)</code></pre>
+<p>Notice what <code>kheap</code>'s type says: memory is not bytes, it is a <em>typed</em> total map — the spec reads like the world's strictest type declaration, and it is ~10k such lines, all human-reviewed: rung 2 of the TCB stack, now something you have seen.</p>
+<p><strong>Lab 3 (paper): a 3-object capability system with a checker.</strong> The crown invariant — every mapped frame has a live capability — shrinks to a toy that runs anywhere:</p>
+<pre><code class="language-python"># captoy.py -- 3 objects, one invariant: "every mapped frame has a live capability."
+objects = {i: {"frame": f, "mapped": False} for i, f in enumerate(["fA", "fB", "fC"])}
+caps = {}                                    # cap id -&gt; (object id, rights)
+
+def grant(oid, rights):                      # mint: only authority creates caps
+    cid = max(caps, default=0) + 1
+    caps[cid] = (oid, rights)
+    return cid
+
+def transfer(cid, new_rights):               # delegate: MOVE + weaken, never amplify
+    oid, rights = caps.pop(cid)              # old cap dies -- the affine discipline
+    assert set(new_rights) &lt;= set(rights), "cannot amplify rights"
+    return grant(oid, new_rights)
+
+def map_frame(cid):                          # kernel op: mapping needs the right
+    oid, rights = caps[cid]
+    assert "M" in rights, "no mapping right"
+    objects[oid]["mapped"] = True
+
+def destroy(cid):                            # the op a buggy kernel would allow
+    caps.pop(cid)
+
+def invariant():                             # the theorem's body, as a checker
+    for oid, o in objects.items():
+        assert not o["mapped"] or any(c[0] == oid for c in caps.values()), \
+            f"object {oid} is mapped but NO capability backs it"
+
+c1 = grant(0, "RMW")
+map_frame(c1)                                # legal: a live cap with M
+invariant(); print("1: invariant holds after a legal map")
+c2 = transfer(c1, "R")                       # c1 dies in the move; map stays
+invariant(); print("2: still holds (c2 backs the map)")
+destroy(c2)                                  # last cap on object 0 is gone
+try:
+    invariant()
+    print("3: holds -- correct kernel")
+except AssertionError as e:
+    print("3: CAUGHT:", e, "-- the state seL4's proof says is unreachable")</code></pre>
+<p>Expected output: 1 and 2 print "holds"; 3 prints the CAUGHT line — object 0 mapped with no capability backing it. The checker plays the invariant proof; <code>destroy</code> plays a kernel bug. <code>transfer</code> is module 19 chapter 03's affine discipline, live: try <code>transfer(c2, "RM")</code> on a read-only cap and watch the no-amplification rule fire.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Vendor-claim triage.</strong> When a vendor says "verified," ask which rung: a theorem (seL4), a certificate (INTEGRITY-178B), a model (LKMM), or testing with "rigorous" in front of it.</li>
+<li><strong>TCB accounting.</strong> Evaluate any seL4-based design by enumerating the stack — proven kernel, reviewed spec, unproven asm, assumed compiler and hardware, and everything <em>above</em> the kernel — before believing an isolation claim.</li>
+<li><strong>Debugging a verified system.</strong> If a bug survives a proof, walk the unproven rungs <em>in order</em>: capability distribution and configuration first, then asm, compiler, hardware.</li>
+<li><strong>Sizing proofs.</strong> Component: 10-100x with SPARK-class tooling in CI. Kernel-scale: 40-100:1 and 20+ person-years. Prove the guidance code, the crypto primitive, the parser — not the whole app.</li>
+<li><strong>The interview answer.</strong> "seL4: ~10k lines, ~400k lines of proof, 25 person-years — and it still needed the spec reviewed, the compiler assumed, and the hardware glitch-hardened." Reciting the <em>limits</em> is what sounds like having read the paper.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 21 ch01</strong> — the LCF trust kernel: the Isabelle checker beneath this proof, and why 400k proof lines can be trusted.</li>
+<li><strong>Module 21 ch04</strong> — the borrow checker as a <em>decidable fragment</em>: seL4's capabilities are the full-strength runtime version of Rust's compile-time affine types.</li>
+<li><strong>Module 21 ch05</strong> — CompCert closes this stack's compiler rung; the parser question gets its endgame.</li>
+<li><strong>Module 19 ch03</strong> — affine types as compile-time discipline; here they return as <em>kernel state</em>: capabilities are a runtime type system for memory.</li>
+<li><strong>Module 19 ch05</strong> — the "unsafe kernel with a safe membrane" shape, returning at OS scale with the membrane made of a theorem.</li>
+<li><strong>Module 07 ch04</strong> — Linux's herd7-verified memory model: the monolith's answer, where the <em>concurrency spec</em> is the machine-checked artifact.</li>
+<li><strong>Module 05 ch01</strong> — mobile kernels: the L4 family's commercial phone descendants — the proof-adjacent production world.</li>
+<li><strong>Module 02 / module 18 ch03</strong> — Rowhammer and the Bellcore fault attack: the hardware rung no proof covers.</li>
+<li><strong>Module 20</strong> — WCET and real-time: the timing proofs seL4's MCS variant serves.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> seL4's headline result is "functional correctness." State precisely what the theorem asserts (the two refinement steps), and why it is <em>not</em> the claim "seL4 is correct."</li>
+</ol>
+<ol>
+<li><strong>Concept.</strong> The seL4 C code came from a tested Haskell prototype and heavy review — yet the proof found ~160 implementation bugs. What property of proof versus testing reaches them? Name two bug shapes tests structurally cannot reach.</li>
+</ol>
+<ol>
+<li><strong>Predict the number.</strong> Compute: (a) proof lines per line of kernel C+asm, using the 2009 figures (~200k proof lines vs ~9,300 C+asm); (b) person-days of proof per line of C (~25 person-years, 250 days per person-year). Then say in one sentence what the field's "~100:1" headline counts.</li>
+</ol>
+<ol>
+<li><strong>Predict the output.</strong> In the chapter's toy capability system, object 0 is mapped and the only cap on it has rights <code>"R"</code>. (a) You call <code>map_frame</code> on that cap — what fires? (b) You call <code>transfer(cap, "RM")</code> — what fires? (c) After rights are weakened to <code>"R"</code>, can any sequence of <code>transfer</code> calls restore <code>"M"</code>? Why?</li>
+</ol>
+<ol>
+<li><strong>Predict the behavior.</strong> The Haskell model's "reply to IPC" is one atomic step; the C implements it as three steps (consume the reply cap, write the message, update scheduling state). What must the forward-simulation proof exhibit for each concrete step, and what may the abstract state do meanwhile?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A drone runs seL4: flight control in one compartment, mission app in another. Red-team malware lands in the mission app. The flight-control compartment's memory was never touched — the kernel's theorem is intact — yet the drone deviates from its mission plan. Where did the isolation argument break, and which layer fixes it?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> Your team upgrades Isabelle on a whim; the l4v tree stops building with errors inside proof-library theories you never touched. No kernel C changed. What broke, and what maintenance discipline prevents it?</li>
+</ol>
+<ol>
+<li><strong>Cross-chapter.</strong> You deploy seL4 on a COTS Arm board, compiled with stock gcc, with an unverified Rust driver in the initial root task. Enumerate this system's complete TCB as a stack, marking each rung <em>proven / human-reviewed / assumed</em>, and name the module 19 chapter whose "unsafe kernel, safe membrane" shape this stack instantiates.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>The theorem composes two refinements: (theorem 1) every step of the Haskell model is allowed by the abstract specification, and (theorem 2) every step of the C is allowed by the Haskell model — so every C behavior is a behavior the abstract spec permits. It is not "seL4 is correct": the spec itself is only human-reviewed (~10k lines, rung 2 of the TCB stack), and the compiler, the ~600 asm lines, and the hardware are assumed. The theorem <em>transfers</em> trust to the spec; it does not create it.</li>
+</ol>
+<ol>
+<li>Proof is universal over paths; tests sample them. The proof checks spec against code on <em>every</em> input and interleaving, so it finds bugs no reachable test covers: initialization-order bugs in boot code (run once per machine, the path audits skim) and rare interleavings or arithmetic corner cases in the IPC fast path. The ~160 spec bugs are the other half: writing intent precisely enough to prove exposed that the intent itself was wrong.</li>
+</ol>
+<ol>
+<li>(a) 200,000 / 9,300 ≈ <strong>21:1</strong>. (b) 25 × 250 = 6,250 person-days over ~8,700 C lines ≈ <strong>0.72 person-days per line</strong>. (c) The ~100:1 headline counts the full current proof-side tree — scripts <em>plus</em> specs and generated artifacts (~400k+) — against the handwritten kernel; the honest range is 40-100:1, which is why the lab has you measure rather than quote.</li>
+</ol>
+<ol>
+<li>(a) The <code>assert "M" in rights</code> fires: "no mapping right" — the checker rejects the operation. (b) The <code>assert set(new_rights) &lt;= set(rights)</code> fires: "cannot amplify rights." (c) Never by transfer: transfer is move-plus-weaken over a monotonically shrinking right set — caps are affine (the old cap dies) and rights only decrease. Restoring M requires <em>authority</em> to mint a fresh cap via <code>grant</code> — why seL4's mint operation is the critical one to restrict.</li>
+</ol>
+<ol>
+<li>For each concrete step the proof exhibits an abstract step — either a <em>stuttering</em> step (abstract state unchanged, R preserved) or the one real "reply to IPC" transition — after which R holds again: R(c,a) ∧ (c → c') implies ∃a'. (a → a') ∧ R(c',a'). The abstract state may <em>stutter</em> while the C grinds; only when the operation completes must a real abstract transition exist.</li>
+</ol>
+<ol>
+<li>The theorem covers the kernel, not the system. The malware stayed in its compartment — the proof held — but compartmentalization isolates only what the capability distribution denies. The break is above the kernel: unverified middleware used <em>legitimate</em> IPC channels it was granted (a confused deputy), or the boot configuration minted caps too broadly — the kernel cannot save you from a right you handed out. The fix is the system layer: re-draw the capability distribution and inter-compartment protocol — above a proven bottom.</li>
+</ol>
+<ol>
+<li>Proof bit-rot: l4v proofs depend on Isabelle <em>library internals</em> — definitions, simplifier rule sets, tactic behavior — that change between Isabelle/Pure releases, so an unpinned upgrade breaks theories unrelated to your change. Discipline: pin the exact Isabelle version (the l4v repo states which), let proof-CI regenerate the full tree on the pinned toolchain, and treat a proof diff as a semantic diff in the theorem — reviewed and recorded in release notes.</li>
+</ol>
+<ol>
+<li>The stack, top to bottom: (1) the Rust driver / root task — <em>unproven</em>, its memory safety is the Rust type system plus review; (2) the seL4 C kernel (~8,700-10k lines) — <em>proven</em>: every behavior refines the abstract spec; (3) the abstract specification — <em>human-reviewed</em>, ~10k lines, the remaining gap; (4) the ~600 hand-written assembly lines — <em>unproven</em>, audited by reading; (5) stock gcc — <em>assumed correct</em> (CompCert's endgame, module 21 ch05); (6) the COTS Arm board — <em>assumed fault-free</em> (Rowhammer and glitch attacks, module 02). This is module 19 chapter 05's shape — a small unsafe/assumed kernel region wrapped by a safe membrane — except the membrane is a machine-checked theorem, and the capabilities enforcing it (module 19 ch03's affine types as kernel state) are the mechanism.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch02.html"><span class="cn-label">previous</span><span class="cn-title">Ch 02</span></a>
+<a class="next" href="ch04.html"><span class="cn-label">next</span><span class="cn-title">Ch 04</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 21 — Formal verification</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autograd: the tape as a heap — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 22: Autograd: the tape as a heap">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Autograd: the tape as a heap — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 22: Autograd: the tape as a heap">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Autograd: the tape as a heap — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 22: Autograd: the tape as a heap">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 22 &middot; the distributed memory machine</div>
+<h1 class="post-title">Autograd: the tape as a heap</h1>
+<div class="post-meta">chapter 02 &middot; ~19 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Backpropagation's algorithm is textbook; its <em>memory discipline</em> is what production ML engineering actually is. Every forward op appends an entry to a Wengert list — the tape — recording the op, its operands' (pointer, shape), and the tensors backward will need. They cannot be freed until backward runs: the tape is a heap whose liveness is written by the chain rule, and a 12-layer transformer at batch 8×1024 holds ~29 GiB of activations, ~20× its fp16 weights. Checkpointing, the backward's allocation storm, mixed precision, and Adam's state are its consequences.</blockquote>
+<h2 id="the-wengert-list-a-ledger-you-write-by-existing">The Wengert list: a ledger you write by existing</h2>
+<p>Chapter 01 gave us the tensor as (data_ptr, shape, dtype, strides) over a refcounted storage; autograd adds one mechanism: <strong>every op appends an entry to a linear record</strong> — the Wengert list, or tape — and that entry keeps heap references alive. An entry is (op, operands, saved-for-backward tensors). Here is a real 5-op tape, the computation our lab trains:</p>
+<pre><code class="language-text">THE TAPE for  L = sum( relu(x@W1 + b) @ W2 )
+entry  op      operand A (ptr, shape)       operand B (ptr, shape)       saved for backward
+-----  ------  ---------------------------  ---------------------------  ------------------------
+  0    @       x  (0x7f21a000, [64,1])      W1 (0x7f21a100, [1,64])      x, W1    -&gt; out t0
+  1    +       t0 (0x7f21c000, [64,64])     b  (0x7f21a180, [64])        shapes  -&gt; out t1
+  2    relu    t1 (0x7f21d000, [64,64])     --                           t2      -&gt; out t2
+  3    @       t2 (0x7f21e000, [64,64])     W2 (0x7f21a200, [64,1])      t2, W2  -&gt; out t3
+  4    sum     t3 (0x7f21f000, [64,1])      --                           --      -&gt; out L</code></pre>
+<p>Read entry 3, the matmul: backward needs <em>both inputs</em> (dX = dY@Wᵀ, dW = Xᵀ@dY), so the entry pins t2 and W2; entry 1, the add, saves <em>nothing</em>. The chapter's first law falls out — the <strong>memory blow-up rule</strong>: backward needs forward's <em>inputs</em>, so the sum over ops of saved-tensor bytes is the activation memory. Per-op cost table (fp32; PyTorch 2.x eager):</p>
+<div class="table-wrap"><table><thead><tr><th>op</th><th>saves for backward</th><th>bytes/el</th><th>why the vjp needs it</th></tr></thead><tbody><tr><td>add</td><td>nothing (shapes if broadcast)</td><td>0</td><td>dL/da = dL/dz; a sum if broadcast</td></tr><tr><td>mul</td><td>both operands</td><td>2×</td><td>d(a·b) = b·da</td></tr><tr><td>matmul</td><td>both operands</td><td>2×</td><td>dX = dY@Wᵀ, dW = Xᵀ@dY</td></tr><tr><td>relu</td><td>output</td><td>1×</td><td>mask from the sign of the output</td></tr><tr><td>softmax</td><td>output</td><td>1×</td><td>J = diag(p) − ppᵀ</td></tr><tr><td>dropout</td><td><strong>bool mask, full tensor</strong></td><td>1 B/el</td><td>the randomness is not reconstructible</td></tr><tr><td>layer norm</td><td>input + mean + rstd</td><td>~1×</td><td>normalization's Jacobian</td></tr></tbody></table></div>
+<h2 id="the-12-layer-ledger-activation-memory-computed-to-the-byte">The 12-layer ledger: activation memory computed to the byte</h2>
+<p>Fix the reference model: GPT-2-class, 12 layers, hidden d=2048 (16 heads), MLP 4d, vocab 50,257, tied embeddings → <strong>707 M parameters</strong> (fp32 2.64 GiB, fp16 1.32 GiB). The unit of account: the residual-stream tensor, 2048×2048×4 B = <strong>16 MB per layer</strong> (64 MB at batch×seq = 8×1024 = 8192 tokens). Every line is a saved tensor from the per-op table, fp32 and bool, MB = MiB:</p>
+<div class="table-wrap"><table><thead><tr><th>saved tensor (per layer)</th><th>shape</th><th>@2048 tok</th><th>@8×1024</th></tr></thead><tbody><tr><td>residual stream in (x)</td><td>[T, 2048]</td><td>16</td><td>64</td></tr><tr><td>LN1 out + mean/rstd</td><td>[T, 2048]</td><td>16</td><td>64</td></tr><tr><td>Q, K, V</td><td>3×[T, 2048]</td><td>48</td><td>192</td></tr><tr><td>attention scores</td><td>[8,16,1024,1024]</td><td>128</td><td>512</td></tr><tr><td>softmax probabilities</td><td>[8,16,1024,1024]</td><td>128</td><td>512</td></tr><tr><td>dropout mask on probs (bool)</td><td>[8,16,1024,1024]</td><td>32</td><td>128</td></tr><tr><td>context (P@V)</td><td>[T, 2048]</td><td>16</td><td>64</td></tr><tr><td>proj out</td><td>[T, 2048]</td><td>16</td><td>64</td></tr><tr><td>dropout mask (bool)</td><td>[T, 2048]</td><td>4</td><td>16</td></tr><tr><td>dropout out</td><td>[T, 2048]</td><td>16</td><td>64</td></tr><tr><td>post-attn residual (LN2 in)</td><td>[T, 2048]</td><td>16</td><td>64</td></tr><tr><td>LN2 out</td><td>[T, 2048]</td><td>16</td><td>64</td></tr><tr><td>fc1 out</td><td>[T, 8192]</td><td>64</td><td>256</td></tr><tr><td>gelu out</td><td>[T, 8192]</td><td>64</td><td>256</td></tr><tr><td>fc2 out + dropout out</td><td>2×[T, 2048]</td><td>32</td><td>128</td></tr><tr><td>dropout mask (bool)</td><td>[T, 2048]</td><td>4</td><td>16</td></tr><tr><td><strong>per-layer total</strong></td><td></td><td><strong>616</strong></td><td><strong>2,464</strong></td></tr><tr><td><strong>× 12 layers</strong></td><td></td><td>7,406</td><td><strong>28.9 GiB</strong></td></tr><tr><td>head: logits + CE log-softmax</td><td>[8,1024,50257] ×2</td><td>785</td><td>3.07 GiB</td></tr><tr><td><strong>peak, no checkpointing</strong></td><td></td><td></td><td><strong>≈32 GiB</strong></td></tr></tbody></table></div>
+<p>The quoted ratio: 28.9 GiB is <strong>~22× the fp16 weight bytes</strong> — the "~20× rule" — or ~11× the fp32 parameter bytes: a <em>shape function, not a constant</em> (activation bytes = tokens × 2,464 MB/layer). Ask "20× of <em>what</em>" before repeating it. Three consequences:</p>
+<ul>
+<li><strong>Per-token cost: 308 KiB/layer, 3.6 MiB/token</strong> net-wide (fp32); each 1024-token sample is a 3.5 GiB <em>step</em> on the batch-size dial. With ~11 GiB resident (below), a 16 GB card fits batch 1 (4.0 GiB) and OOMs at batch 2; a 12 GB card dies at batch 1 — "batch-size 1 crashes, batch-size 2 OOMs" is this staircase, not bad luck.</li>
+<li><strong>The attention rows dominate</strong>: scores + probs + mask = 47% of the layer. Flash attention never materializes them — per-layer 1,312 MB, peak ~18 GiB: the biggest software lever, before any checkpointing.</li>
+<li><strong>K and V are the KV cache</strong> — 2 of the 17 rows, freed after their layer's backward in training, kept for all layers at inference: chapter 04's heap of tokens, planted.</li>
+</ul>
+<h2 id="checkpointing-trading-flops-for-bytes">Checkpointing: trading FLOPs for bytes</h2>
+<p>The tape's entries are choices, not fate: saved tensors can be <em>dropped</em> and re-derived by recomputing the op during backward. Formalize: checkpoint every k layers — store the L/k boundary inputs (b bytes each), recompute k layers live (a bytes):</p>
+<pre><code class="language-text">peak(k) = (L/k)·b + k·a          minimize over k</code></pre>
+<p>With b = a (uniform MLP), k* = √L and peak = 2√L·a = <strong>O(√L × per-layer)</strong> — the textbook result (Chen et al. 2016): one extra forward per step (3F → 4F, backward ≈ 2F) buys sublinear memory at 30-40% compute overhead. Our transformer breaks the symmetry: b = 64 MB, a = 2,464 MB, so k* = √(L·b/a) = √(12/38.5) = <strong>0.56 → clamp to every layer</strong> — why Megatron-LM's classic schedule checkpoints <em>every</em> transformer layer, not every √L. The Pareto at batch 8×1024 (peaks include the 3.07 GiB head):</p>
+<div class="table-wrap"><table><thead><tr><th>schedule</th><th>peak activations</th><th>step time</th></tr></thead><tbody><tr><td>never checkpoint (k = L)</td><td>31.9 GiB</td><td>3F (1.00×)</td></tr><tr><td>every √L ≈ 3 layers</td><td>10.5 GiB</td><td>4F (1.33×)</td></tr><tr><td>every layer (k = 1)</td><td>6.2 GiB</td><td>4F (1.33×)</td></tr></tbody></table></div>
+<p>The trap: every layer is recomputed once in <em>any</em> k &lt; L schedule, so time is constant — the √L point is dominated. √L is optimal only while boundary cost ≈ layer cost.</p>
+<p><strong>Selective checkpointing inverts the policy.</strong> Instead of "store boundaries, recompute everything inside," rank ops by <em>bytes saved per recompute FLOP</em>: recompute the expensive-to-store, cheap-to-recompute attention block (47% of bytes, a few percent of FLOPs); save the residual stream, QKV, and MLP — Megatron's selective recomputation (Korthikanti et al. 2022): ~5× activation cut at ~5% overhead. The policy formalized: choose store/recompute per op to minimize peak under a time budget — an integer program Checkmate (Jain et al. 2021) solves optimally. And one op is unrecomputable by <em>math</em> but recomputable by <em>engineering</em>: the dropout mask is a function of the RNG state, which <code>torch.utils.checkpoint</code> restores (<code>preserve_rng_state=True</code>, the default) — the "random" mask replays bit-exact.</p>
+<h2 id="the-engine-a-dependency-scheduler-with-an-allocation-habit">The engine: a dependency scheduler with an allocation habit</h2>
+<p>Backward is not a tree walk — it is a <strong>scheduler</strong>: reverse the graph, count each node's consumers, run a ready queue — a node is ready when its last consumer has delivered its gradient. Every order the queue emits is a reverse-topological order (the DFS-postorder-reversal our lab implements); PyTorch's C++ engine is this plus per-device worker threads. Its memory habits:</p>
+<ul>
+<li><strong>Leaf <code>.grad</code> buffers allocate lazily, on first use.</strong> A parameter used twice gets two vjp contributions <code>+=</code>-accumulated into one buffer — accumulation semantics, and the <em>persistent</em> state: gradient accumulation over N micro-batches is N forward/backward pairs, each tape freed on exit while <code>.grad</code> survives, then one <code>optimizer.step()</code> per N — effective batch = micro-batch × N (chapter 05 returns).</li>
+<li><strong><code>zero_grad(set_to_none=True)</code></strong> (flag since PyTorch 1.7, Oct 2020; default in the 2.x era): set <code>.grad = None</code> instead of <code>memset</code>-ing every parameter each step — lazy reallocation skips the memset, releases the buffer, skips unused parameters. The semantic dividend: <strong>None means "never computed," a 0-tensor means "computed and zero"</strong> — the distinction that diagnoses "why is this parameter not training" in one <code>print</code>.</li>
+<li><strong>The allocation storm.</strong> Every vjp allocates a fresh gradient tensor (dX = dY@Wᵀ <em>is</em> a new 64 MB tensor per layer): a 12-layer backward is dozens of multi-GiB allocations in reverse order, served by the caching allocator (module 01 ch19's arena/block flavor) from the blocks forward freed — LIFO-friendly, since backward retraces the path. Peak = the activations plus one layer's transients.</li>
+<li><strong>Double-backward is a tape-of-tape.</strong> With <code>create_graph=True</code>, the vjps themselves are recorded, so the <em>backward's</em> intermediates become saved tensors for a second sweep — WGAN-GP's penalty needs it, pays ~2× peak.</li>
+<li><strong><code>detach()</code> is the cut.</strong> A new node sharing the <em>same storage</em> (same data_ptr) but with no backward edges: gradient stops there. <code>.backward()</code> is the <em>destructor</em>: it walks the tape and frees the saved tensors on exit — a second backward raises "Trying to backward through the graph a second time... Saved intermediate values of the graph are freed... Specify retain_graph=True." <code>retain_graph=True</code> keeps those roots alive.</li>
+<li><strong>dgrad vs wgrad.</strong> The matmul vjp makes two products: dX (the <em>data</em> gradient, transient traffic toward earlier layers) and dW (the <em>weight</em> gradient, accumulated into <code>.grad</code>). Data parallel AllReduces only the wgrads, bucketed (25 MB) and overlapped with backward — chapter 03's problem, planted.</li>
+</ul>
+<h2 id="mixed-precision-the-resident-state-and-one-scalar-that-governs-it">Mixed precision: the resident state and one scalar that governs it</h2>
+<p>Training memory has two halves: activations (per-forward, freed) and the <em>resident</em> state (persists all run). Mixed precision prices the resident state:</p>
+<div class="table-wrap"><table><thead><tr><th>component</th><th>bytes/param</th></tr></thead><tbody><tr><td>fp32 master weights</td><td>4</td></tr><tr><td>fp16 compute copy</td><td>2</td></tr><tr><td>fp16 gradients</td><td>2</td></tr><tr><td>Adam m, v (fp32)</td><td>8</td></tr><tr><td><strong>total</strong></td><td><strong>16 B/param = 8× the fp16 model</strong></td></tr></tbody></table></div>
+<p>The master-weight pattern is forced by fp16's 10-bit mantissa: an update lr·g ~ 2⁻¹⁷ against a weight of 1.0 rounds away to nothing — the fp16 copy is <em>compute-only</em>, the fp32 master takes the updates: 4+2 = 6 B/param, "2×-plus weight memory." Gradients are the other crisis: fp16's smallest normal is 6.1×10⁻⁵, real gradients live near 10⁻⁸ — they <em>underflow to zero</em>. The <strong>loss scaler</strong> multiplies the loss by a scale (default 2¹⁶ = 65,536) so gradients ride the exponent range, and unscales before the optimizer. Its state is one scalar plus a skip counter; its policy is multiply-2/divide-2: 2,000 clean steps → scale ×2; any inf/nan → skip the step, scale ÷2, reset the counter — powers of two make scaling an exact exponent shift, no mantissa rounding. The overflow check is a reduction over <em>every gradient byte</em>, fused with the all-reduce as one extra scalar per bucket in chapter 03's distributed scaler.</p>
+<p><strong>The grad-norm's double duty.</strong> Clipping (max norm 1.0) needs ‖g‖ — the same reduction pass computes norm and overflow check, and the norm is <em>one number that must agree across ranks</em>. The five-line derivation is the chapter's cleanest example of "the math and the communication must agree" — g sharded, g = [g⁰; g¹; …; g^(N−1)] (concatenation; ZeRO's layout):</p>
+<ol>
+<li>‖g‖² = gᵀg (definition)</li>
+<li>= Σᵢ gᵢ², split the index set by rank: = Σ_r Σ_{i∈shard_r} gᵢ²</li>
+<li>inner sum = ‖g^r‖² (each rank's local squared norm)</li>
+<li>‖g‖ = √(Σ_r ‖g^r‖²)</li>
+<li>communication: one all-reduce of the N scalars ‖g^r‖² — not of the gradients, not of the norms: <strong>the fused reduction carries the squares</strong></li>
+</ol>
+<p>Sum is associative; square-root is not — the √ happens once, <em>after</em> the reduction. The order question: <strong>clip-then-reduce is wrong, reduce-then-clip is right.</strong> Local-first clipping gives each shard norm 1, so the concatenated result has norm √N, not 1 — each rank applied a λ computed from information no rank has. Correct: reduce the squares → global norm → one global λ → each rank scales its shard (scaling commutes with concatenation). Honesty clause: the identity is exact for <em>sharded</em> gradients. With DDP's <em>replicated-then-averaged</em> gradients, no rank can know ‖ḡ‖ from local norms (Cauchy–Schwarz gives only a bound), so torch clips <em>after</em> the all-reduce — every rank holds the identical average and computes the identical norm redundantly, free. The fused-squares pattern belongs to the sharded world of chapter 03, where it replaces an all-gather of the gradient with 8 bytes per rank.</p>
+<h2 id="the-optimizer-as-resident-occupant-4-and-the-8-bit-escape">The optimizer as resident occupant: 4× and the 8-bit escape</h2>
+<p>Adam carries two state tensors per parameter — m and v, the moment EMAs — so plain fp32 training holds weights + grads + m + v = <strong>4× model bytes</strong> (16 B/param); a 7B model carries ~112 GB of resident state before a single activation — chapter 03's sharding imperative is this number, not fashion. The 8-bit optimizers (bitsandbytes) quantize m and v to int8 with <strong>block-wise scales</strong>: 2,048-element blocks share one fp32 scale (absmax/127) — state 2 B/param, the 4× state saving, resident 16 → 10 B/param. The honesty: the moments are <em>quantized</em> — it works because m and v are smooth averages with benign block range; the risk is outlier blocks, which the 2,048 granularity contains. The <strong>paged optimizer</strong> goes one rung further: state in CUDA unified memory, paging to CPU DRAM on capacity pressure — an implicit, fault-driven ZeRO-Offload, whose <em>explicit</em> pyramid (fp16 params/grads in HBM, fp32 masters and m/v in DRAM, pinned PCIe traffic, NVMe third tier) is chapter 03's.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>no_grad</code> vs <code>inference_mode</code> are two tiers, not synonyms.</strong> <code>no_grad</code> stops <em>recording</em> — the tape is unbuilt, tensors stay ordinary. <code>inference_mode</code> also skips the bookkeeping: no version-counter bumps, no view tracking, and tensors produced inside are <em>inference tensors</em> whose stricter aliasing rules error at runtime if they touch autograd later. The "freed vs unbuilt" distinction has the same shape: after <code>.backward()</code> a graph is <em>freed</em> (<code>retain_graph=True</code> keeps it); under <code>no_grad</code> it is <em>unbuilt</em>. Both leaves show <code>.grad_fn is None</code>; only one ever had one.</li>
+<li><strong>The version counter is autograd's validity invariant — module 19 chapter 04's GC validity returning as a 32-bit int.</strong> Every TensorImpl carries a version counter; in-place ops bump it; a saved-for-backward tensor has its version recorded, and backward compares. Mismatch → <code>RuntimeError: one of the variables needed for gradient computation has been modified by an inplace operation</code> (newer builds append an anomaly-detection hint): the saved bytes are still allocated — they are just no longer the bytes the tape's math depends on.</li>
+<li><strong>Forward mode exists and is niche.</strong> Dual numbers propagate a perturbation <em>with</em> the primal: one pass = one JVP = one <em>column</em> of J (d(all outputs)/d(one input)); reverse mode gives one <em>row</em> (VJP). Forward-over-backward powers cheap per-sample gradients (<code>torch.autograd.forward_ad</code>); niche because training wants ∇ of one scalar — reverse mode's strength — and every op needs a JVP kernel nobody wrote.</li>
+<li><strong>The CUDA OOM message decodes into a budget.</strong> Fields: total / free / allocated-by-PyTorch / <em>reserved but unallocated</em>. <strong>30 GB reserved / 20 GB allocated = 10 GB of pool slack — the fragmentation metric (33%)</strong>: block-splitting churn (variable batch shapes) leaves free bytes that cannot satisfy one contiguous request. <code>torch.cuda.empty_cache()</code> folklore: it releases reserved-but-unallocated blocks to the driver — frees no live tensor, and costs the next step re-faulting allocations. <code>PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True</code> is the structural fix.</li>
+<li><strong>Determinism vs atomics.</strong> Backward's scatter-adds (embedding gradients are <code>index_add</code>s) accumulate in GPU-atomics order — nondeterministic run to run, bitwise different grads. Full determinism needs <code>torch.use_deterministic_algorithms(True)</code> <em>and</em> <code>CUBLAS_WORKSPACE_CONFIG=:4096:8</code> (cuBLAS's own workspace atomics), and costs the 10-20% band — a budget line, not a checkbox.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Everything runs on a laptop; numpy is the only dependency (PyTorch CPU variants noted where they exist).</p>
+<p><strong>Lab 1 — build the tape (~60 lines), train y = x².</strong> A Wengert-list autograd with topological sort, lazy <code>.grad</code>, <code>+=</code> accumulation — verified output:</p>
+<pre><code class="language-python"># mini_tape.py -- the Wengert list in 50 lines.  Run: python3 mini_tape.py
+import numpy as np
+
+def _unb(g, shape):
+    # undo broadcasting: sum g down to shape (add is never free)
+    while g.ndim &gt; len(shape): g = g.sum(axis=0)
+    for i, s in enumerate(shape):
+        if s == 1 and g.shape[i] != 1: g = g.sum(axis=i, keepdims=True)
+    return g
+
+class T:
+    # one tape node: data + backward edges [(parent, vjp), ...]
+    def __init__(self, data, parents=()):
+        self.data = np.asarray(data, np.float64)
+        self.grad = None                  # leaf buffer: None until first use
+        self.parents = list(parents)      # the tape entries this node appends
+
+    def __add__(self, o):
+        o = o if isinstance(o, T) else T(o)
+        return T(self.data + o.data,
+                 [(self, lambda g: _unb(g, self.data.shape)),
+                  (o,     lambda g: _unb(g, o.data.shape))])
+    def __mul__(self, o):
+        o = o if isinstance(o, T) else T(o)
+        return T(self.data * o.data,
+                 [(self, lambda g: _unb(g * o.data, self.data.shape)),
+                  (o,     lambda g: _unb(g * self.data, o.data.shape))])
+    def matmul(self, o):
+        return T(self.data @ o.data, [(self, lambda g: g @ o.data.T),
+                                      (o,     lambda g: self.data.T @ g)])
+    def relu(self):
+        return T(np.maximum(self.data, 0.0),
+                 [(self, lambda g: g * (self.data &gt; 0))])
+    def sum(self):
+        return T(self.data.sum(),
+                 [(self, lambda g: g * np.ones_like(self.data))])
+
+def backward(out):                        # the engine: dependency scheduler
+    order, seen = [], set()
+    def visit(t):                         # DFS postorder = topological order
+        if id(t) in seen: return
+        seen.add(id(t))
+        for p, _ in t.parents: visit(p)
+        order.append(t)
+    visit(out)
+    out.grad = np.ones_like(out.data)     # seed: dL/dL = 1
+    for t in reversed(order):             # ready queue = reverse-topological
+        if t.grad is None: continue       # off the path: no gradient flows
+        for p, vjp in t.parents:
+            g = vjp(t.grad)               # each vjp allocates a fresh grad
+            p.grad = g if p.grad is None else p.grad + g  # += accumulation
+
+# ---- train a 2-layer net on y = x^2 ----
+rng = np.random.default_rng(0)
+x = T(rng.uniform(-1, 1, (64, 1)))                 # data leaf: no parents
+w1, b1, w2 = (T(rng.normal(0, 0.5, s)) for s in [(1, 64), (64,), (64, 1)])
+params = [w1, b1, w2]
+def model_out(x):
+    return ((x.matmul(w1) + b1).relu()).matmul(w2) # 5 tape ops per forward
+
+for step in range(500):
+    pred = model_out(x)
+    diff = pred + (x * x) * T(-1.0)               # pred - target, in our ops
+    loss = (diff * diff).sum() * T(1.0 / 64)      # mean squared error
+    for p in params: p.grad = None                # zero_grad(set_to_none=True)
+    backward(loss)                                # reverse-topo sweep
+    for p in params: p.data -= 0.1 * p.grad       # SGD step
+    if step % 100 == 0:
+        print(f"step {step:3d}  loss {loss.data:9.6f}")
+print(f"final max |pred - x^2| = {np.abs(model_out(x).data - x.data**2).max():.6f}")</code></pre>
+<pre><code class="language-console">$ python3 mini_tape.py
+step   0  loss  2.364331
+step 100  loss  0.000659
+step 200  loss  0.000406
+step 300  loss  0.000301
+step 400  loss  0.000238
+final max |pred - x^2| = 0.041189</code></pre>
+<p>The <code>parents</code> lists <em>are</em> the tape; the <code>reversed(order)</code> loop <em>is</em> the ready queue; <code>p.grad = None</code> <em>is</em> <code>zero_grad(set_to_none=True)</code>; and nothing is ever freed — PyTorch's <code>.backward()</code> frees the graph, this engine leaves it to the garbage collector. And <code>_unb</code> answers what broadcasting costs: an add becomes a reduction.</p>
+<p><strong>Lab 2 — the arithmetic on paper.</strong> Rebuild the 12-layer table (every row is one multiplication), derive the √L schedule by minimizing (L/k)·b + k·a (k* = √(L·b/a): 3.46 uniform, 0.56 transformer), and plot the Pareto for the three frequencies above (31.9, 10.5, 6.2 GiB vs 1.00×, 1.33×, 1.33×): the √L point is dominated — the plot says why Megatron picked k = 1.</p>
+<p><strong>Lab 3 — measure a real forward.</strong> Wrap the forward in <code>tracemalloc</code> at 2048×64 inputs (three 2048×2048 intermediates dominate):</p>
+<pre><code class="language-python">import tracemalloc
+tracemalloc.start()
+pred = ((x.matmul(w1) + b1).relu()).matmul(w2)
+cur, peak = tracemalloc.get_traced_memory()</code></pre>
+<p>Measured on this chapter's machine: <strong>peak 101.1 MiB against the formula's 104.0 MiB</strong> — the ~3% gap is temp-buffers-vs-saved-tensors bookkeeping, honestly reported. PyTorch variant: <code>tracemalloc</code> around a forward under <code>torch.no_grad()</code> vs without it — the difference is the tape's saved-tensor total; expect the same order of magnitude, not the same digits.</p>
+<p><strong>Lab 4 — trigger the version-counter error on purpose.</strong> (PyTorch 2.x; wording varies slightly by version.)</p>
+<pre><code class="language-python">import torch
+x = torch.randn(4, requires_grad=True)
+y = x * 2                    # tape saves x at version 0
+x.add_(1)                    # in-place: version 0 -&gt; 1
+y.sum().backward()           # backward compares: 1 != 0</code></pre>
+<p>The message does not say "freed" (that is the retain_graph error, a different invariant). The fix is not <code>clone()</code>: reorder the mutation before the saving op, or go out-of-place (<code>x = x + 1</code>). Then break the other invariant — a second backward — and fix it with <code>retain_graph=True</code> at the price of keeping the roots alive.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>OOM triage becomes arithmetic.</strong> Per-token cost (3.6 MiB fp32, ~1.8 fp16, ~0.9 flash+fp16), the resident 16 B/param, and the reserved/allocated gap classify any "CUDA out of memory" into staircase, fragmentation, or state — each with a different lever: batch size, allocator conf, checkpointing, 8-bit/offload.</li>
+<li><strong>Capacity planning.</strong> "Will a 7B model train on eight 80 GB cards" is four multiplications: resident 16 B/param + per-token × tokens × pipeline depth — before chapter 03's sharding.</li>
+<li><strong>Code review shapes.</strong> In-place ops on tensors feeding recorded ops, accumulation loops without <code>zero_grad(set_to_none=True)</code>, second <code>.backward()</code>s without <code>retain_graph</code> — latent RuntimeErrors or silent memory.</li>
+<li><strong>Interview answers.</strong> "Why does training need ~20× model size?" — activations (~20× the fp16 weights at batch 8×1024) <em>on top of</em> the 8× resident state, two different tables. "Why can't you clip locally?" — the √N error and the five-line derivation.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 01 (same module)</strong> — the tape's entries are (data_ptr, shape) references to ch01's tensor object; the allocator serving the backward storm is module 01 ch19's arena/block flavor in production.</li>
+<li><strong>Chapter 03 (same module)</strong> — the wgrad AllReduce and 25 MB buckets; ZeRO sharding of the 16 B/param stack; the distributed loss scaler; the ZeRO-Offload pyramid the paged optimizer foreshadows.</li>
+<li><strong>Chapter 04 (same module)</strong> — the K and V rows of the table, kept for reuse instead of freed at backward: the KV cache is this tape's most selective survivor.</li>
+<li><strong>Chapter 05 (same module)</strong> — gradient accumulation's effective-batch arithmetic scaled to the fleet's tokens/day budget.</li>
+<li><strong>Module 19 chapter 04</strong> — the GC-theory mirror: saved-for-backward = the roots of a liveness proof recorded forward; <code>.backward()</code> is the sweep; checkpointing re-derives liveness by recomputation instead of reachability — liveness by construction vs by search.</li>
+<li><strong>Module 01 chapter 23</strong> — the grand table's orphan, repaired: add one more row — <strong>PyTorch Tensor</strong> | strided view | TensorImpl header (ptr+shape+strides+version, ~64-72 B) | refcount <em>plus tape liveness</em>, freed at backward by default | 4 B/float | dtype checks, no aliasing checks | caching-allocator blocks → CUDA pool | the tape as a second lifetime (this chapter). The tensor <em>is</em> the 17th language's object model: C's manual freedom, Python's refcounting, and a Lisp-style root set in one object — ML systems as the newest point in module 01's design space.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Derive the chapter's first law — "backward needs forward's inputs" — from the chain rule, then name the two op families in the per-op table that break it by saving <em>outputs</em>, and why their Jacobians make outputs the natural choice.</li>
+<li><strong>Concept.</strong> A leaf never used in a graph has <code>.grad is None</code>; a parameter after <code>zero_grad(set_to_none=True)</code> also has <code>.grad is None</code>; after a backward that produced zero gradient it has a 0-tensor. What diagnostic does each state enable, and why is in-place zeroing weaker?</li>
+<li><strong>Predict the number.</strong> A 24 GB card holds the chapter's reference model with 11.1 GiB of resident state. Using the 12-layer table (2.41 GiB/layer, 3.07 GiB head), what is the largest micro-batch at S=1024 that fits — and why does the arithmetic's next candidate die in practice?</li>
+<li><strong>Derive.</strong> For a uniform 12-layer stack with b = a, derive k* and the peak; for the transformer with b/a = 1/38.5, derive k* and the peaks at k = 1 and k = √L. What does each result predict about Megatron's default?</li>
+<li><strong>Derive.</strong> Two ranks hold gradient shards with local norms 3 and 4. Compute the global norm, the correct clip scale for max_norm = 1.0, and the norm of the result if each rank clips its own shard to 1.0 <em>before</em> reducing. What must the fused reduction carry, and why must the square root happen exactly once?</li>
+<li><strong>Diagnose.</strong> A training loop raises <code>RuntimeError: one of the variables needed for gradient computation has been modified by an inplace operation</code> — trace it to the version counter, explain why <code>x = x + 1</code> is a fix and <code>x.add_(1)</code> <em>before</em> the saving op is also a fix, and why <code>torch.no_grad()</code> around the mutation is <em>not</em>.</li>
+<li><strong>Diagnose.</strong> A job dies with "Tried to allocate 2.20 GiB... 20 GiB allocated, 30 GiB reserved" on a 32 GB card. Compute the fragmentation metric, name the mechanism behind the 10 GiB of reserved-but-unallocated bytes, and state what <code>torch.cuda.empty_cache()</code> does and does not do.</li>
+<li><strong>Cross-chapter.</strong> In module 19 chapter 04's terms, what kind of roots are the saved-for-backward tensors, what is <code>.backward()</code>'s default graph-freeing, and what does activation checkpointing correspond to in the reachability-vs-reconstruction frame?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>The chain rule composes Jacobians whose <em>entries are functions of the operands</em> — d(a·b)/da = b, dX = dY@Wᵀ — so matmul/mul entries pin the inputs. Elementwise unary Jacobians are functions of the <em>output</em>: relu's mask is the sign of its output, softmax's J = diag(p) − ppᵀ needs p — so relu and softmax save outputs. Dropout saves neither: its vjp needs the mask, a third thing entirely.</li>
+<li><code>None</code> on a fresh leaf: never used in a recorded op — catches wiring bugs. <code>None</code> after <code>set_to_none</code>: nothing accumulated, the optimizer skips it (frozen-param semantics). A 0-tensor: on the path, true gradient zero. In-place zeroing erases the distinction (an unused param shows a stale 0), memsets every parameter every step, and holds the buffers.</li>
+<li>Free ≈ 12.9 GiB. Batches 1 and 2 (4.0 and 8.0 GiB) fit; batch 3 = 12.0 GiB fits <em>on paper</em> with 0.9 GiB margin, but the backward's transient dgrads (~0.4 GiB, absent from the activation table) plus allocator rounding and fragmentation eat it. Batch 2 is the reliable answer; the arithmetic names batch 3's executioner.</li>
+<li>Uniform: k* = √(L·b/a) = √12 ≈ 3.46, peak = 2√L·a ≈ 6.9a (vs 12a) — O(√L × per-layer). Transformer: k* = √(12/38.5) ≈ 0.56 → clamp to 1: peak = L·b + a = 12 + 38.5 = 50.5 units vs 133 at k = √L. Uniform stacks want every-√L, transformers want every layer — Megatron's default; √L is optimal only while boundary cost ≈ layer cost.</li>
+<li>Global norm = √(3² + 4²) = 5; λ = 5 (scale by 1/5). Local-first clipping leaves two unit-norm shards — the concatenated gradient has norm √2, not 1: wrong by √N, each rank using a λ no rank was entitled to. The fused reduction carries the <em>squares</em> (9 + 16 = 25): addition is associative, the square root is not — take it once, after the all-reduce.</li>
+<li>Backward compares the tensor's <em>current</em> version counter against the version recorded when the op saved it: the mul saved x at version 0, <code>add_</code> bumped it to 1, 1 ≠ 0 fires. <code>x = x + 1</code> is out-of-place — a new tensor, saved bytes untouched; the mutation <em>before</em> the saving op means the tape records the post-mutation version. <code>no_grad()</code> only stops <em>recording</em> — the save already happened when the mul ran.</li>
+<li>Fragmentation = (30 − 20)/30 ≈ 33%. The 10 GiB is the allocator's reserved-but-unallocated pool: variable-shaped batches split big free blocks, leaving free bytes that cannot satisfy one contiguous 2.2 GiB request. <code>empty_cache()</code> releases those blocks to the driver; it frees <em>no live tensor</em> and costs the next step re-cudaMalloc-ing. Expandable segments treat the cause.</li>
+<li>The saved tensors are the root set of a <em>pre-computed liveness proof</em> — liveness by construction, not reachability search. <code>.backward()</code>'s default freeing is the sweep: roots dropped, tensors unreachable (<code>retain_graph=True</code> keeps them for a second sweep — the tape-of-tape case). Checkpointing is <em>reconstruction</em>: the tensors die and liveness is re-derived by recomputation — the proof's storage traded for its re-execution.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 22 — ML systems &amp; training infrastructure</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

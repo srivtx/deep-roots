@@ -572,6 +572,12 @@ a `clang -fsanitize=memtag` build — nice to see, not required.
   (decompilation, queued)** — gadget hunting and reading stripped binaries is
   applied ROP.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 02 ch01 (the attacker's model)** — this chapter is the trailer; module 02 is the film — the full exploitation stack from canaries to MTE.
+- **Module 18 ch05 (crypto failures)** — Heartbleed was a heap over-read: the memory-security mindset applied to the one subsystem where timing is a breach.
+- **Module 19 ch03 (runtime proofs)** — the mitigation ladder re-derived as proof systems: canaries prove an intact frame, MTE is a 4-bit type tag.
+
 ## Quiz
 
 1. *(concept)* The x86-64 Linux canary is 8 bytes, and its **low byte is 0x00 by

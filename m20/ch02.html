@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bare metal: linker scripts are the memory model — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 20: Bare metal: linker scripts are the memory model">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Bare metal: linker scripts are the memory model — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 20: Bare metal: linker scripts are the memory model">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Bare metal: linker scripts are the memory model — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 20: Bare metal: linker scripts are the memory model">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 20 &middot; the world with no MMU</div>
+<h1 class="post-title">Bare metal: linker scripts are the memory model</h1>
+<div class="post-meta">chapter 02 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> On a microcontroller there is no kernel, no loader, no one to initialize anything — you are all three, and the blueprint is a build input: the <strong>linker script</strong>. The first instruction is fetched through a pointer in the first bytes of a file; the stack pointer is a constant the linker chose; <code>.data</code> lives at two addresses until your startup code copies it; <code>.bss</code> is zeroed because you zero it. This chapter walks that ladder, teaches the linker script as a small language, and ends at the payoff: an <code>ASSERT</code> is a machine-checked proof that your RAM budget holds — five seconds after you break it.</blockquote>
+<h2 id="the-twelve-steps-from-electrons-to-main">The twelve steps from electrons to <code>main</code></h2>
+<p>Module 01 ch04 asked "who initializes the stack?"; module 04 ch02 showed an OS loader doing that work. Here nobody does — and the bootstrap fits one diagram. The ladder <strong>is</strong> the chapter:</p>
+<pre><code> power                       the image (a file in flash)             your code
+ ------
+  1  POR: power-on-reset holds the core dead.
+     SRAM is garbage; flash is a file.
+  2  Boot ROM runs: mask ROM, a few KB, burned in the fab —
+     first, because SRAM is blank and flash not yet trusted.
+  3  It picks the boot source and the fetch address:
+       STM32 F4: BOOT0=0 -&gt; alias flash at 0x00000000, jump.
+       RP2040/Pico: fetch 256 B from external flash in a slow
+       "dumb SPI" mode: 252 B of boot2 + 4 B CRC. boot2 exists ONLY
+       to reconfigure the SSI controller so flash is fast enough to
+       execute from. Running from flash requires configuring the
+       flash; configuring it requires running code — the 252 bytes
+       break the cycle.
+  4  Hardware reads word[0] @0x00000000 into MSP. That word is
+     _estack — a constant the LINKER SCRIPT chose. The stack
+     pointer is data in a file. (Worked slowly, below.)
+  5  Hardware reads word[1] @0x00000004 into PC and jumps. No mode
+     switch, no privilege change: one fetch. (x86's real-mode
+     trampoline ladder, module 07 ch02, in one hop.)
+ ----------------------------------------------------------------------
+  6  Reset_Handler: load _sidata/_sdata/_edata (literal pool).
+  7  Copy .data: flash -&gt; SRAM. Initialized bytes have two addresses.
+  8  Zero .bss: C guarantees zeroed globals; "someone" is you.
+  9  SystemInit(): clocks, flash wait-states (chapter 01).
+ 10  __libc_init_array(): .preinit_array + .init_array — C++ ctors.
+ 11  main().
+ 12  main returns -&gt; startup parks in for(;;). No exit(3):
+     returning from main is a bug, not an event.</code></pre>
+<p><strong>Rung 4, worked slowly — the module's most disorienting fact.</strong> No instruction has executed, yet a stack pointer must be loaded. The value is precomputed and stored <em>in the image</em>: at link time, <code>_estack = ORIGIN(RAM) + LENGTH(RAM)</code> writes <code>0x20020000</code> into the file's first four bytes; at reset, fetch hardware does <code>MSP = *(uint32_t *)0x00000000</code> as a wiring-level act, before the first instruction decodes. The stack pointer is data in a file — module 01 ch04's question, answered by a build input.</p>
+<p>Rung 5's entry has the Thumb bit set (LSB = 1): <code>0x08000101</code> = Thumb code at <code>0x08000100</code>. No loader, no relocation — two words, one jump, and you are in your own code.</p>
+<h2 id="you-are-the-loader-two-addresses-for-every-initialized-byte">You are the loader: two addresses for every initialized byte</h2>
+<p><code>Reset_Handler</code> is that loader, hand-written — ST's real <code>startup_stm32f411xe.s</code>, trimmed:</p>
+<pre><code class="language-asm">Reset_Handler:
+  ldr   sp, =_estack      /* belt-and-braces: hw already did it */
+  movs  r1, #0            /* r1 = byte offset into .data */
+  b     LoopCopyDataInit
+CopyDataInit:
+  ldr   r3, =_sidata      /* LMA: copy source, in flash */
+  ldr   r3, [r3, r1]
+  str   r3, [r0, r1]      /* store to VMA: run address */
+  adds  r1, r1, #4
+LoopCopyDataInit:
+  ldr   r0, =_sdata       /* VMA start */
+  ldr   r3, =_edata       /* VMA end   */
+  adds  r2, r0, r1
+  cmp   r2, r3
+  bcc   CopyDataInit
+
+  ldr   r2, =_sbss
+  b     FillZeroBss
+ZeroBss:
+  movs  r3, #0
+  str   r3, [r2]          /* C's zero-init = these 2 instrs */
+  adds  r2, r2, #4
+FillZeroBss:
+  ldr   r3, =_ebss
+  cmp   r2, r3
+  bcc   ZeroBss
+
+  bl  SystemInit          /* clocks + flash wait-states */
+  bl  __libc_init_array   /* the init-array walk */
+  bl  main
+  bx  lr                  /* fault if main returns */</code></pre>
+<p>Why copy at all? Initialized variables must be <em>writable</em> (RAM) and <em>start</em> non-zero (only flash survives power cycles): every <code>.data</code> byte has two addresses — the <strong>VMA</strong>, where it runs (<code>&gt;RAM</code>), and the <strong>LMA</strong>, where the file places the initializer image (<code>AT&gt; FLASH</code>). The startup loop reconciles them:</p>
+<pre><code>      flash: the file view (LMA)               SRAM: the run view (VMA)
+0x08000000 +---------------------------+ 0x20000000 +----------------------+
+           | .isr_vector  (2+ words)  |            | .data                |
+           | .text  .rodata           |            |   msg[] "alive\n"    |
+           | .ARM.exidx  (2-4% flash) |            +----------------------+ &lt;- _edata
+           +---------------------------+ &lt;- _sidata| .bss (NOLOAD)        |
+           | .data load image:         |            |   counters, buffers  |
+           |   "alive\n" ...           |            +----------------------+ &lt;- _ebss=_end
+           +---------------------------+            | (heap grows up)      |
+                                                0x20020000 ---------------&lt;- _estack
+                    one byte, two homes:             (MSP grows down)     copy: _sidata-&gt;_sdata</code></pre>
+<p><code>.bss</code> has only a VMA and no bytes in the file: <code>NOLOAD</code> emits no initializers, and the zero loop <em>is</em> the C standard's "static storage is zero-initialized" — the kernel's demand-zero mapping (module 07 ch02) replaced by two instructions. Delete the loop and globals are garbage on real silicon; QEMU zero-fills SRAM and masks the bug.</p>
+<p>Rungs 9-10 are the invisible C/C++ taxes: <code>SystemInit</code> sets clocks and flash wait-states (past ~16 MHz, wrong values corrupt fetches — chapter 01); <code>__libc_init_array</code> walks <code>.preinit_array</code> and <code>.init_array</code> — newlib hooks and every C++ global constructor, a <em>boot-time cost</em> before <code>main</code> on half-configured hardware (a constructor touching peripherals before <code>SystemInit</code> is the classic bring-up deadlock).</p>
+<h2 id="the-linker-script-the-memory-map-written-down-as-code">The linker script: the memory map, written down as code</h2>
+<p>The linker script is chapter 01's memory map in <em>source form</em> — a declarative language restating silicon so the toolchain obeys. A real, trimmed STM32F411 script:</p>
+<pre><code>/* stm32f411.ld — the memory model of this chip, written down */
+ENTRY(Reset_Handler)
+
+_Min_Heap_Size  = 0x200;   /* 512 B — reservations */
+_Min_Stack_Size = 0x400;   /* 1 KB                 */
+
+MEMORY
+{
+  FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 512K
+  RAM   (rwx) : ORIGIN = 0x20000000, LENGTH = 128K
+}
+_estack = ORIGIN(RAM) + LENGTH(RAM);  /* rung 4's constant: word[0] */
+
+SECTIONS
+{
+  .isr_vector :
+  {
+    . = ALIGN(4);
+    KEEP(*(.isr_vector))            /* hw reads this; no code references it */
+    . = ALIGN(4);
+  } &gt; FLASH                          /* must land at 0x08000000, first      */
+
+  .text :  { *(.text*) *(.rodata*) } &gt; FLASH
+  .ARM.exidx : { *(.ARM.exidx*) } &gt; FLASH   /* unwind tables: 2-4% of flash */
+
+  .data :
+  {
+    . = ALIGN(4);
+    _sdata = .;                     /* VMA: where it runs */
+    *(.data*)
+    . = ALIGN(4);
+    _edata = .;
+  } &gt; RAM AT&gt; FLASH                 /* LMA: where the file puts it */
+  _sidata = LOADADDR(.data);        /* copy source, linker-computed */
+
+  .bss (NOLOAD) :
+  {
+    . = ALIGN(4);
+    _sbss = .;
+    *(.bss*) *(COMMON)
+    _ebss = .;
+  } &gt; RAM
+
+  ._user_heap_stack (NOLOAD) :      /* a FAKE section: reservation only */
+  {
+    . = ALIGN(8);
+    _end = .;
+    . = . + _Min_Heap_Size + _Min_Stack_Size;
+    . = ALIGN(8);
+  } &gt; RAM
+
+  ASSERT(_end + _Min_Heap_Size + _Min_Stack_Size &lt;= _estack,
+         "RAM overflow: .bss + heap + stack do not fit")
+}</code></pre>
+<p>Read it as a language:</p>
+<ul>
+<li><strong><code>MEMORY{}</code></strong> is the ch01 map restated: named regions with permissions and extents — silicon's contract, enforced at build (writable sections are <em>refused</em> in the <code>rx</code> region).</li>
+<li><strong><code>.isr_vector</code> with <code>KEEP</code></strong> is load-bearing: hardware reads the table and no instruction references it, so <code>--gc-sections</code> would drop it as dead — <code>KEEP</code> annotates "an agent outside the ELF reads this." Forget it and the first gc-sections build hardfaults: word[0] is a <code>.text</code> word, MSP is instruction bits.</li>
+<li><strong><code>.ARM.exidx</code></strong> is the ARM unwind table, ~8 bytes per function (PREL31 offset + handler word). With exceptions: 2-4% of flash plus the unwinder; <code>-fno-exceptions</code> (ch01's default) deletes both — the 20-50 KB savings, seen from the linker side.</li>
+<li><strong><code>.data &gt; RAM AT&gt; FLASH</code></strong> is the two-address trick: <code>&gt;RAM</code> gives the VMA, <code>AT&gt; FLASH</code> the LMA, and <code>LOADADDR(.data)</code> — a built-in <em>function</em> of the language — returns the LMA so <code>_sidata</code> stays exact while <code>.text</code> grows and shrinks; the startup loop never needs editing.</li>
+<li><strong><code>.bss (NOLOAD)</code></strong> — bytes in RAM, none in the file.</li>
+<li><strong><code>._user_heap_stack</code></strong> holds no input sections; it is a <em>reservation</em>, advancing the location counter past heap+stack so the <code>.map</code> accounts for them. Slow down here — the payoff: <strong>the linker script is a static analyzer.</strong> The <code>ASSERT</code> states a theorem — <code>.bss + heap + stack &lt;= RAM</code> — over the closed world of static allocations; <code>ld</code> proves it or refuses to produce a binary (the refusal, verbatim, is Lab 3). Module 19 ch02 called types theorems and typed programs proofs: the same move at kilobyte scale, the linker as type checker. Nothing at runtime allocates — the only "allocator" here is the linker.</li>
+</ul>
+<h2 id="the-vector-table-as-a-c-array-and-the-price-of-forgetting-one">The vector table as a C array — and the price of forgetting one</h2>
+<p>The table at 0x00000000 is 16 system entries (MSP, Reset, NMI, HardFault ... SysTick at <code>0x3C</code>), then one per device interrupt. In C, it is a function-pointer array plus the weak-alias pattern vendor startups use:</p>
+<pre><code class="language-c">extern void _estack;              /* defined in the script, not any .c file */
+
+void Reset_Handler(void);
+void Default_Handler(void) { for (;;) {} }        /* the silent trap */
+void NMI_Handler(void)        __attribute__((weak, alias("Default_Handler")));
+void HardFault_Handler(void) __attribute__((weak, alias("Default_Handler")));
+/* ...one line per IRQ you do NOT plan to write...                   */
+
+__attribute__((section(".isr_vector"), used))
+void (* const vector_table[])(void) = {
+    (void (*)(void))&amp;_estack,     /* 0x00: initial MSP — data in a file */
+    Reset_Handler,                /* 0x04: reset vector, Thumb bit set  */
+    Default_Handler,              /* 0x08: NMI (weak)                   */
+    Default_Handler,              /* 0x0C: HardFault (weak)             */
+    /* ... 12 more system entries, then every device IRQ ... */
+};</code></pre>
+<p>Define a handler anywhere and the strong symbol wins; ignore it and the alias stands. The trap: you enable the USART receive interrupt, forget <code>USART2_IRQHandler</code>, a byte arrives — and PC parks in <code>Default_Handler</code>'s empty <code>for(;;)</code>. No fault, no message: <strong>a forgotten handler is a silent hang by construction</strong> (the tell: PC in a <code>Default_*</code> function, xPSR in handler mode). Assembler spelling: <code>.weak NMI_Handler</code> + <code>.thumb_set NMI_Handler,Default_Handler</code>.</p>
+<p>The question module 04 ch02 forces: <em>where are the PLT/GOT, the relocations, the PIC?</em> Nowhere — the absence is the design. Desktop shared libraries load at runtime-chosen addresses, so references must be indirected or fixed up at load — a permanent 0-3% tax. Here the map is silicon-fixed and the image always at <code>ORIGIN(FLASH)</code>: addresses are absolute, burned in at link time, and the whole "loader" is the copy loop you read. Dynamic loading needs an MMU and a runtime resolver (module 01 ch03); the µC has neither.</p>
+<h2 id="two-stacks-a-fake-heap-and-a-budget-you-can-prove">Two stacks, a fake heap, and a budget you can prove</h2>
+<p><strong>MSP vs PSP.</strong> The Cortex-M banks <em>two</em> stack pointers: handler mode always uses MSP; thread mode can switch to PSP (<code>CONTROL.SPSEL</code>). Bare metal ignores this; the chapter 04 RTOS does not — each task gets a PSP stack, every ISR shares one MSP stack:</p>
+<pre><code>    thread mode (main, RTOS tasks)           handler mode (ALL ISRs)
+   +----------------------------+           +----------------------------+
+   | task A stack (PSP)  1 KB   |           |                            |
+   +----------------------------+   IRQ     |      the ONE MSP stack     |
+   | task B stack (PSP)  1 KB   |  ------&gt;  |  shared by every handler   |
+   +----------------------------+           |  sized by nesting math     |
+   | idle task stack   256 B    |           |  (below) — the only number |
+   +----------------------------+           |  an ISR writer must trust  |
+   | CONTROL.SPSEL = 1 in tasks |           +----------------------------+
+   +----------------------------+      EXC_RETURN 0xFFFFFFFD = "return to
+   | main's pre-RTOS stack (MSP) |      PSP"; 0xFFFFFFF9 = "return to MSP"
+   +----------------------------+      (ch03: which stack to unwind on return)</code></pre>
+<p>Payoff: MSP needs only the <em>nesting</em> budget, not per-task depth — task stacks are sized per-task (ch04, whose overflow checker watches each PSP).</p>
+<p><strong>Sizing the main stack without a guard page</strong> — no MMU, two honest methods:</p>
+<ol>
+<li><strong>Worst-case arithmetic.</strong> Exception entry auto-stacks 8 words (r0-r3, r12, LR, PC, xPSR) = 32 B per nesting level; add the handler's own frame (from <code>-fstack-usage</code>) times the worst nesting your NVIC priorities permit; <em>add</em> the deepest thread-mode call tree — the worst case is "main at its deepest when interrupts nest on top." Two numbers, added — quiz Q4.</li>
+<li><strong>Pattern fill, measured post-run.</strong> Fill the unused stack with <code>0xDEADBEEF</code> after the <code>.bss</code> loop, run the worst case, halt, and scan down from <code>_estack</code> for the first surviving pattern — the high-water mark. Usage = <code>_estack</code> − that address; add 15-25% margin and <em>write it into <code>_Min_Stack_Size</code></em>.</li>
+</ol>
+<p><strong>The heap, if you dare.</strong> newlib's <code>malloc</code> bottoms out in <code>_sbrk</code>, the old Unix break interface from module 01 ch05, shrunk — <em>you</em> write the 15 lines:</p>
+<pre><code class="language-c">/* _sbrk.c — everything malloc needs from the outside world */
+#include &lt;errno.h&gt;
+#include &lt;sys/types.h&gt;
+
+extern char _end, _estack;           /* script symbols: heap start, RAM top */
+static char *brk;
+
+caddr_t _sbrk(int incr)
+{
+    char *prev;
+    if (brk == 0) brk = &amp;_end;
+    prev = brk;
+    if (brk + incr &gt; &amp;_estack) {     /* naive bound: ignores the stack! */
+        errno = ENOMEM;
+        return (caddr_t)-1;          /* malloc returns 0; who checks? */
+    }
+    brk += incr;                     /* one-way: free() keeps its pool */
+    return (caddr_t)prev;
+}</code></pre>
+<p>The shim tells the truth: the heap is a static region between <code>_end</code> and the stack, growth is one-way, and the bound shown is naive (quiz Q7). Hence malloc-is-banned cultures (MISRA-style, most production firmware): module 01 ch05's fragmentation math with the arena shrunk 1000× — a 2 KB hole in a 20 KB heap is 10% permanent loss, and allocation failure is a <em>design</em> error, not a runtime event.</p>
+<p><strong>The <code>.map</code> file as budget document.</strong> Build with <code>-Wl,-Map=out.map -Wl,--print-memory-usage</code>, pair <code>-ffunction-sections</code> with <code>-Wl,--gc-sections</code> so dead functions drop — and <em>review the map in the PR</em>: "it fit yesterday" is not a state you may occupy. The review commands:</p>
+<pre><code class="language-console">$ arm-none-eabi-nm -S --size-sort proj.elf | tail -n 6
+08002f68 000005c4 t _dtoa_r     1476 B   float formatting: one printf("%f")
+08003d14 0000040c t _malloc_r   1036 B   the heap, in code form
+080012a4 0000030c t _svfprintf_  780 B   (shape typical of a newlib build;
+                                        run it on your own .elf)</code></pre>
+<p><code>--print-memory-usage</code> prints the one-liner pinned into the PR (exact GNU ld 2.44 format):</p>
+<pre><code class="language-console">Memory region         Used Size  Region Size  %age Used
+           FLASH:          68 B       512 KB      0.01%
+             RAM:          9 KB        64 KB     14.06%</code></pre>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The VTOR relocation trap.</strong> The table's base is not hardwired: <code>VTOR</code> (0xE000ED08) can point it at RAM, where a bootloader patches entries at runtime. Traps: alignment must be a power of two at least the table size (128 B minimum on Cortex-M3), and M0/M0+ <em>have no VTOR</em> — relocation there needs the SYSCFG "remap SRAM to address 0" trick. Errata constrain legal VTOR values on some cores.</li>
+<li><strong>ISRs are nearly free to <em>enter</em> — by architecture.</strong> On x86 the handler first pushes everything (module 01 ch04's PUSH-all prologue); on M-profile the <em>hardware</em> stacks the 8-word frame before your first instruction, and the AAPCS rule "handlers may clobber r0-r3, r12" matches exactly that set — a bare C function is a legal ISR body; <code>__attribute__((interrupt))</code> mainly buys FP-register saving on M4F/M7.</li>
+<li><strong><code>noinline</code> and <code>naked</code> are stack-budgeting tools.</strong> <code>-fstack-usage</code> emits a <code>.su</code> file per function (frame size); CI sums the worst call path. <code>noinline</code> pins a function's contribution across compiler versions; <code>naked</code> (no prologue) writes C trampolines that cannot touch the stack before it exists.</li>
+<li><strong><code>-fstack-usage</code> + <code>-Wl,--print-memory-usage</code> are CI guards, not reports.</strong> Fail the build when FLASH <code>%age Used</code> crosses a threshold or a <code>.su</code> frame exceeds its budget class (ISR frames especially).</li>
+<li><strong>"It's in flash, can't debug it" — the FPB.</strong> Debuggers cannot freely rewrite flash to plant breakpoints; the Flash Patch and Breakpoint unit's comparators trap execution <em>without modifying flash</em>: 6 on Cortex-M3 (4 instruction + 2 literal), 2 on M0+, none on M0. Beyond that count the debugger degrades or refuses.</li>
+<li><strong>External SDRAM needs a two-stage boot.</strong> Big-RAM boards cannot run startup from SDRAM: the controller and its timings must be configured by <em>running</em> code first — boot2's chicken-and-egg, one level up. Flash-resident stage one configures SDRAM, then copies or jumps; the heap usually lives there, <code>Reset_Handler</code> never can.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>Lab 0 (paper, no toolchain).</strong> Download ST's <code>startup_stm32f411xe.s</code> and the F411 datasheet's memory-map page; walk the 12 rungs on paper, annotating each with the address it touches.</p>
+<p><strong>Lab 1 — a 60-line world, boot to "alive".</strong> QEMU's MPS2 AN385 is a Cortex-M3: 4 MB at <code>0x00000000</code> (<code>-kernel</code> lands the ELF there), 4 MB SRAM at <code>0x20000000</code>, UART0 at <code>0x40004000</code> (DATA 0x0, STATE 0x4, CTRL 0x8). The entire program:</p>
+<pre><code class="language-c">/* bare.c — everything before main, in one file. QEMU mps2-an385. */
+#include &lt;stdint.h&gt;
+
+extern uint32_t _sidata, _sdata, _edata, _sbss, _ebss;  /* lab.ld symbols */
+
+volatile uint32_t *const UART0_CTRL  = (uint32_t *)0x40004008u; /* bit0: TX en  */
+volatile uint32_t *const UART0_STATE = (uint32_t *)0x40004004u; /* bit0: TX busy */
+volatile uint32_t *const UART0_DATA  = (uint32_t *)0x40004000u; /* write: send  */
+
+static char msg[] = "alive\n";   /* .data: lives in BOTH memories */
+
+void Reset_Handler(void)
+{
+    uint32_t *src = &amp;_sidata, *dst = &amp;_sdata;
+    while (dst &lt; &amp;_edata) *dst++ = *src++;   /* rung 7: LMA -&gt; VMA */
+    for (dst = &amp;_sbss; dst &lt; &amp;_ebss; ++dst)  /* rung 8: the zero promise */
+        *dst = 0;
+
+    *UART0_CTRL = 1u;
+    for (char *p = msg; *p; ++p) {           /* works only because rung 7 ran */
+        while (*UART0_STATE &amp; 1u) {}
+        *UART0_DATA = (uint32_t)*p;
+    }
+    for (;;) __asm volatile ("wfi");         /* park; there is no exit */
+}
+
+__attribute__((section(".isr_vector"), used))
+void (* const vector_table[])(void) = {
+    (void (*)(void))0x20040000u,  /* 0x00: MSP = top of SRAM: data in a file */
+    Reset_Handler,                /* 0x04: reset vector; Thumb bit free */
+};</code></pre>
+<pre><code class="language-text">/* lab.ld — the memory model of this board, written down */
+MEMORY { FLASH (rx) : ORIGIN = 0x00000000, LENGTH = 4M
+         RAM   (rwx): ORIGIN = 0x20000000, LENGTH = 4M }
+ENTRY(Reset_Handler)
+SECTIONS
+{
+  .isr_vector : { KEEP(*(.isr_vector)) } &gt; FLASH   /* must sit at address 0 */
+  .text   : { *(.text*) *(.rodata*) } &gt; FLASH
+  .data   : { _sdata = .; *(.data*) _edata = .; } &gt; RAM AT&gt; FLASH
+  _sidata = LOADADDR(.data);
+  .bss (NOLOAD) : { _sbss = .; *(.bss*) _ebss = .; } &gt; RAM
+}</code></pre>
+<pre><code class="language-console">$ arm-none-eabi-gcc -mcpu=cortex-m3 -mthumb -nostdlib -ffreestanding \
+    -ffunction-sections -Wl,--gc-sections -Wl,-Map=lab.map \
+    -Wl,--print-memory-usage -T lab.ld bare.c -o bare.elf
+$ qemu-system-arm -M mps2-an385 -nographic -kernel bare.elf
+QEMU 8.2.2 monitor - type 'help' for more information
+alive</code></pre>
+<p>(Banner first; <code>Ctrl-A x</code> quits.) Delete the copy loop: "alive" becomes an empty line — <code>msg</code>'s bytes sit only at its LMA. Note there is no <code>main</code>: rung 11 is wherever you say it is.</p>
+<p><strong>Lab 2 — read the budget.</strong> Rerun the build (or open <code>lab.map</code>): find <code>.data</code>'s VMA (<code>0x20000000</code>), size (8 B — <code>msg</code> plus padding), its <code>load address</code> in flash, and confirm <code>_sidata</code> equals that LMA. Compute: total flash, total RAM, headroom.</p>
+<p><strong>Lab 3 — break the proof.</strong> Shrink the budget to one a µC respects (<code>RAM LENGTH = 64K</code>, <code>_estack = ORIGIN(RAM) + LENGTH(RAM)</code>, plus the reservation and <code>ASSERT</code> from the STM32 script), add <code>static uint8_t blob[100*1024];</code>, relink. GNU ld refuses — exactly this shape (captured verbatim on GNU ld 2.44; <code>arm-none-eabi</code> prints the same text with its own path):</p>
+<pre><code class="language-console">arm-none-eabi/bin/ld: bare.elf section `.bss' will not fit in region `RAM'
+arm-none-eabi/bin/ld: RAM overflow: .bss + heap + stack do not fit
+arm-none-eabi/bin/ld: region `RAM' overflowed by 37888 bytes</code></pre>
+<p>Three lines: the mechanical failure, <em>your</em> ASSERT message, and the arithmetic (100 KB blob + 1 KB reservation − 64 KB RAM = 37888). The oversubscription is impossible to <em>ship</em> because the binary is impossible to <em>produce</em> — module 19's soundness thesis in five seconds.</p>
+<p><strong>Lab 4 — 0xDEADBEEF stack sizing, as a procedure.</strong> (1) After the <code>.bss</code> loop, fill from <code>_ebss</code> up to <code>_estack</code> (minus your heap) with <code>0xDEADBEEF</code>. (2) Run the worst case: deepest call path, heaviest interrupt load. (3) Halt (QEMU: <code>-S -gdb tcp::1234</code>; <code>x/1024wx &amp;_ebss</code> in gdb) and scan down from <code>_estack</code> for the first surviving pattern word. (4) Write usage + 25% into the reservation.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Bring-up triage.</strong> A blank board is a binary search over 12 rungs: <code>x/2wx 0</code> (is word[0] <code>_estack</code>?); did PC reach <code>Reset_Handler</code>? Did the copy run? Is PC parked in <code>Default_Handler</code>?</li>
+<li><strong>Code review shapes.</strong> A <code>.bss</code> array without a map delta, an IRQ enable without a handler, a constructor before <code>SystemInit</code>, a <code>malloc</code> outside startup — each is a one-line comment citing a rung or a theorem.</li>
+<li><strong>Sizing interviews.</strong> "How much RAM do you need?" now has a derivable answer — <code>.data</code> + <code>.bss</code> from the map, stack from nesting arithmetic or the DEADBEEF scan — and that answer, in numbers, separates a hobbyist from a firmware engineer.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 01</strong> — the silicon-fixed memory map written down in <code>MEMORY{}</code>; the <code>volatile</code> syntax the lab runs on.</li>
+<li><strong>Chapter 03</strong> — the vector table's device IRQ entries; the 8-word auto-stacked frame sized here; EXC_RETURN's MSP/PSP bit, the split diagram's engine.</li>
+<li><strong>Chapter 04</strong> — the RTOS puts every task on its own PSP; the nesting-only MSP budget derived here is why that is affordable.</li>
+<li><strong>Chapter 05</strong> — rungs 1-3 re-asked adversarially: who signs the image the boot ROM jumps to?</li>
+<li><strong>Module 01 chapter 04</strong> — the stack from a file: "who initializes it?" answered to the end — <code>_estack</code>, read by silicon as word[0].</li>
+<li><strong>Module 01 chapter 05</strong> — the heap fragmentation math, shrunk 1000× into the <code>_sbrk</code> pool.</li>
+<li><strong>Module 04 chapter 02</strong> — the loader a µC does not need: PLT/GOT exist precisely because desktop libraries load at runtime-chosen addresses; position-FIXED code never pays the 0-3% PIC tax.</li>
+<li><strong>Module 07 chapter 02</strong> — the same ladder scaled: a loader mapping sections, demand-zeroing <code>.bss</code>, running initializers before <code>main</code> — <code>Reset_Handler</code> with page tables.</li>
+<li><strong>Module 19 chapter 02</strong> — the <code>ASSERT</code> as proof, the script as theorem environment: soundness at kilobyte scale.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Why is the initial stack pointer loaded from word[0] of the image rather than hardwired "top of RAM"? What does that buy the designer — and which file owns your stack size?</li>
+<li><strong>Concept.</strong> In terms of LMA and VMA, why does <code>.data</code> need a runtime copy step while <code>.bss</code> does not — and where do <code>.bss</code>'s "initial contents" come from?</li>
+<li><strong>Predict the number (RAM budget from a map).</strong> A <code>.map</code> shows <code>.data</code> at VMA <code>0x20000000</code> size <code>0xF8</code>; <code>.bss</code> next, size <code>0xA3B0</code>; then <code>._user_heap_stack</code> with <code>_Min_Heap_Size = 0x200</code>, <code>_Min_Stack_Size = 0x600</code>, and <code>ASSERT(_end + 0x800 &lt;= _estack)</code>; <code>_estack = 0x20020000</code>, RAM = 128 KB. Compute (a) RAM committed by the theorem, (b) headroom, (c) the largest zero-initialized <code>static</code> array that still links.</li>
+<li><strong>Predict the number (stack budget).</strong> Exception entry auto-stacks 8 words; each handler's own frame is 56 B per <code>-fstack-usage</code>; NVIC priorities permit 3-deep nesting; the deepest thread-mode call tree is 1,200 B. Compute the MSP budget, the reservation with 25% margin, and your conclusion about the ST default <code>_Min_Stack_Size = 0x400</code>.</li>
+<li><strong>Predict the output.</strong> Someone deletes the <code>.data</code> copy loop but keeps <code>static char msg[] = "alive\n"</code> and the print loop. What appears on the terminal, and where do <code>msg</code>'s bytes live in that broken build?</li>
+<li><strong>Diagnose.</strong> A board enables a UART receive interrupt; the build was clean. At the first received byte it stops responding — no fault, no output, PC spinning in <code>Default_Handler</code> with xPSR in handler mode. What happened, and why was it <em>guaranteed silent</em> by design?</li>
+<li><strong>Diagnose.</strong> Firmware links with RAM at 96% (reservation in place), passes bench tests, hardfaults in the field under peak load after days. The heap uses the <code>_sbrk</code> shim shown. Name the collision the link-time proof did <em>not</em> cover, and give the two-line fix.</li>
+<li><strong>Cross-chapter.</strong> Module 04 chapter 02 spent a chapter on PLT/GOT and relocation processing. Name the two properties of this chapter's world that make all of it unnecessary, and what those properties cost a desktop shared library that pays the PIC tax.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>No instruction has executed, so no code can <em>compute</em> a stack top — the value must come from nonvolatile storage read by fetch hardware. It buys flexibility at zero runtime cost: different RAM sizes, RAM elsewhere, reserved top-of-RAM regions, chosen offline by editing one constant. Your stack size is owned by the linker script (<code>_estack</code>).</li>
+<li><code>.data</code> is writable (VMA in RAM) but nonzero-initialized, and only flash survives power cycles — the file carries the initializers at an LMA; startup reconciles LMA→VMA by copying. <code>.bss</code> is zero-initialized, and zero is a state SRAM can be <em>put into</em> cheaply: <code>NOLOAD</code> emits no file bytes; the zero loop manufactures the contents (real silicon powers up as garbage; QEMU zero-fills, masking a broken loop).</li>
+<li><code>_end = 0x200000F8 + 0xA3B0 = 0x2000A4A8</code>. (a) Committed = <code>_end + 0x800</code> = <code>0x2000ACA8</code> = <strong>44,200 bytes</strong>. (b) Headroom = <code>0x20020000 − 0x2000ACA8</code> = <code>0x15358</code> = <strong>86,872 bytes</strong>. (c) The array must keep <code>_end + array + 0x800 &lt;= 0x20020000</code>: at most <strong>86,872 bytes</strong> (86,876 would refuse to link).</li>
+<li>Per level: 32 B auto-frame + 56 B handler = 88 B; × 3 = 264 B. Plus the thread tree: 264 + 1,200 = <strong>1,464 B</strong> minimum. With 25% margin ≈ 1,830 B → reserve <strong>2,048 B</strong>. The ST default 0x400 = 1,024 B is <em>below the minimum</em>: oversubscribed before any local exists.</li>
+<li>An empty line. The bytes sit only at <code>msg</code>'s LMA in flash — nothing copies them — while the print loop reads the VMA in SRAM, which QEMU zero-fills: the loop stops at the first NUL, writes nothing. On real silicon that read returns garbage. (A <code>const</code> <code>msg</code> lives wholly in <code>.rodata</code> and still prints.)</li>
+<li>The IRQ was enabled but no <code>USARTx_IRQHandler</code> was written, so the table's weak alias sent the core to <code>Default_Handler</code>'s <code>for(;;)</code>. Weak aliases make an unwritten handler a legal <em>link</em> (no undefined symbol) and a legal <em>execution</em> (an infinite loop raises no exception) — "forgot one" fails as a hang, not a crash. Fix: write the handler (strong symbol overrides) or don't enable the interrupt.</li>
+<li>The theorem covers <em>static</em> allocations only: <code>.data</code>, <code>.bss</code>, and the reservations. The collision it cannot see: the heap growing up from <code>_end</code> (bounded by <code>&amp;_estack</code>, the very top) meeting the MSP stack growing down from <code>_estack</code>. At peak load an ISR's auto-stacked frame lands on heap metadata, and the fault surfaces days later. Fix: bound <code>_sbrk</code> at <code>&amp;_estack - _Min_Stack_Size</code> — the same number the script reserved.</li>
+<li>(i) A <strong>fixed load address</strong>: the map is wired into silicon and the image always sits at <code>ORIGIN(FLASH)</code> — every reference resolves to an absolute address at link time; nothing to relocate at load. (ii) <strong>No dynamic loading</strong>: no second consumer of the code, no runtime symbol resolution — nothing for PLT/GOT to indirect <em>for</em>. A desktop shared library can assume neither: it is mapped at an OS-chosen address (ASLR — module 01 ch03) by a runtime loader, and pays the GOT/PLT indirection and its 0-3% overhead as the price.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 20 — Embedded &amp; firmware</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

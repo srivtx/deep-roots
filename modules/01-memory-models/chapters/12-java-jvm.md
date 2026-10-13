@@ -384,6 +384,12 @@ C2 scalar-replaces the object, the loop becomes register arithmetic, the timing 
 - **Ch 22 + Modules 02/04/05 (queued)** — ART under a hard cap; allocation-storm DoS
   and class-file reading both build on this chapter.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 19 ch04 (GC as proof search)** — the generational collectors this chapter described are re-derived there as proof search with write barriers as monotonicity.
+- **Module 21 ch01 (the LCF kernel)** — the JVM bytecode verifier is a small proof checker for a type-safety theorem — you run an LCF-style kernel every time you run Java.
+- **Module 10 ch04 (safepoints)** — the compiler's GC duties: where safepoints come from, and why the oop map is the proof certificate.
+
 ## Quiz
 
 1. The JVM spec defines a stack machine; every real CPU is a register machine. Give

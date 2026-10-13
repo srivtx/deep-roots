@@ -435,6 +435,12 @@ What to notice: ASan's `new-delete-type-mismatch` prints both sizes, and the 8-b
 - **Chapter 21 (memory security):** new/delete mismatches and the weak-pinned use-after-free are entry points for the attacks covered there.
 - **Module 04 (decompilation, queued):** vtable + RTTI reconstruction of C++ classes starts from this chapter's diagram.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 02 ch05 (use-after-free)** — the destructor that runs twice and the object that dies once: C++ lifetimes are where the modern bug class lives.
+- **Module 19 ch03 (the safety spectrum)** — RAII is scope-based affine intuition without an aliasing proof — shared_ptr is the runtime patch for the missing theorem.
+- **Module 04 ch04 (vtable reconstruction)** — the virtual dispatch this chapter emits is what a reverse engineer rebuilds: RTTI and the vtable walk.
+
 ## Quiz
 
 1. Your teammate wants `finally` blocks in C++ and proposes wrapping every cleanup in `try { ... } catch(...) { cleanup(); throw; }`. In terms of stack unwinding, explain why the language instead bound destructors to scope — and name one guarantee a scope-bound destructor gives that a hand-written cleanup call cannot.

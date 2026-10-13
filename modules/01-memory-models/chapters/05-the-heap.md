@@ -215,6 +215,13 @@ production teams a week.
   real.
 - **Chapter 21** — the chunk header as attack surface; tcache poisoning.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 11 ch02 (B-trees)** — the disk as the new heap: page splits are the allocator's fragmentation math at 4 KiB granularity.
+- **Module 14 ch02 (VFS and allocators)** — file systems are allocators that outlive the process — ext4's block bitmap is this chapter's free list, persisted.
+- **Module 22 ch01 (the tensor)** — PyTorch's caching allocator is the arena flavor of this chapter's taxonomy, with 512-byte blocks and a fragmented OOM.
+- **Module 19 ch04 (GC as proof search)** — the bump-pointer nursery is allocation with no per-object cost because free space itself is the proof.
+
 ## Quiz
 
 1. **Concept.** Why must `free()` accept a bare pointer with no size, and what does

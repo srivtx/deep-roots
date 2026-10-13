@@ -210,6 +210,13 @@ Instruments' Counters template instead — same underlying PMU.
 - **Chapter 20** — coherence (MESI), false sharing, and the memory model.
 - **Chapter 22** — mobile: shared L3/DRAM bandwidth is the frame budget the GC steals.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 17 ch04 (the cache born in RTL)** — the 64-byte line and the direct-mapped set this chapter asserted are derived there from transistors up.
+- **Module 13 ch03 (TCP buffer machine)** — bufferbloat is a queue's occupancy — the hierarchy's 'lower is slower' extended into the network itself.
+- **Module 18 ch02 (AES and modes)** — the T-table timing attack is this chapter's cache-line eviction turned into a key leak.
+- **Module 22 ch05 (the datacenter tower)** — the fabric becomes a hierarchy level: HBM -> DRAM -> network -> storage, the same trade at 10^9 scale.
+
 ## Quiz
 
 1. **Concept.** Why does the hierarchy use ~10x steps between levels instead of two

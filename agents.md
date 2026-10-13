@@ -119,3 +119,67 @@ same format.
   13-05 was retried successfully.
 - **Result:** pushed to `main`, 17 modules LIVE at
   <https://srivtx.github.io/deep-roots/>.
+
+---
+
+## Session 004 — 2026-10-14 · the connection round: modules 18-22 + the cross-reference retrofit
+
+- **Task:** the third expansion round, with a quality-and-connections mandate:
+  (a) write the roadmap's five named frontier modules — cryptography internals,
+  PL theory & type systems, embedded & firmware, formal verification, ML systems —
+  at the same first-principles, insider depth; (b) audit the whole program for
+  what's missing and misconnected; (c) repair the connection debt and make the
+  cross-reference graph a first-class artifact of the program; (d) push.
+- **Audit first (the "what's missing / correctly connect them" pass):** a new
+  audit script (scripts/deep_roots_audit.py, kept outside the repo) measured the
+  program's cross-reference graph: 999 module-to-module citations, all resolving —
+  but **module 01 (the root) had zero outbound links** (written first, never
+  updated when 21 more modules appeared), **5 chapters were orphans** (zero
+  inbound: m01 ch13, ch16, ch23, m07 ch03, m13 ch03), and ROADMAP.md carried 17
+  broken "Start ere]" links. All fixed this session.
+- **Agents:** main orchestrator (Super Z / GLM) + 36 chapter/exam-writing
+  subagents in six waves (m18, m19, m20, m21, m22, retries) — subagent-report
+  losses to tool timeouts ran at the session-003 rate (~40%), same protocol:
+  verify the artifact on disk, trust the artifact. m22 ch03 failed three
+  subagent attempts and was written directly by the main agent.
+- **Content:** 25 new chapters + 5 final exams (12 questions each, worked
+  answers). m18: entropy from physics, AES/modes as state machine, bignums as
+  attack surface, TLS 1.3 as key erasure, the failure catalog. m19: lambda
+  calculus + halting, types as theorems (progress+preservation proved), memory
+  safety as a theorem (the borrow checker as affine types, the 11-language
+  spectrum table), GC as proof search, the limits. m20: the memory map in
+  silicon, linker scripts as the memory model (the ASSERT as soundness
+  theorem), interrupts+DMA (priority ceiling = BASEPRI), the RTOS (O(1)
+  bitmap scheduler lineage), firmware security (A/B as 2-phase commit).
+  m21: Hoare logic + LCF (the JVM verifier as proof checker), model
+  checking (state explosion as RAM arithmetic), seL4 (100:1 economics),
+  the borrow checker as separation logic, CompCert/HACL*. m22: tensors,
+  the autograd tape (activation accounting), ZeRO/TP/PP (1F1B bubble
+  derived), the KV cache (paged attention = virtual memory), collectives
+  (ring 2(N−1)/N derived, the datacenter as the swap machine).
+- **The connections layer (this session's signature):** (a) the m01 retrofit —
+  22 of the root module's 23 chapters gained explicit forward links into
+  modules 02-22 (65 outbound refs, was zero), and ch23's forward-connections
+  section was extended from 12 to 22 modules; (b) the new modules' specs
+  carried **mandatory orphan-repair links** (m18 ch04→m13 ch03, m19 ch02→m01
+  ch13, m18 ch05→m01 ch16, m19 ch04→m01 ch23, m20 ch05→m07 ch03) — all five
+  orphans now have inbound citations; (c) `connections.html`: the program's
+  dependency matrix, strongest ties, and load-bearing chapters, **generated
+  from the actual chapter markdown at build time** (1,129 citations, 157
+  module pairs — the graph is data, not a claim); (d) "Map" added to the
+  header/footer nav, linked from README and the hero.
+- **Site:** tools/build_site.py extended to a 22-module builder
+  (MODULES_META/ROADMAP_MODULES for m18-m22, computed facts, xmap/xties CSS,
+  BUILD_DATE bump, title double-escape fix); 180 generated pages; sitemap
+  194 URLs.
+- **QA:** deep_roots_qa.py over all 180 pages + 30 new markdown files — 0
+  issues; deep_roots_audit.py — 1,413 cross-module refs all resolve, 0 orphan
+  chapters, all 25 new chapters carry the full template contract (8Q/8A,
+  matched details, all sections), 5 new exams verified (12 Q each); headless
+  render check (homepage, map, m18/m20 indexes, m18/m19/m21/m22 chapters,
+  m22 exam, roadmap) — 0 console/page errors; ROADMAP's 17 broken links
+  repaired.
+- **Result:** pushed to `main`; 22 modules, 132 chapters, ~476,000 words,
+  109 chapter quizzes + 22 final exams, LIVE at
+  <https://srivtx.github.io/deep-roots/> with the connections map at
+  <https://srivtx.github.io/deep-roots/connections.html>.

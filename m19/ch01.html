@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The lambda calculus: the minimal machine — deep-roots</title>
+<meta name="description" content="Chapter 01 of module 19: The lambda calculus: the minimal machine">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The lambda calculus: the minimal machine — deep-roots">
+<meta property="og:description" content="Chapter 01 of module 19: The lambda calculus: the minimal machine">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The lambda calculus: the minimal machine — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of module 19: The lambda calculus: the minimal machine">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 19 &middot; why the rules are theorems</div>
+<h1 class="post-title">The lambda calculus: the minimal machine</h1>
+<div class="post-meta">chapter 01 &middot; ~15 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Module 01 asked how memory serves languages and never asked the question underneath: <em>what is the smallest language that still computes?</em> Answer: three term shapes — variable, <code>λx.t</code>, <code>t1 t2</code> — and one rewrite rule, β-reduction. That machine is Turing-complete: its booleans, pairs, and numbers are all functions; recursion is a term that re-grows itself. But Turing completeness ships with the halting problem in the same box — no algorithm decides whether the machine stops — and that theorem dictates the shape of every type system and inference limit in this module. Every language you have used is sugar on this machine.</blockquote>
+<h2 id="three-shapes-of-term-and-one-rewrite-rule">Three shapes of term and one rewrite rule</h2>
+<p>Strip a modern language of everything derivable and what remains is Church's 1936 notation. The whole grammar fits on one line:</p>
+<pre><code>t ::= x | λx. t | t1 t2          variable | abstraction | application</code></pre>
+<p><code>λx. t</code> is the only data constructor, juxtaposition the only operator, variables the only leaves — no numbers, no <code>if</code>, no <code>=</code>. Bookkeeping: an occurrence is <strong>bound</strong> if an enclosing <code>λ</code> names it, <strong>free</strong> otherwise (<code>FV(λx. t) = FV(t) − {x}</code>); no free variables means <strong>closed</strong>. Three conversions exist; one computes:</p>
+<ul>
+<li><strong>α</strong> — rename a binder: <code>λx. t ≡ λy. t[x := y]</code>.</li>
+<li><strong>β</strong> — the compute step: <code>(λx. t) u → t[x := u]</code>. The chapter lives in this arrow.</li>
+<li><strong>η</strong> — <code>λx. f x ≡ f</code> when <code>x ∉ FV(f)</code>: a pure forwarder <em>is</em> the forwarded; never needed to compute, but it manufactures the delay strict languages need for recursion (<em>insiders</em>).</li>
+</ul>
+<p>β looks like textual search-and-replace; that look is a trap. Substitution must be <strong>capture-avoiding</strong> — here naive substitution breaks: the argument <code>λz. y</code> carries a <em>free</em> <code>y</code>, and the body binds a <code>y</code> right over the landing zone:</p>
+<pre><code> (λx.  λy.  x  y ) (λz. y)      FV(λz. y) = {y}: the argument's y is FREE,
+   |    |   |  |     |  |        its binder is OUTSIDE this term
+   |    |   +--+----+-- the argument u = λz. y; one OCCURRENCE of x to replace
+   |    +------------- binder y: DANGER, it roofs the landing zone
+   +------------------ binder x: what the application binds
+
+ naive β:    λy. (λz. y) y      the free y is now under λy -- CAPTURED
+ honest β:   λy0.(λz. y) y0     α-rename the binder to a fresh y0 first</code></pre>
+<p>The naive result is not an error — it is a <em>different program</em>: the <code>y</code> that pointed outside now points at the inner <code>λy</code>. One rule makes capture impossible: when substituting <code>u</code> for <code>x</code>, if a binder of <code>t</code> would swallow a free variable of <code>u</code>, α-rename that binder first (the lab ends the reduction above in <code>λy0. y</code>, fresh binder visible). Those are the subtlest 10 lines in any functional language — the interpreter's <code>sub</code>, exactly — and production compilers sidestep them (<em>insiders</em>).</p>
+<h2 id="two-evaluation-orders-one-term-that-never-stops">Two evaluation orders, one term that never stops</h2>
+<p>β says a redex <em>can</em> fire, not <em>which one fires first</em>. With several redexes in play, that choice is your language's whole semantics:</p>
+<ul>
+<li><strong>Normal order</strong> — leftmost-outermost: fire the outermost redex, substituting arguments <em>unreduced</em>.</li>
+<li><strong>Applicative order</strong> — arguments first: reduce an argument to a value before firing its application.</li>
+</ul>
+<p>The stress test is a term that eats itself, <strong>Ω</strong>:</p>
+<pre><code>Ω = (λx. x x) (λx. x x)
+→β (λx. x x) (λx. x x)     substituting the argument into body (x x) rebuilds Ω
+=  Ω                       the term is its own reduct: Ω → Ω → Ω → ...</code></pre>
+<p>Evaluate Ω both ways: it has exactly one redex, which returns the same term forever — order cannot save it; Ω is the calibration weight. Wrap it in one cheap abstraction and order becomes everything:</p>
+<pre><code>            (λx.λy. y) Ω
+            \___/\___/ \___/
+              root β    Ω: its only redex is itself
+
+ normal:      fire the root, substitute Ω UNREDUCED → λy.y   [1 step: done]
+              the body never mentions x: Ω discarded, never entered
+ applicative: reduce Ω to a value first → Ω → Ω → ... a value is the
+              one thing Ω never becomes: DIVERGES</code></pre>
+<p>Same term, two orders, one answer and one infinite loop. Behind it: confluence (Church–Rosser) — order never changes <em>which</em> normal form you get, only whether you live to see it — and standardization: if any order terminates, normal order does. Hence the names — normal order is <strong>lazy</strong> evaluation (Haskell, the only mainstream language to bet on it), applicative is <strong>strict</strong> (everything else). Laziness is not magic: a body that <em>uses</em> its argument still runs the substituted copy (quiz 3).</p>
+<h2 id="data-as-control-flow-the-machine-proves-itself">Data as control flow: the machine proves itself</h2>
+<p>No data exists here, so it must be built from the only material — functions. The uniform trick: an encoded value is a function that waits to be told what to do; its "value" <em>is</em> its behavior when consumed.</p>
+<p><strong>Booleans</strong> are two-argument selectors, <code>if</code> their consumer:</p>
+<pre><code>TRUE  = λa.λb. a          FALSE = λa.λb. b
+IF    = λc.λt.λe. c t e   -- apply the condition to both branches; it discards one</code></pre>
+<p><code>IF TRUE t e → t</code> in two steps, dead branch untouched — <code>if</code> needs no special syntax, <em>because</em> normal order never forces the branches (quiz 1). Pairs hand the selector in later: <code>PAIR = λa.λb.λsel. sel a b</code>, <code>FST = λp. p TRUE</code>, <code>SND = λp. p FALSE</code>. <strong>Naturals</strong> are "apply <code>f</code> n times" — <code>2 = λf.λx. f (f x)</code> — and the operators are compositions:</p>
+<pre><code>SUCC = λn.λf.λx. f (n f x)        -- one more f
+ADD  = λm.λn.λf.λx. m f (n f x)   -- compose the ITERATED functions: f^m after f^n
+MUL  = λm.λn.λf. m (n f)          -- compose the NUMERALS: (f^n)^m = f^(n*m)</code></pre>
+<p>Addition composes iterated functions; multiplication composes the numerals — the same idea one level up, which is why <code>MUL</code> is shorter. <code>MUL 2 3</code> traced by hand, every β numbered — the lab prints exactly this normal form:</p>
+<pre><code>MUL 2 3 = (λm.λn.λf. m (n f)) 2 3
+ 1 →β λn.λf. 2 (n f)                          m := 2
+ 2 →β λf. 2 (3 f)                             n := 3
+ 3 →β λf. λx. (3 f) ((3 f) x)                 2 = λg.λx. g (g x), g := 3 f:
+                                               "apply the function (3 f) twice"
+ 4 →β λf. λx. (λx. f (f (f x))) ((3 f) x)     leftmost (3 f) reduces: 3 applied to f
+ 5 →β λf. λx. f (f (f ((3 f) x)))             x := ((3 f) x): three f's wrapped
+ 6 →β λf. λx. f (f (f (λx. f (f (f x)) x)))   the second (3 f) reduces
+ 7 →β λf. λx. f (f (f (f (f (f x)))))         x := x: inner application fires
+ = 6                                          count the f's: SIX</code></pre>
+<p>Six <code>f</code>s — <code>2 (3 f)</code> and <code>3 (2 f)</code> both land on six: commutative encoding, different traces.</p>
+<p><strong>Recursion without a recursion primitive.</strong> No term can mention itself, so recursion must be a term that <em>regrows itself</em> — Curry's fixed-point combinator:</p>
+<pre><code>Y = λf. (λx. f (x x)) (λx. f (x x))</code></pre>
+<p>Unfold once, honestly, on a free <code>g</code> (a stand-in for any recursive body):</p>
+<pre><code>Y g →β (λx. g (x x)) (λx. g (x x))        f := g
+    →β g ((λx. g (x x)) (λx. g (x x)))    x := the second half
+    =   g (Y g)                            the original term reassembled INSIDE g
+    →β g (g (Y g)) →β g (g (g (Y g))) ... one unfolding per recursive call, forever</code></pre>
+<p><code>Y g</code> is a fixed point of <code>g</code>: it re-creates itself as <code>g</code>'s argument, storing nothing — no stack, no counter, no self-reference in the syntax. Non-termination is not <em>added</em> to this machine; it was already legal.</p>
+<p>Church–Turing, two sentences as promised: everything a Turing machine computes, the λ-calculus computes, and vice versa — Turing proved the two 1936 definitions equivalent in 1937, and every model since (register machines, your CPU, cellular automata) joined the class. We do not re-prove it; we use it — <code>IF</code>, numerals, and <code>Y</code> give this machine branching, arithmetic, and recursion, which is everything a Turing machine has.</p>
+<h2 id="the-halting-problem-arrives-in-the-same-box">The halting problem arrives in the same box</h2>
+<p>Turing-complete means at least as powerful as every computer that exists, so this machine inherits the theorem that bounds them all — the diagonalization proof as actual Python, self-reference included (Python resolves <code>paradox</code> by name at call time):</p>
+<pre><code class="language-python">def halts(f, x):
+    ...                                # ASSUMED oracle: True iff calling f(x) returns
+
+def paradox():
+    if halts(paradox, 0):              # ask the oracle about MYSELF
+        while True:
+            pass                       # oracle said True -&gt; do the opposite: loop
+    return 1                           # oracle said False -&gt; halt
+
+# True  =&gt; paradox loops forever =&gt; it does NOT halt: contradiction.
+# False =&gt; paradox returns 1       =&gt; it DOES halt:    contradiction.
+# Both impossible =&gt; halts cannot exist. Not "hard" -- impossible, for any
+# language at least this strong.</code></pre>
+<p>(A timeout-based <code>halts</code> is buildable and useful — CI runs it daily — but it must be <em>wrong</em> on <code>paradox</code>-shaped inputs.) The reach of the theorem is <strong>Rice's theorem</strong> (1953), in plain words: <em>every non-trivial semantic property of programs is undecidable</em> — any property true of some programs, false of others, and about what a program <strong>does</strong> rather than how it is spelled. The halting reduction is two lines: to ask "does <code>f(x)</code> halt?", build <code>g</code> that runs <code>f(x)</code> first, then behaves like a program with the property:</p>
+<pre><code class="language-python">def g(y):
+    f(x)                      # line 1: the halting question, smuggled inside
+    return p(y)               # line 2: behavior with property P (P true of p,
+                              #         false of the diverging function)
+# P(g) holds  &lt;=&gt;  f(x) halts: a P-decider would be a halting decider. QED.</code></pre>
+<p>"Always returns a list?", "injective?", "ever touches this file?" — all undecidable by this construction. The capstone: <strong>no type system can reject exactly the non-terminating programs</strong> — a decidable checker that filtered precisely the divergent terms would be a halting decider. Every real type system draws its line inside the safe region; the rest of the module is where each language put it.</p>
+<h2 id="undecidability-is-why-your-type-checker-has-rules">Undecidability is why your type checker has rules</h2>
+<p>Why does SML/OCaml/Haskell inference feel generous while GHC's higher-rank types demand annotations? Because the decidability frontier runs exactly between them.</p>
+<p>The λ-calculus is untyped — nothing to infer. Add types and the question becomes "does this term have any type at all?" The Hindley–Milner result (Hindley 1969, Milner 1978): inference is <strong>decidable</strong> by unification (Algorithm W), and every term has a <strong>principal type</strong> — a most general one of which all others are instances. <code>fun x -&gt; x</code> infers not <em>a</em> type but <code>'a -&gt; 'a</code>; one algorithm always finds the most general one. That is why <code>let id = fun x -&gt; x</code> then both <code>id 1</code> and <code>id "a"</code> typechecks: <code>let</code>-bound values are <strong>generalized</strong> — and HM is the last comfortable rung of the polymorphism ladder:</p>
+<ul>
+<li><strong>Rank 1</strong> (all <code>∀</code>s outside the arrows — HM): decidable with principal types. <code>let</code>-polymorphism exists because this is the most generalization that keeps inference decidable <em>and</em> answers unique; the asymmetry is deliberate — λ-bound arguments stay <strong>monomorphic</strong> (<code>fun id -&gt; (id 1, id "a")</code> is rejected), a step below the next rung.</li>
+<li><strong>Rank 2</strong> (one <code>∀</code> nested left of an arrow): still decidable, but principal types are lost — no single best answer exists to find.</li>
+<li><strong>Rank 3+</strong>: inference <strong>undecidable</strong> — a type-level Ω exists; the search can loop.</li>
+<li><strong>System F</strong> (Church 1940, <code>∀</code> anywhere — GHC Core's substrate): inference is undecidable (Wells 1999 — typability and type-checking collapse into one problem). GHC's escape is the annotation: where inference would have to guess (<code>RankNTypes</code>, impredicativity), the programmer writes the type and the checker <em>verifies</em> it — verification with the guessing pre-filled stays decidable. Annotations are your half of a proof the machine provably cannot do.</li>
+</ul>
+<p>Carrying the halting problem this far pays off: the limits are not design taste. <code>let</code>-polymorphism exists because rank 1 is decidable with principal types; higher ranks wander into undecidability; System F needs your annotations because no algorithm can supply them. Chapter 02 climbs the next rung on purpose — types as theorems.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>"Currying" and AWS Lambda's λ are one lineage.</strong> Multi-argument functions are nested single-argument ones, so <code>a -&gt; b -&gt; c</code> is right-associative and partial application is free — named for Haskell Curry the logician (the language too). AWS Lambda (2014) wears λ as its logo because "lambda" has meant "anonymous function" since Lisp imported the notation; a cloud lambda is one application node — event in, handler out, cold start = allocating the closure.</li>
+<li><strong>Normal = lazy, applicative = strict, one sentence of history.</strong> Landin's SECD machine (1964) implemented applicative order and implementations followed; Wadsworth (1971) made normal order affordable by <em>sharing</em> substituted arguments — call-by-need, memoized thunks; Turner's SASL → KRC → Miranda bet languages on it, and Haskell (1990) is the survivor. Everyone else stayed strict — why <code>&amp;&amp;</code> in C must be syntax: a strict language cannot afford a function that skips its second argument.</li>
+<li><strong>Untyped was the original; types are the patch.</strong> Church built λ (1932–36) as a foundation for <em>logic</em>, not a programming language; it was shown inconsistent (Kleene–Rosser 1935), and simply typed λ (1940) was the repair. Self-application <code>x x</code> — Y's engine — is legal only because there are no types; chapter 02's typed calculus forbids it, which is why typed languages hand recursion back as a built-in <code>fix</code>.</li>
+<li><strong>SKI is smaller than λ.</strong> Schönfinkel (1924, before Church): <code>S = λf.λg.λx. f x (g x)</code>, <code>K = λx.λy. x</code>, <code>I = K K</code> — Turing-complete with <em>no variables</em>; "point-free" Haskell style is combinator logic in λ clothing. Iota collapses to one combinator, <code>ι = λf. f S K</code>: a language whose only verb is applying <code>ι</code>.</li>
+<li><strong>Nobody renames in production — and strict languages need Z, not Y.</strong> Compilers replace names with <strong>de Bruijn indices</strong> (<code>λf.λx. f x</code> becomes <code>λ λ 1 0</code>; the number is binder depth), making capture impossible by construction — unreadable, so proof assistants go "locally nameless" instead. And under call-by-value, Y builds its infinite argument <em>before</em> the call fires and diverges instantly; strict languages ship Z, Y with one η-expansion — <code>Z = λf. (λx. f (λv. x x v)) (λx. f (λv. x x v))</code> — whose <code>λv</code> wrapper is a delay. It is why <code>fix</code> in OCaml/Scala looks like that.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>The whole machine — parser, capture-avoiding substitution, both evaluation orders, and a step budget so divergence is <em>shown</em> instead of hanging your terminal — is 46 lines of Python. Save as <code>lam.py</code>; the output below is real.</p>
+<pre><code class="language-python"># lam.py -- the minimal machine: a normal-order lambda-calculus interpreter.
+# Run: python3 lam.py     (CPython 3.12; any 3.8+ works)
+import itertools
+_fresh = itertools.count()               # gensym counter for capture-avoiding renames
+
+def sub(t, x, u):                        # capture-avoiding t[x := u]
+    if t[0] == 'var': return u if t[1] == x else t
+    if t[0] == 'lam':
+        if t[1] == x: return t           # x shadowed here: not free, stop
+        if t[1] in free(u):              # binder would CAPTURE a free var of u
+            y = t[1] + str(next(_fresh)) # fresh rename (y -&gt; y0, y1, ...)
+            t = ('lam', y, sub(t[2], t[1], ('var', y)))
+        return ('lam', t[1], sub(t[2], x, u))
+    return ('app', sub(t[1], x, u), sub(t[2], x, u))
+
+def free(t):                             # free variables of t
+    if t[0] == 'var': return {t[1]}
+    if t[0] == 'lam': return free(t[2]) - {t[1]}
+    return free(t[1]) | free(t[2])
+
+def step(t, order='normal'):             # ONE reduction, or None if t is normal
+    if t[0] == 'lam':                    # a lambda is not a redex; its body may be
+        return ('lam', t[1], s) if (s := step(t[2], order)) is not None else None
+    if t[0] != 'app': return None        # a variable is done
+    f, a = t[1], t[2]
+    if f[0] == 'lam' and (order == 'normal' or step(a) is None):
+        return sub(f[2], f[1], a)        # BETA: (λx.t) u -&gt; t[x:=u]
+    s = step(f, order)                   # no root redex: leftmost subterm first
+    if s is not None: return ('app', s, a)
+    return None if (s := step(a, order)) is None else ('app', f, s)
+
+def run(t, order='normal', budget=500):
+    n = 0
+    while (s := step(t, order)) is not None and n &lt; budget: t, n = s, n + 1
+    return show(t) + ('   [%d steps: normal form]' % n if s is None
+                      else '   [no normal form in %d steps: DIVERGING]' % budget)
+
+def parse(s):                            # t ::= name | \x. t | t1 t2 | (t)
+    toks = (s.replace('λ', '\\').replace('(', ' ( ').replace(')', ' ) ')
+            .replace('\\', ' \\ ').replace('.', ' . ').split())
+    def atom(i):                         # ONE atom: name | (t) | \x. t
+        if toks[i] == '(': r, j = term(i + 1); return r, j + 1
+        if toks[i] == '\\': b, j = term(i + 3); return ('lam', toks[i + 1], b), j
+        return ('var', toks[i]), i + 1   # error checks dropped for line count
+    def term(i):                         # an atom, then absorb its argument run
+        r, j = atom(i)
+        while j &lt; len(toks) and toks[j] != ')':
+            a, j = atom(j); r = ('app', r, a)
+        return r, j
+    t, j = term(0); assert j == len(toks); return t
+
+def show(t):                             # fully parenthesized, unambiguous
+    if t[0] == 'var': return t[1]
+    if t[0] == 'lam': return 'λ%s.%s' % (t[1], show(t[2]))
+    return '(%s %s)' % (show(t[1]), show(t[2]))
+
+if __name__ == '__main__':
+    TRUE, K, IF = 'λa.λb.a', 'λx.λy.x', 'λc.λt.λe. c t e'
+    TWO, THREE, MUL = 'λf.λx. f (f x)', 'λf.λx. f (f (f x))', 'λm.λn.λf. m (n f)'
+    Y, OMEGA = 'λf. (λx. f (x x)) (λx. f (x x))', '(λx. x x) (λx. x x)'
+    print('1) Church 2 x 3 =', run(parse('(%s) (%s) (%s)' % (MUL, TWO, THREE))))
+    t = parse('(%s) (%s) (%s) (%s)' % (IF, TRUE, K, OMEGA))    # if true then K else Ω
+    print('2) IF TRUE K Ω, normal     -&gt;', run(t, 'normal'))
+    print('   IF TRUE K Ω, applicative -&gt;', run(t, 'applicative'))
+    t = parse('(%s) g' % Y)             # g free: stand-in for any recursive body
+    print('3) Y g, unfolding:')
+    for n in range(4):
+        print('   step', n, ':', show(t)); t = step(t)</code></pre>
+<pre><code class="language-console">$ python3 lam.py
+1) Church 2 x 3 = λf.λx.(f (f (f (f (f (f x))))))   [7 steps: normal form]
+2) IF TRUE K Ω, normal     -&gt; λx.λy.x   [5 steps: normal form]
+   IF TRUE K Ω, applicative -&gt; (λe.λx.λy.x (λx.(x x) λx.(x x)))   [no normal form in 500 steps: DIVERGING]
+3) Y g, unfolding:
+   step 0 : (λf.(λx.(f (x x)) λx.(f (x x))) g)
+   step 1 : (λx.(g (x x)) λx.(g (x x)))
+   step 2 : (g (λx.(g (x x)) λx.(g (x x))))
+   step 3 : (g (g (λx.(g (x x)) λx.(g (x x)))))</code></pre>
+<p>What to notice: (1) six <code>f</code>s — the hand trace made mechanical; (2) normal order returns <code>λx.λy.x</code> in 5 steps with Ω substituted but never entered, while applicative order — look closely — already normalized the <em>function</em> (<code>λe.</code> became K) and then burned all 500 steps waiting for Ω to become a value; (3) step 2 is literally <code>g (Y g)</code>, step 3 is <code>g (g (Y g))</code> — one unfolding, recursion as re-growth. Then poke the chapter's two delicate spots:</p>
+<pre><code class="language-console">$ python3 -c "import lam; print(lam.run(lam.parse('(λx.λy. x y) (λz. y)')))"
+λy0.y   [2 steps: normal form]</code></pre>
+<p>That is section 1's capture example: <code>y0</code> is the fresh binder <code>sub</code> invented to keep the argument's <code>y</code> free. For the minimal pair, run <code>'(λx.λy. y) ((λx. x x) (λx. x x))'</code> — <code>λy.y</code> in one step; pass <code>'applicative'</code> and it diverges. Swap <code>λy. y</code> for <code>λy. x</code> (use the argument) and even normal order diverges: laziness only saves arguments the body never mentions.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Read function types as λ-terms.</strong> <code>a -&gt; b -&gt; c</code> is <code>λa.λb.λc</code> — curried, partial application free; a suspiciously composable signature is a term whose β-reductions have not happened yet.</li>
+<li><strong>Diagnose hangs by asking which redex moved.</strong> A refactor that turns a terminating program into a spinner usually moved work from a lazy position (substituted, maybe never used) into a strict one (evaluated before the call). Python is applicative everywhere — arguments, default-argument expressions (quiz 6).</li>
+<li><strong>Predict lazy-language memory.</strong> Normal order defers every redex; sharing makes each one a live heap cell (a boxed thunk — module 01 chapter 18's Haskell row). A fold that never forces its accumulator builds a term the size of its input; <code>foldl'</code>, <code>seq</code>, bang patterns are applicative order chosen by hand (quiz 7).</li>
+<li><strong>Answer interviews with proofs, not slogans.</strong> "Why can't we detect infinite loops?" — the two-case contradiction on <code>paradox</code>, five lines on a whiteboard. "Why <code>let</code>-polymorphism?" — rank 1 is the last decidable rung with principal types. "Why does GHC want annotations?" — System F inference is undecidable (Wells 1999).</li>
+<li><strong>Design DSLs knowing what <code>if</code> costs.</strong> First-class control flow requires delayed evaluation — thunks, macros, or lazy arguments — because a strict evaluator cannot afford <code>if</code> as a function.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 02 (this module)</strong> — types added to this exact machine: progress + preservation; the self-application that powers Y is the term the typed calculus rejects.</li>
+<li><strong>Chapter 03 (this module)</strong> — affine types count <em>uses</em> of a value: the used-versus-discarded distinction that decided Ω's fate, made checkable.</li>
+<li><strong>Chapter 04 (this module)</strong> — deferred redexes are the liveness facts a lazy GC must prove; thunks are module 01 chapter 18's boxed cells.</li>
+<li><strong>Chapter 05 (this module)</strong> — this chapter's undecidability theorems get teeth: what safe languages still permit.</li>
+<li><strong>Module 10, chapter 01 (the pipeline)</strong> — this interpreter is the semantic spec a compiler implements; strictness analysis recovers applicative order inside a lazy language; inference is a compiler pass.</li>
+<li><strong>Module 01, chapter 18 (the elders)</strong> — McCarthy lifted Church's λ-notation into Lisp; early Lisp's dynamic scoping is capture at language scale (quiz 8); Haskell shipped normal order.</li>
+<li><strong>Module 01, chapter 23 (the unification table)</strong> — every row sits on this chapter's two axes: lazy vs strict, typed vs untyped.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>In Python, <code>def IF(c, t, e): return t if c else e</code> cannot take a divergent branch: <code>IF(True, loop(), 1)</code> hangs <em>before IF is entered</em>. In one sentence each: why does <code>IF = λc.λt.λe. c t e</code> survive a divergent branch, and which evaluation-order property of Python is responsible?</li>
+</ol>
+<ol>
+<li>What invariant does capture-avoiding substitution protect? Define free variables in one line, and state exactly what changes about a term's meaning when naive substitution lets a binder swallow a free variable of the argument.</li>
+</ol>
+<ol>
+<li>Predict: which of these reaches a normal form under <em>normal order</em>, and what is it? (a) <code>(λx.λy. y) Ω</code> — (b) <code>(λx.λy. x) Ω (λa.λb.a)</code>, where <code>Ω = (λx. x x) (λx. x x)</code>.</li>
+</ol>
+<ol>
+<li>Predict: <code>ADD = λm.λn.λf.λx. m f (n f x)</code>, <code>MUL = λm.λn.λf. m (n f)</code>. How many <code>f</code> applications are in the normal form of <code>ADD 2 3</code>, and of <code>MUL 3 2</code>? One sentence: why is <code>MUL</code> the shorter definition?</li>
+</ol>
+<ol>
+<li>Derive: reduce <code>(λy.λx. y x) (λz. x)</code> with capture-avoiding substitution (the argument's <code>x</code> is free). Give the honest result and the naive non-renaming result, and name the function each computes.</li>
+</ol>
+<ol>
+<li>Diagnose:</li>
+</ol>
+<pre><code class="language-python">   def add_tag(v, tag=[]):     # called as add_tag(1); add_tag(2)
+       tag.append(v)
+       return tag              # second call returns [1, 2] -- why?</code></pre>
+<p>Explain in evaluation-order terms — when exactly does Python evaluate <code>tag=[]</code>, and how does that differ from what β-reduction does to an argument?</p>
+<ol>
+<li>Diagnose: in Haskell, <code>foldl (+) 0 [1 .. 10^7]</code> can exhaust memory on tens of millions of live thunks while <code>foldl' (+) 0 [1 .. 10^7]</code> runs in constant heap. In λ terms, what does the accumulator grow into, and what does <code>foldl'</code> change?</li>
+</ol>
+<ol>
+<li>Cross-chapter (module 01, chapter 18 — the elders): early Lisp was dynamically scoped — a free variable in a function resolved against the caller's bindings at call time. Explain why dynamic scoping is this chapter's capture bug promoted to a language rule, and what lexical scoping (Scheme, 1975) corresponds to in substitution semantics.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Concept.</strong> The λ <code>IF</code> survives because normal-order application substitutes branch arguments <em>unreduced</em>: <code>IF TRUE K Ω</code> puts Ω into the dead else-position, and <code>TRUE</code> discards it without entering it (5 steps in the lab). Python is applicative/strict: every argument is evaluated to a value <em>before</em> the call fires, so <code>loop()</code> runs regardless — which is why <code>if</code>, <code>&amp;&amp;</code>, and <code>?:</code> must be syntax, not functions, in strict languages.</li>
+</ol>
+<ol>
+<li><strong>Concept.</strong> Free variables are the occurrences no enclosing λ binds (<code>FV(λx. t) = FV(t) − {x}</code>) — the term's references to outside binders. The invariant: substitution must not change <em>which binder each occurrence points to</em>. Capture re-points a free variable of the argument at a binder inside the body, silently changing the program's meaning — the chapter's free <code>y</code> ends up bound to the inner <code>λy</code> instead of the outside world.</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> (a) <code>λy.y</code> in one step: the root β fires first, Ω is substituted unreduced, and the body never mentions <code>x</code> — Ω is discarded without running. (b) Diverges: <code>x</code> <em>is</em> used, so Ω is substituted into the body and eventually forced as the result. Laziness defers work; it does not delete work the answer depends on.</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> <code>ADD 2 3</code> → five <code>f</code>s (f² composed after f³); <code>MUL 3 2</code> → six. <code>MUL</code> is shorter because multiplication is composition of the numerals themselves — <code>m (n f)</code> hands the function <code>n f</code> to <code>m</code>, <code>(f³)² = f⁶</code> — while addition must compose <em>iterated functions</em> at the value level, which costs the extra binder and application.</li>
+</ol>
+<ol>
+<li><strong>Derive.</strong> Honest (rename the inner binder — the argument <code>λz. x</code> has <code>x</code> free, and the body binds <code>x</code> over the landing zone): <code>(λy.λx'. y x') (λz. x) →β λx'. (λz. x) x' →β λx'. x</code> — a constant function returning the <em>free</em> <code>x</code>. Naive: <code>λx. (λz. x) x →β λx. x</code> — the identity. Capture turned "return the outer x" into "return my argument"; the naive answer is the more familiar function, which is why the bug is hard to spot.</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> Python evaluates the default expression <strong>once, at <code>def</code> time</strong> — the extreme strict position: β-reduction would re-create the argument at each application, but Python pre-evaluates it and closes over the resulting cell, so every call without an explicit <code>tag</code> shares one list; hence <code>[1, 2]</code>. The fix (<code>tag=None; if tag is None: tag = []</code>) restores per-application creation by hand.</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> Normal order defers each <code>(+)</code> redex, so the accumulator grows into one unevaluated term <code>((((0+1)+2)+…) + 10⁷</code> — a 10-million-deep chain of live, boxed thunks (sharing must keep them for the final demand), unreleasable by the GC. <code>foldl'</code> <em>forces</em> the accumulator at every step: one applicative-order reduction smuggled into the lazy language. The program always terminated; the memory for deferred redexes killed it.</li>
+</ol>
+<ol>
+<li><strong>Cross-chapter.</strong> Dynamic scoping makes every free variable re-bind to whoever calls the function — the caller's environment plays the substitution site, so a free <code>y</code> can be swallowed by a caller's <code>y</code> exactly as in naive substitution, at language scale: the same function computes different things per call context. Lexical scoping is capture-avoidance as a language guarantee — each free variable points at the binder textually enclosing it at definition, and environment frames (α-renaming) keep callers from swallowing it. Scheme (1975) restored the λ-calculus discipline to the Lisp family; Common Lisp kept both and made you choose per function.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 19 — PL theory &amp; type systems</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

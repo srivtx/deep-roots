@@ -26,7 +26,7 @@
 <header class="site-header">
   <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
   <div class="header-right">
-    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
     <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -37,7 +37,7 @@
 <article class="post">
 <div class="post-kicker">module 01 &middot; memory models &middot; Part III · the deep end</div>
 <h1 class="post-title">Chapter 20 — The hardware memory model: why cores disagree about memory</h1>
-<div class="post-meta">chapter 20 &middot; ~23 min read &middot; deep-roots learning program</div>
+<div class="post-meta">chapter 20 &middot; ~24 min read &middot; deep-roots learning program</div>
 <blockquote><strong>The 30-second version.</strong> Chapter 02 promised that caches keep their copies of memory <em>coherent</em>. That promise is true — and far weaker than it sounds. Between each core and its cache sits a <strong>store buffer</strong> (plus other reordering machinery) whose job is to keep the core fed while writes drain. The consequence: two cores can observe the same two writes in opposite orders, and the classic two-thread handshake can end with both sides reading 0. That is not a malfunction — it is the documented contract between hardware and software, the <em>memory model</em> of the machine. x86-64 makes one narrow promise (TSO: stores become visible in order, but loads may pass them); ARM and POWER make almost none, trading ordering for power. Software rebuilds the order it needs with fences and acquire/release atomics, and the <strong>DRF-SC theorem</strong> is what makes every program from Chapters 08–18 portable across both worlds. This chapter is the hardware truth underneath every "memory model" those languages promised you.</blockquote>
 <h2 id="1-the-store-buffer-where-sequential-consistency-dies">1. The store buffer: where sequential consistency dies</h2>
 <p>Chapter 02 ended with MESI: a coherence protocol that guarantees no core ever sees a stale or torn view of <em>one address</em>. So how can two threads disagree about the order of two writes? Derive it, one performance decision at a time.</p>
@@ -305,6 +305,12 @@ int main(void) {
 <li><strong>Chapter 22 (mobile)</strong> — why every phone is a weak-model machine, and why cross-platform apps feel this chapter first.</li>
 <li><strong>Queued security module</strong> — TOCTOU races and Rowhammer are "cores disagree about memory" turned into an attack instead of a bug.</li>
 </ul>
+<p><em>Forward links — where the rest of the program picks this chapter up:</em></p>
+<ul>
+<li><strong>Module 09 ch01 (language orderings)</strong> — the happens-before edifice is built on exactly this chapter's store buffers and fences.</li>
+<li><strong>Module 17 ch02 (pipelines)</strong> — the store buffer lives in the reorder machinery this chapter hand-waved — the RTL shows where.</li>
+<li><strong>Module 12 ch01 (GPU memory)</strong> — the GPU's weaker model is this chapter's hierarchy of relaxations, one more rung down.</li>
+</ul>
 <h2 id="quiz">Quiz</h2>
 <ol>
 <li><em>(concept)</em> A machine has perfect cache coherence — every core agrees on the order of writes to any single address. Explain, in terms of <em>where the reordering hardware lives</em>, why such a machine can still allow the SB outcome (both threads read 0). What exactly did MESI never promise?</li>
@@ -379,6 +385,7 @@ int main(void) {
       <a href="../index.html#module-01">Module 01</a>
       <a href="../quiz.html">Quiz</a>
       <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
       <a href="https://github.com/srivtx/deep-roots">GitHub</a>
       <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
     </div>

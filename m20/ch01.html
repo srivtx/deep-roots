@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The memory map is wired into silicon — deep-roots</title>
+<meta name="description" content="Chapter 01 of module 20: The memory map is wired into silicon">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The memory map is wired into silicon — deep-roots">
+<meta property="og:description" content="Chapter 01 of module 20: The memory map is wired into silicon">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The memory map is wired into silicon — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of module 20: The memory map is wired into silicon">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 20 &middot; the world with no MMU</div>
+<h1 class="post-title">The memory map is wired into silicon</h1>
+<div class="post-meta">chapter 01 &middot; ~18 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A $0.50-$5 microcontroller — ~30 billion units a year, ~20:1 over the PC/phone world — has no MMU, and that absence rewires everything you learned. The 4 GB address space is not built by page tables at boot; it is wired into the chip's address decoder: flash at 0x08000000, SRAM at 0x20000000, peripherals at 0x40000000, the interrupt controller at 0xE000E100 — physical, public, identical on every unit forever. ASLR is not missing but <em>impossible</em>: an address in the firmware image is the thing. Protection collapses to the MPU's 8-16 regions, "page fault" becomes "bus fault," and 2-128 KiB RAM budgets make static allocation the discipline, <code>printf</code> a budget line, <code>volatile</code> load-bearing syntax.</blockquote>
+<h2 id="thirty-billion-computers-a-year-and-not-one-page-table">Thirty billion computers a year, and not one page table</h2>
+<p>For $0.50-$5 you buy a Cortex-M0+ chip at 48-133 MHz (a Pi Pico's RP2040: two M0+ cores at 133 MHz, ~$0.70) with 2-128 KiB SRAM, 16-512 KiB flash, no MMU, no cache or a small one, no OS. The numbers invert the world you learned: <strong>~30 billion microcontrollers ship per year</strong> (recent industry counts: ~25-30 B) versus <strong>~300 million PCs</strong> (Gartner 2023-2024: ~240-260 M). Add ~1.2 B smartphones and embedded still outnumbers general-purpose computing ~20:1. Your car carries ~100, a washing machine several, every power meter, keyboard, SSD controller, and earbud one — modules 01-17's "computer" is the <em>minority architecture</em>.</p>
+<p>Now cross off module 01's machinery:</p>
+<ul>
+<li><strong>No page tables (module 01 ch03).</strong> The CPU puts physical addresses straight on the bus — one space, visible to every instruction, peripheral, and DMA engine.</li>
+<li><strong>No ASLR, no per-process spaces.</strong> Nothing remaps anything, ever.</li>
+<li><strong>No swap, no demand paging.</strong> RAM is all there is; flash is not a paging backend.</li>
+<li><strong>No OS between tasks (module 01 ch07).</strong> Your <code>main</code> loop <em>is</em> the OS — until chapter 04's 10 KB scheduler.</li>
+<li><strong>The heap is optional (module 01 ch05).</strong> Most disciplined firmware never calls <code>malloc</code>; the linker script is the allocator.</li>
+</ul>
+<p>Module 01's questions with the safety net removed; module 02's attacks with the defenses removed — both get sharper, not poorer.</p>
+<h2 id="the-map-a-data-structure-wired-into-silicon">The map: a data structure wired into silicon</h2>
+<p>On a PC the memory map is a <em>negotiation</em>: firmware inventories RAM, the OS builds page tables, the MMU translates. On a µC the map is a datasheet page — the interconnect's address decoder routes 0x080xxxxx to flash, 0x200xxxxx to SRAM, 0x400xxxxx to peripherals, 0xE000xxxx to the core. The address bus <em>is</em> the routing table, frozen at the fab. The STM32F407 (Cortex-M4, 1 MiB flash, 128 KiB SRAM), as RM0090 section 2.3 prints it:</p>
+<pre><code>  STM32F407 memory map — 4 GB, physical, public, per-datasheet
+  (every address readable by every load/store in the system)
+
+0xE0000000 ┌─────────────────────────────────────────────────────────┐
+           │ ARM system region — belongs to the CORE, not ST:        │
+           │   SysTick  0xE000E010   the tick timer                  │
+           │   NVIC     0xE000E100   interrupt controller (ch03)     │
+           │   SCB      0xE000ED00   CPUID, fault status, VTOR       │
+           │   MPU      0xE000ED90   this chapter's registers        │
+0xDFFFFFFF ├─────────────────────────────────────────────────────────┤
+           │ reserved holes: reading here faults (per-SOC behavior)  │
+0x40000000 ├─────────────────────────────────────────────────────────┤
+           │ peripherals, in bus order:                             │
+           │   APB1 0x40000000  USART2/3, I2C, timers, DAC           │
+           │   APB2 0x40010000  USART1, SPI1, ADC, EXTI              │
+           │   AHB1 0x40020000  GPIOA at 0x40020000, GPIOB +0x400 …  │
+0x3FFFFFFF ├─────────────────────────────────────────────────────────┤
+           │ reserved hole                                          │
+0x2001C000 │ SRAM2/3: 16 KiB — .data/.bss/stacks continue here       │
+0x20000000 │ SRAM1: 112 KiB — the .data/.bss/stack/heap home         │
+0x1FFFFFFF ├─────────────────────────────────────────────────────────┤
+           │ reserved hole                                          │
+0x1FFF0000 │ system memory: ST's boot ROM + OTP (UID, factory cal)   │
+0x10000000 │ CCM RAM: 64 KiB, core-only — DMA CANNOT reach it        │
+0x0FFFFFFF ├─────────────────────────────────────────────────────────┤
+           │ reserved hole                                          │
+0x08000000 │ FLASH: up to 1 MiB — .isr_vector/.text/.rodata,         │
+           │                      .data's initial values             │
+0x00000000 │ alias: whatever the BOOT pins select maps here          │
+           │   (BOOT0=0 flash | BOOT0=1 boot ROM | SRAM for debug)   │
+           └─────────────────────────────────────────────────────────┘</code></pre>
+<p>Three properties matter more than the contents.</p>
+<p><strong>The fixedness is the feature.</strong> A peripheral's address is a <em>compile-time constant</em>: <code>GPIOA</code> is 0x40020000 in every F407 program ever written — vendor headers are <code>#define</code> files over this bar. The linker script (chapter 02) places your sections at exact addresses inside it, and the <code>.bin</code> must run unmodified on every unit, forever. Chapter 05's updates work by <em>swapping banks</em>, not relocating.</p>
+<p><strong>The map is per-family, not per-ARM.</strong> Two Cortex-M4s — ST's F407 and Nordic's nRF52840 — agree on one line: 0xE0000000. The core's system region is ARM-standard; the rest is the vendor's wiring. "Which chip, which revision?" opens every embedded bug report.</p>
+<p><strong>Even the stack pointer comes from this map.</strong> Hardware loads the initial MSP from 0x00000000 and the reset vector from 0x00000004 — both plain words in flash. The <em>stack pointer is data in a file</em>; chapter 02 works that fact until it feels natural.</p>
+<h2 id="no-aslr-an-address-is-the-thing">No ASLR: an address is the thing</h2>
+<p>Module 01 ch03 built virtual memory as one indirection — VA → page table → PA — with the OS rewriting the mapping at <code>exec()</code> and <code>mmap()</code>: that rewriting <em>is</em> ASLR. Remove the indirection and randomization has nothing to operate on: every address is fixed by the linker at build time, identical on every device.</p>
+<p>Recompute module 02 ch02's attack economics: the x86-64 target cost the attacker three defenses — a canary to reproduce (leak first), PIE/ASLR to defeat (~28 bits to leak or brute-force), NX to route around (ROP). On a bare Cortex-M4:</p>
+<ul>
+<li><strong>The target address is free.</strong> The attacker reads it from the same image you flash — via the debug port unless chapter 05's locks are set. No leak, no guess: entropy is <em>zero</em>; the return-oriented attacker needs no info leak.</li>
+<li><strong>The buffer-overflow primitive is unchanged.</strong> Module 01 ch04's frame — locals below, return address above, no runtime bounds — is identical; <code>read(0, buf, 256)</code> overflows a 64-byte local exactly as in module 02's lab.</li>
+<li><strong>DEP is <em>weaker</em>, not merely absent.</strong> The ARMv7-M default attribute map marks 0x40000000 and above execute-never — but SRAM is <strong>executable by default</strong>: injected bytes on the stack just run. 1996's executable stack, in silicon, out of the box.</li>
+<li>Stack canaries? <code>gcc -fstack-protector</code> works on ARM, but vendor SDK builds frequently omit it — and without ASLR, a leaked canary is replayable forever.</li>
+</ul>
+<p>On a µC the defense budget is one bit — the MPU's XN for the stack — instead of DEP+ASLR+canary. The next section spends it well.</p>
+<h2 id="the-mpu-the-page-table-s-poor-cousin">The MPU: the page table's poor cousin</h2>
+<p>The MPU is what survives when you delete the MMU. A page table is billions of 4 KiB translations, per-process spaces, demand paging, COW; the MPU is <strong>8 or 16 regions</strong> (read <code>MPU_TYPE</code> at 0xE000ED90 for your core's count — Cortex-M4s commonly have 8), each power-of-two-sized, minimum 32 bytes, base aligned to its size, five meaningful permission bits. That is the whole protection state.</p>
+<p>The programming model is three registers:</p>
+<pre><code>MPU_RNR   0xE000ED98   select the region RBAR/RASR will program
+MPU_RBAR  0xE000ED9C   region base: ADDR[31:5] | VALID | REGION[3:0]
+MPU_RASR  0xE000EDA0   XN[28] | AP[27:24] | TEX/C/B[21:16] | SRD[15:8] |
+                        SIZE[7:1] | EN[0]   (SIZE = log2(bytes)-1)</code></pre>
+<p>One worked configuration — a 256-byte task stack, read-write, execute-never:</p>
+<pre><code class="language-c">/* ARMv7-M: the MPU is programmed by ordinary memory-mapped stores. */
+#define MPU_CTRL  (*(volatile unsigned *)0xE000ED94u)
+#define MPU_RNR   (*(volatile unsigned *)0xE000ED98u)
+#define MPU_RBAR  (*(volatile unsigned *)0xE000ED9Cu)
+#define MPU_RASR  (*(volatile unsigned *)0xE000EDA0u)
+
+void mpu_task_stack(unsigned n, unsigned base /* 0x20000800, 256B-aligned */)
+{
+    MPU_RNR  = n;
+    MPU_RBAR = base;
+    /* XN=1 | AP=3 (RW from any privilege) | SIZE=7 (2^8 = 256 B) | ENABLE */
+    MPU_RASR = (1u &lt;&lt; 28) | (3u &lt;&lt; 24) | (7u &lt;&lt; 1) | 1u;   /* 0x1300000F */
+    MPU_CTRL = 1u | 4u;  /* enable + PRIVDEFENA: privileged keeps the
+                            default map; unprivileged sees ONLY regions
+                            — the RTOS "task wall" */
+    __asm volatile ("dsb; isb");   /* effective from here on */
+}</code></pre>
+<p>That one word is the task's entire "page-table entry." Rewriting <code>MPU_RNR/RBAR/RASR</code> at each context switch — a few stores — is the RTOS's page-table switch (chapter 04). Contrast honestly: 4 KiB pages per process, remapped at fault time, versus 8-16 regions of one space, rewritten at context switch. Poor cousin, but a cousin.</p>
+<p><strong>What the MPU gives you:</strong></p>
+<ul>
+<li><strong>Task walls.</strong> Unprivileged code plus regions for its stack and data: a wild pointer from one task faults instead of corrupting a neighbor — the "process" abstraction rebuilt from 16 slots.</li>
+<li><strong>Write-protection.</strong> Mark calibration tables and <code>.rodata</code> RO (AP=5), and — the brick-saver — the flash controller's registers privileged-only, so unprivileged code cannot erase the firmware it runs (chapter 05 builds on this).</li>
+<li><strong>Guard regions.</strong> The 32-byte no-go zone under each task stack: a region with AP=0 (<code>MPU_RASR = (4u &lt;&lt; 1) | 1u</code>) makes the <em>first</em> stray write fault, faulting PC included in the exception frame. This is FreeRTOS's third stack-overflow check: <code>configCHECK_FOR_STACK_OVERFLOW</code> method 1 verifies the 0xA5A5A5A5 fill at the stack's low end at each context switch; method 2 compares the saved stack pointer against the bounds; the MPU guard is the precise method 3, catching between switches what sampling misses.</li>
+</ul>
+<p><strong>What it cannot give you:</strong> demand paging, copy-on-write, swap. There is no fault-then-fill mechanism and nothing to fill <em>from</em> — flash is the program, not a backing store. The error channel is the exception table (chapter 02): an MPU violation raises a <strong>MemManage fault</strong> (status in SCB-&gt;CFSR at 0xE000ED28), a wild address in a reserved hole a <strong>BusFault</strong>, unhandled either escalates to <strong>HardFault</strong> — and the only sane policy is log-and-reset (the watchdog reboots, chapter 03). Where an MMU turns faults into progress, the MPU turns them into diagnoses.</p>
+<h2 id="the-ram-budget-revolution">The RAM budget revolution</h2>
+<p>Re-derive every size at kilobyte scale. A Linux thread gets 8 MB of virtual stack; a FreeRTOS <strong>task stack is 256-1024 bytes</strong> — the deepest call chain plus worst-case interrupt nesting (an 8-word, 32-byte hardware frame per level) must <em>fit</em> there, measured by pattern-fill or <code>-fstack-usage</code>. Six tasks at 512 B is 3 KiB, a third of a small part.</p>
+<p>The discipline is <strong>static allocation</strong>: every buffer is a global or <code>static</code> array sized at link time, and <code>.bss</code> — zero-initialized globals, no file bytes — <em>is</em> your allocation mechanism. "Allocation failure" becomes a link error (chapter 02's <code>ASSERT</code>), caught by CI, not at 3 a.m. The heap, if it exists, is a static pool behind newlib's <code>_sbrk</code> shim; module 01 ch05's fragmentation math shrunk 1000x explains the ban — a 2 KiB hole in an 8 KiB pool wastes 25% of the machine. Dynamic loading disappears with it: module 01 ch03's shared libraries and PLT/GOT have no per-process space to load <em>into</em> — firmware is position-<em>fixed</em>, absolute addresses burned in at link time.</p>
+<p>Language-level consequences, with the numbers that matter:</p>
+<ul>
+<li><strong>C++ exceptions off</strong>: <code>-fno-exceptions -fno-rtti</code> saves <strong>~20-50 KiB</strong> on a typical build (<code>.ARM.exidx</code> unwind tables alone run 2-4% of flash, plus personality routines and type info) — up to 10% of a 512 KiB part.</li>
+<li><strong><code>printf</code> is a budget line.</strong> Full newlib <code>printf</code> with <code>%f</code> pulls in <code>_dtoa</code> and malloc: <strong>~4-12 KiB</strong> — the folklore "hello world costs 8 KB." The honest accounting is <strong>newlib-nano</strong> (<code>--specs=nano.specs</code>): integer-only ~1-2 KiB, floats opt-in via <code>-u _printf_float</code>. Teams write 30-line integer formatters because of this table.</li>
+</ul>
+<p>Why so little RAM? Physics. SRAM's 6T cell (module 17 ch04) — six transistors, no refresh, 0 wait states — costs ~50-100x DRAM's area per bit: instant, refresh-free memory in exchange for kilobytes. Flash is dense but <em>slow</em>: the F407 needs <strong>wait states scaled to clock</strong> — 0 at ≤30 MHz, 5 at 168 MHz — so a flash fetch can cost 6 cycles where SRAM costs 1 (ST's ART cache hides much of it for linear code; branchy ISRs feel it). Hence the <strong>ramfunc trick</strong>: copy hot code to SRAM at boot —</p>
+<pre><code class="language-c">__attribute__((section(".ramfunc")))   /* not a builtin: YOUR section,  */
+void flash_erase_burn(void) { ... }    /* placed by YOUR linker script   */
+                                       /* (.ramfunc &gt;RAM AT&gt; FLASH),     */
+                                       /* copied like .data at startup   */</code></pre>
+<p>— the <em>same copy loop</em> that initializes <code>.data</code> moves the function's bytes from its flash load address to its SRAM run address before <code>main</code>; from then on it runs at zero wait states. Chapter 02 teaches this mechanism properly.</p>
+<p>Power closes the budget. Stop modes keep SRAM alive at µA-scale current (1-10 µA on STM32L parts, tens on an F4) while killing core, PLLs, and peripherals; standby goes lower by <em>killing SRAM</em>. State that must survive — a state-machine enum, a counter, a CRC — lives in the VBAT domain: the RTC and <strong>20-80 bytes of backup registers</strong> (80 B on an F407) on a coin cell, the machine's whole persistence layer. Deep sleep here is not "suspend-to-RAM with a kernel": the RAM is the only thing alive — and if it isn't, the backup registers were.</p>
+<h2 id="volatile-is-load-bearing">volatile is load-bearing</h2>
+<p>Every peripheral interaction is a load or store to this map. The idiom:</p>
+<pre><code class="language-c">volatile uint32_t *const UART_DR = (uint32_t *)0x4000C000u;</code></pre>
+<p>Read it right to left: <code>uint32_t</code> (bus width), <code>volatile</code> (the value changes without your program writing — it's hardware), <code>const</code> (the address never changes — it's silicon). Drop the middle word and the compiler is <em>correct</em> to break you: the as-if rule permits caching a load when no observable behavior changes, and the C abstract machine sees an object only your code touches, so</p>
+<pre><code class="language-c">uint32_t *const SR = (uint32_t *)0x4000C000u;   /* missing volatile */
+while (!(*SR &amp; RXNE)) ;                          /* hangs at -O2 */</code></pre>
+<p>compiles to one load, hoisted out of the loop, then an infinite branch — the flag flips in silicon, the loop never re-reads it. This is the <em>same UB family as module 09 ch01's data races</em>: an object modified by an agent outside the C abstract machine (another thread without synchronization, a signal handler, DMA, the peripheral itself). The compiler's "nothing else writes this" proof is false for a reason the machine model cannot see; <code>volatile</code> declares the channel — the MMIO sibling of atomics. It is <em>not</em> a memory barrier (ordering needs <code>dmb</code>/compiler barriers; DMA coherency is chapter 03's problem).</p>
+<p>The same family produces the classic <strong>W1C lost-interrupt bug</strong>. Status registers are often write-1-to-clear — the ack is writing a 1 to the handled bit. So:</p>
+<pre><code class="language-c">#define IRQ_STATUS  (*(volatile uint32_t *)0x40011000u)  /* write-1-clear */
+
+void uart_irq_handler(void) {
+    if (IRQ_STATUS &amp; FLAG_UART_RX) {
+        IRQ_STATUS |= FLAG_UART_RX;   /* BUG: read-modify-write ack */
+        handle_rx();
+    }
+}</code></pre>
+<p>Expand <code>|=</code> by hand: <strong>load</strong> — under load it returns <code>FLAG_UART_RX | FLAG_TIMER</code> (both pending); <strong>or</strong>; <strong>store</strong> — and every 1 written <em>clears</em> its flag. The store wrote both bits, so both cleared; only one was handled: the timer interrupt is gone — precisely when the two coincide. One statement, two flags consumed; the side effect came from the <em>read</em> half. Correct ack: <code>IRQ_STATUS = FLAG_UART_RX;</code>. The derivation exposes a sibling trap: on read-to-clear registers, evaluating <code>IRQ_STATUS &amp; FLAG_A</code> twice (in the <code>if</code>, then the body) eats a flag per read — so a status register is read <strong>once into a local</strong>, then tested. Debuggers violate this for you: the memory window's refresh <em>is</em> a read, and flags evaporate while you watch — the "bug disappears when I single-step" signature.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>Holes fault, they don't read zero.</strong> Touch a reserved region and you get a BusFault — often <em>imprecise</em>, reported some instructions after the offending access, so fault forensics can point one call too late. Per-SOC behavior varies: some decode gaps return garbage or the last bus value instead.</li>
+<li><strong>SRAM is executable out of the box.</strong> The ARMv7-M default attribute map XN's only 0x40000000 and above; SRAM and flash stay executable until the MPU says otherwise. Vendors ship MPU examples; almost nobody enables them — module 02's 1996 economics persist by default, in silicon.</li>
+<li><strong>Errata sheets are required reading.</strong> Silicon has bugs, documented per <em>revision</em>: ST's F4 errata is the famous example ("don't pair DMA stream X with peripheral Y," I2C flags that need a settle delay). Read DBGMCU_IDCODE (0xE0042000) for the revision; "add three NOPs after that enable" folklore is usually an errata, compressed.</li>
+<li><strong>The smart-peripheral era.</strong> On modern M4/M7 parts the CPU is a minority busybody: UARTs carry 16-32 byte FIFOs with dedicated DMA engines, timers trigger ADCs whose samples DMA writes to memory, and peripheral-to-peripheral DMA paths move data without the core. "CPU load" is often 5% of the data movement.</li>
+<li><strong>Cortex-M vs Cortex-A is a memory-model commitment.</strong> M profile: no MMU, hardware auto-saves 8 registers on interrupt entry (12-cycle latency, tail-chaining) — a µArchitecture <em>for</em> ISRs. A profile: MMU, caches, virtual memory — modules 05-07's world; R sits between. The "profile" taxonomy is ARM's market segmentation of this exact question.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>Lab A (paper): read a real map.</strong> Download ST's RM0090 (STM32F4 reference manual), section 2.3, and map a program onto the bar: <code>.isr_vector</code>/<code>.text</code> → 0x08000000, <code>.data</code>/<code>.bss</code>/stacks → 0x20000000, USART2 → 0x40004400, NVIC → 0xE000E100, MPU → 0xE000ED90. Then <code>xxd firmware.bin | head -1</code> on any STM32 image: the first 8 bytes are the initial SP and reset vector, little-endian — an F407 with 128 KiB RAM shows <code>0020 0200</code> (0x20020000) then a 0x0800xxxx entry. You are reading the silicon's boot contract out of a file.</p>
+<p><strong>Lab B (runnable anywhere with gcc): the sections chapter 02 will place.</strong></p>
+<pre><code class="language-console">$ cat &gt; tiny.c &lt;&lt;'EOF'
+int counter;                 /* .bss  */
+int limit = 100;             /* .data */
+const char banner[] = "hi";  /* .rodata */
+void tick(void) { counter++; }  /* .text */
+int main(void) { tick(); return limit; }
+EOF
+$ gcc -O0 -o tiny tiny.c
+$ readelf -SW tiny | grep -E ' \.text| \.rodata| \.data| \.bss'
+  [14] .text       PROGBITS  0000000000001050 001050 00012b 00  AX ...
+  [16] .rodata     PROGBITS  0000000000002000 002000 00000a 00   A ...
+  [25] .data       PROGBITS  0000000000004008 003008 000014 00  WA ...
+  [26] .bss        NOBITS    000000000000401c 00301c 00000c 00  WA ...</code></pre>
+<p>(Verified on gcc 14, x86-64, Debian 13.) <code>.text</code> is <code>AX</code> (executable), <code>.rodata</code> <code>A</code> (read-only), <code>.data</code>/<code>.bss</code> <code>WA</code> (writable). The crucial line is <code>NOBITS</code>: <code>.bss</code> occupies <strong>zero file bytes</strong> — someone must zero it at runtime, and chapter 02 shows that someone is <em>your</em> startup code. On the laptop the addresses are PIE-randomized at load; on a µC the same sections land at fixed flash/SRAM addresses, placed by the linker script.</p>
+<p><strong>Lab C (if the toolchain exists): QEMU a Cortex-M4.</strong> With <code>qemu-system-arm</code> and <code>arm-none-eabi-gcc</code>:</p>
+<pre><code class="language-console">$ arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb -specs=rdimon.specs \
+    -nostartfiles -Ttext=0 -Wl,-e=main hello.c -o hello.elf
+$ qemu-system-arm -M mps2-an385 -cpu cortex-m4 -nographic -kernel hello.elf \
+    -semihosting-config enable=on,target=native
+Hello from the no-MMU world</code></pre>
+<p>where <code>hello.c</code> is a <code>printf</code> plus <code>for(;;)</code>. The mps2-an385's map is this chapter's bar; semihosting is QEMU's stand-in for a UART. If the tools are absent, Labs A-B carry the chapter — the map is identical either way.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Day one on embedded code</strong>: open the linker script and <code>.map</code> file before the source — RAM budget, stack sizes, whether anyone enabled the MPU, readable in five minutes before a line of logic.</li>
+<li><strong>Crash triage</strong>: a hard-faulting µC is readable if you know the bar — SCB-&gt;CFSR at 0xE000ED28 says MemManage vs BusFault, the stacked frame gives the faulting PC, the address names the hole or region.</li>
+<li><strong>Security review</strong>: firmware parsing remote input (UART, BLE, CAN) with no MPU regions is module 02's 1996 target at a fixed address. Recommend: XN on SRAM, unprivileged task walls, write-protected config — three regions, ~20 lines.</li>
+<li><strong>Interview answers</strong>: "why is there no ASLR on a µC?" and "what does the MPU give up versus an MMU?" separate memorizers from people who can re-derive what virtual memory was <em>for</em>.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 02 (same module)</strong>: the linker script is this map as a source file; the <code>.ramfunc</code>/<code>.data</code> copy loop is its mechanism; the vector table's first two words are Lab A's boot contract.</li>
+<li><strong>Chapter 03 (same module)</strong>: the NVIC at 0xE000E100 becomes an entry-point table; the volatile/W1C traps return with hardware as the writer.</li>
+<li><strong>Chapter 04 (same module)</strong>: the RTOS — task stacks, MPU region swapping as "page-table switching," <code>configCHECK_FOR_STACK_OVERFLOW</code> in production.</li>
+<li><strong>Chapter 05 (same module)</strong>: fixed addresses make firmware extraction trivial; secure boot, flash write-protection, and debug-port locking are this world's defenses.</li>
+<li><strong>Module 01 ch03 (virtual memory — removed)</strong>: reread the page-table walk and check off what this world deleted; the MPU is the surviving fragment.</li>
+<li><strong>Module 01 ch05 (heap — absent)</strong>: the fragmentation math, shrunk 1000x, is why static allocation is discipline, not preference.</li>
+<li><strong>Module 17 ch03 (peripherals as RTL)</strong>: the 0x4000xxxx words are RTL modules on a bus; module 17 ch04's 6T cell is why SRAM is small and fast.</li>
+<li><strong>Module 02 ch02 (stack exploitation)</strong>: the attack economics without ASLR — zero entropy, executable SRAM, one XN bit as DEP.</li>
+<li><strong>Module 09 ch01 (happens-before)</strong>: <code>volatile</code> as the MMIO member of the data-race family — same UB, same fix shape: declare the writer.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> "This chip has no ASLR" is a category error, not a missing feature. What exactly is absent that ASLR would need — and what would you have to add to randomize anything?</li>
+<li><strong>Concept.</strong> A cached MMIO read in a polling loop is UB in the same <em>family</em> as module 09's data races. Name the family, explain why the optimization is legal inside the C abstract machine, and what <code>volatile</code> declares.</li>
+<li><strong>Derive.</strong> Program an MPU region covering a 1 KiB task stack at 0x20001000: read-write, execute-never, enabled, no subregion disables. Compute the exact <code>MPU_RASR</code> word (hex), state the base's alignment constraint, and say which register writes come first.</li>
+<li><strong>Derive (budget).</strong> An 8 KiB SRAM part must hold: <code>.data</code> 1 KiB, <code>.bss</code> 4 KiB, six 512 B task stacks, a 1.5 KiB main+ISR stack, and a static message pool. Does a 2 KiB pool fit? If not, give two levers and their costs.</li>
+<li><strong>Predict (layout).</strong> From Lab B's program: which of <code>counter</code>, <code>limit</code>, <code>banner</code>, <code>tick</code> occupy flash bytes in the image, and how many bytes does each cost in the file? What changes for these four on a µC build?</li>
+<li><strong>Diagnose.</strong> A product's timer interrupts vanish — but only under heavy UART traffic. The ISR contains <code>IRQ_STATUS |= FLAG_UART_RX;</code>. Derive the loss mechanism and write the correct line.</li>
+<li><strong>Diagnose.</strong> This poll hangs forever at <code>-O2</code>, works at <code>-O0</code>: <code>uint32_t *const SR = (uint32_t *)0x4000C000; while (!(*SR &amp; RXNE));</code> What did the compiler do, why is it allowed, and what is the one-word fix plus its limits?</li>
+<li><strong>Cross-chapter.</strong> Replay module 02 ch02's 64-byte-buffer/256-byte- read overflow on a bare Cortex-M4, default memory map, no MPU configuration. Which of module 02's three defenses (canary, ASLR, NX) still stands, and what is the cheapest silicon countermeasure this chapter teaches?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The VA→PA mapping is absent.</strong> ASLR randomizes where the loader places images in a <em>virtual</em> space, then points page tables at the result; with no MMU there is one physical space wired by the decoder, addresses fixed by the linker and burned into flash. Randomizing would need a relocating loader, but firmware is position-<em>fixed</em> — absolute addresses compiled in, no relocation metadata. Entropy is zero; spend the effort on chapter 05's flash locks.</li>
+</ol>
+<ol>
+<li><strong>The family is "object modified outside the C abstract machine."</strong> The as-if rule lets the compiler cache a load when no <em>observable</em> behavior can change; the abstract machine sees an object only this code touches, so hoisting is legal — the proof is false only because a peripheral (or DMA, or another thread) also writes it, which the machine model cannot express. A data race is the same false proof with a thread as the hidden writer. <code>volatile</code> declares the modification channel (as atomics declare the concurrent one); it does <em>not</em> order other accesses — that needs barriers (chapter 03).</li>
+</ol>
+<ol>
+<li>1 KiB = 2^10, so SIZE = 10-1 = 9; XN (bit 28) = 0x10000000; AP=3 (RW any privilege) = 0x03000000; SRD=0; ENABLE=1. Sum: <strong>0x13000013</strong>. The base must be size-aligned — 0x20001000 is 1 KiB-aligned, valid. Before it: <code>MPU_RNR</code> (region number) and <code>MPU_RBAR = 0x20001000</code>; after it: <code>MPU_CTRL</code>, then <code>dsb; isb</code> so it applies before the next fetch.</li>
+</ol>
+<ol>
+<li>Sum: 1024 + 4096 + 3072 + 1536 = 9728 B, so 8192 - 9728 = <strong>-1536 B: the 2 KiB pool does not fit; you are 1.5 KiB over.</strong> Levers: cut task stacks to 384 B (saves 768 B, re-verify worst-case nesting) and shrink the pool to 512 B (saves 1536 B, the protocol must chunk messages). The <em>process</em> answer: chapter 02's linker <code>ASSERT</code> should have refused the link — failure is a build event here.</li>
+</ol>
+<ol>
+<li>Flash-file bytes: <code>tick</code> → <code>.text</code> (a handful); <code>limit</code> → <code>.data</code> (4 file bytes — the initial value travels in flash, 4 RAM bytes at runtime); <code>banner</code> → <code>.rodata</code> (3 bytes: "hi" + NUL, flash only); <code>counter</code> → <code>.bss</code>, <strong>zero file bytes</strong> (NOBITS) — startup zeroes its 4 RAM bytes. On a µC the same sections sit at fixed addresses, <code>.data</code>'s load address in flash and run address in RAM — the LMA/VMA split chapter 02 teaches.</li>
+</ol>
+<ol>
+<li><strong>The read half consumed the second flag.</strong> <code>|=</code> is load → or → store: the load returns <code>FLAG_UART_RX | FLAG_TIMER</code> (both pending — "under load"); the OR keeps both set; the store writes 1s, and W1C clears <em>every</em> written 1 — both flags — while only the UART bit is handled. The timer's pending bit dies unhandled: a lost interrupt, correlated with load. Correct ack: <code>IRQ_STATUS = FLAG_UART_RX;</code> — never a read-modify-write. (On read-to-clear registers even the <code>if</code>'s read eats flags: read once into a local, then test bits.)</li>
+</ol>
+<ol>
+<li><strong>The load was hoisted.</strong> At <code>-O2</code> the compiler emits one <code>ldr</code>, tests it, and loops on the cached register — legal by the as-if rule, since the abstract machine has no other writer; the flag flips in hardware after the single read, so the loop spins on a stale zero. The fix is <code>volatile</code> on the pointee (<code>volatile uint32_t *const SR</code>). Limits: <code>volatile</code> forces re-reads but grants no atomicity and no ordering of <em>other</em> accesses — DMA-visible buffers still need barriers (chapter 03).</li>
+</ol>
+<ol>
+<li><strong>Only the canary could stand — and typically isn't there.</strong> No ASLR: the return target is fixed in the image, zero entropy, no leak needed — module 02's costliest step vanishes. No NX: the default map leaves SRAM executable, so injected stack bytes run directly — no ROP detour even needed. Canaries exist on ARM (<code>-fstack-protector</code>) but vendor builds usually omit them, and without ASLR a leaked canary is replayable forever. Cheapest countermeasure: one MPU region — the stack as RW+XN (<code>0x1300000F</code> for 256 B) — faults the payload at first fetch; add unprivileged task walls and most of module 02's defense budget returns for a dozen lines.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 20 — Embedded &amp; firmware</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

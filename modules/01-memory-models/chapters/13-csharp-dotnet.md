@@ -435,6 +435,11 @@ lldb-style post-mortem analysis — honest note: they exist, they are heavyweigh
   allocation-rate math; queued security/decompilation modules lean on the object-layout
   facts (see ROADMAP.md).
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 19 ch02 (types as proofs)** — nullable reference types are the retrofit of honesty onto 20 years of code — C#'s own type system, theorized.
+- **Module 18 ch05 (implementation failures)** — managed crypto arrays and the GC pause leak: why key material hates moving collectors.
+
 ## Quiz
 
 1. "Value types live on the stack." Name three distinct situations in which a struct

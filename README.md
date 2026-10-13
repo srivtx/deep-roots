@@ -7,20 +7,24 @@
 computer science and rebuilds it from first principles — the physics, the hardware, the
 data structures, the design decisions and their consequences — so that what other people
 memorize, we *derive*. The first module is the root of them all: **the memory models of
-programming languages**. Sixteen more modules build on it — security, bugs, decompilation,
-Android, iOS, desktop kernels, COBOL, concurrency, compilers, databases, GPUs, networking,
-file systems, virtualization, browsers, hardware — because every one of them is a
-consequence of how programs store and reclaim bytes, all the way down to the transistors.
+programming languages**. Twenty-one more modules build on it — security, bugs,
+decompilation, Android, iOS, desktop kernels, COBOL, concurrency, compilers, databases,
+GPUs, networking, file systems, virtualization, browsers, hardware, cryptography,
+type systems, embedded, verification, ML infrastructure — because every one of them is a
+consequence of how programs store and reclaim bytes, all the way down to the transistors
+and all the way up to the datacenter.
 
 **Site (dark mode + light mode): <https://srivtx.github.io/deep-roots/>** ·
 [Interactive quiz](https://srivtx.github.io/deep-roots/quiz.html) ·
+[The connections map](https://srivtx.github.io/deep-roots/connections.html) ·
 [The roadmap](ROADMAP.md)
 
 ---
 
-## The program — 17 modules, all live
+## The program — 22 modules, all live
 
-**107 chapters · ~375,000 words · 84 chapter quizzes (8 questions each) · 17 final exams.**
+**132 chapters · ~476,000 words · 109 chapter quizzes (8 questions each) · 22 final exams ·
+1,100+ cross-module references.**
 
 | Module | Field | Chapters |
 |--------|-------|----------|
@@ -41,6 +45,17 @@ consequence of how programs store and reclaim bytes, all the way down to the tra
 | 15 | [Virtualization, containers & the cloud](modules/15-virtualization-cloud/README.md) | 5 |
 | 16 | [Browser engine internals](modules/16-browser-internals/README.md) | 5 |
 | 17 | [Digital hardware: from transistors to silicon](modules/17-hardware-design/README.md) | 5 |
+| 18 | [Cryptography internals: the memory model of trust](modules/18-cryptography-internals/README.md) | 5 |
+| 19 | [PL theory & type systems: why the rules are theorems](modules/19-pl-type-systems/README.md) | 5 |
+| 20 | [Embedded & firmware: the world with no MMU](modules/20-embedded-firmware/README.md) | 5 |
+| 21 | [Formal verification: the machines that prove programs](modules/21-formal-verification/README.md) | 5 |
+| 22 | [ML systems & training infrastructure: the distributed memory machine](modules/22-ml-systems/README.md) | 5 |
+
+The module dependency graph is data, not a claim: the
+[connections map](https://srivtx.github.io/deep-roots/connections.html) is generated
+from the actual cross-references in the chapters — every module cites its roots, the
+root module (01) reaches forward into all twenty-one trees, and the load-bearing
+chapters of the whole program are visible at a glance.
 
 Every module follows the same chapter template (see
 [CONVENTIONS.md](modules/01-memory-models/CONVENTIONS.md)): a 30-second version, teaching

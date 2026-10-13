@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The RTOS: a scheduler in 10 KB — deep-roots</title>
+<meta name="description" content="Chapter 04 of module 20: The RTOS: a scheduler in 10 KB">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The RTOS: a scheduler in 10 KB — deep-roots">
+<meta property="og:description" content="Chapter 04 of module 20: The RTOS: a scheduler in 10 KB">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The RTOS: a scheduler in 10 KB — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of module 20: The RTOS: a scheduler in 10 KB">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../connections.html">Map</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 20 &middot; the world with no MMU</div>
+<h1 class="post-title">The RTOS: a scheduler in 10 KB</h1>
+<div class="post-meta">chapter 04 &middot; ~20 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Chapter 03 ended with a superloop, one stack, and an ISR that had to be short because nothing could preempt it. An RTOS spends ~10 KB of flash removing that constraint: every task gets its own stack, and SysTick/PendSV swap them for ~150 cycles per millisecond — 0.15% of a 100 MHz M4. The rest is data structures you can read: task = stack + TCB; queue = chapter 03's SPSC ring fused to a blocked-task list; scheduler = a bitmap and a CLZ; heap = dlmalloc shrunk. The T in RTOS is made true only by rate-monotonic arithmetic you do yourself — the kernel ships mechanisms, never guarantees.</blockquote>
+<h2 id="the-preemption-decision-where-latency-is-manufactured">The preemption decision: where latency is manufactured</h2>
+<p>Cooperative multitasking is what a superloop already is: tasks call <code>taskYIELD()</code> where they choose. Every task's worst-case latency is then the longest section between yields <em>anywhere</em>: a display task pushing a 320×240×16-bit frame over SPI at 10 MHz is 153,600 bytes = 1,228,800 bits = <strong>123 ms</strong> — every other task now has ≥123 ms latency. Ten I²C reads at 400 kHz is 0.65 ms: fine under a 5 ms deadline, fatal under 500 µs. Cooperative latency is a property of your source code, re-derived by every edit, invisible in review.</p>
+<p>Preemption moves the number into hardware: SysTick fires every quantum (1-10 ms, one config line) and interrupts any task mid-instruction. What it costs, honestly:</p>
+<ol>
+<li>SysTick's handler never switches — it sets PendSV pending and returns.</li>
+<li>PendSV runs at the <em>lowest</em> exception priority (0xFF): a switch can never interrupt an active ISR.</li>
+<li>Exception entry is half free: hardware stacks the basic frame — R0-R3, R12, LR, PC, xPSR = 8 words.</li>
+<li>PendSV pushes R4-R11 (8 more), stores the stack top in the TCB, picks the next, restores: <strong>~100-200 cycles</strong> on an M4.</li>
+</ol>
+<p>On an M4F the FPU nearly doubles the worst case, and the hardware hedged. <code>CONTROL.FPCA</code> is set the first time a task runs a floating-point instruction. Clear: no FP state — a 2-cycle footnote on entry. Set: hardware <em>reserves</em> 17 words (s0-s15 + FPSCR) but doesn't write them — <strong>lazy stacking</strong>: space claimed, copying deferred. The port pushes s16-s31. Crossing the FP boundary on a switch costs 100+ cycles and a frame <strong>17-33 words</strong> deeper (17 = the reservation; 33 = reservation + s16-s31 + alignment). Which world a TCB belongs to travels in <code>EXC_RETURN</code> bit 4, saved with the frame.</p>
+<p>Now the trade the whole industry makes, inline. 1 kHz tick, every tick preempts, 150 cycles per switch: 1,000 × 150 = 150,000 cycles/s — <strong>0.15%</strong> of a 100 MHz M4, <strong>0.015%</strong> of a 1 GHz-class core; even a 10 kHz tick is 1.5%. Preemption was never expensive in cycles — the costs are power (tickless idle, below) and ISR jitter. The decision: trust code review to bound 123 ms, or pay 0.15%?</p>
+<h2 id="a-task-is-a-stack-plus-a-tcb">A task is a stack plus a TCB</h2>
+<p>Everything an RTOS <em>is</em> reduces to this pair. Decode a real call:</p>
+<pre><code class="language-c">xTaskCreate(vSensorTask, /* entry: void f(void*), and it NEVER returns */
+            "sensor",    /* name: for crash reports and trace only */
+            128,         /* usStackDepth: in WORDS (StackType_t), not bytes */
+            pvArgs,      /* the one void* the entry receives */
+            2,           /* priority: larger = more urgent; 0 is idle */
+            NULL);       /* out: TaskHandle_t*, NULL if unused */</code></pre>
+<p>The trap is the third argument: <code>128</code> is <code>StackType_t</code> units — <strong>words</strong>: 128 × 4 = <strong>512 bytes</strong> on any 32-bit core, not 128. <code>configMINIMAL_STACK_SIZE</code> is words too (the idle task's stack, typically 128 on CM3/CM4). Size "128 bytes" and the task dies on its first <code>printf</code> — this has caught everyone. TCB and stack both come from the kernel heap (<code>configTOTAL_HEAP_SIZE</code>): ~90 B of TCB + the stack + an 8 B header — the RAM ledger is knowable to the byte:</p>
+<pre><code>   TCB (~90 B, from heap_4)              task stack (128 words = 512 B)
++--------------------------------+      +------------------------------+ high
+| pxTopOfStack  ----------------|-----&gt; | live SP: saved R4-R11        |
+| pxStack, xStackEnd  ----------|----   | (s16-s31 if an FP task)      |
+| pcTaskName "sensor"           |       |   ... frames grow downward   |
+| uxPriority 2  uxBasePriority 2|       | vvvvvvvvvvvvvvvvvvvvvvvvvv   |
+| xStateListItem  -&gt; ready/etc. |       | A5 A5 A5 A5  &lt;- 0xA5 fill,   |
+| xEventListItem  -&gt; a wait list|       |   high-water mark counts this |
++--------------------------------+      +------------------------------+ low</code></pre>
+<p>Two list items per TCB are the concurrency model: exactly one <em>state</em> list (ready, delayed, suspended) via <code>xStateListItem</code>, at most one <em>object</em> wait-list via <code>xEventListItem</code> — block and unblock are two O(1) moves.</p>
+<p><strong>Stack-overflow checking</strong> has two modes, one statistical, one hardware:</p>
+<ul>
+<li><em>Method 1, the pattern canary.</em> The kernel fills the stack with <code>0xA5</code> (<code>tskSTACK_FILL_BYTE</code>) at creation; each switch checks the last 16 bytes for <code>0xA5A5A5A5</code>. The stack grows down into the fill, so an overflow smashes it and the next switch notices (<code>configCHECK_FOR_STACK_OVERFLOW</code> 1 checks the pattern; 2 also the SP).</li>
+<li><em>Method 2, the MPU guard.</em> Chapter 01's regions put an unwritable region below the stack: the offending <em>write itself</em> faults (MemManage), before data is lost.</li>
+</ul>
+<div class="table-wrap"><table><thead><tr><th></th><th>Method 1: 0xA5 canary</th><th>Method 2: MPU guard</th></tr></thead><tbody><tr><td>detects at</td><td>next context switch</td><td>the faulting write</td></tr><tr><td>latency</td><td>up to one tick</td><td>0</td></tr><tr><td>certainty</td><td>certain, post-hoc</td><td>hardware fault, immediate</td></tr><tr><td>cost</td><td>free</td><td>1 region + 32 B alignment per task (~1-2% RAM)</td></tr><tr><td>works on M0+</td><td>yes</td><td>no (no MPU)</td></tr></tbody></table></div>
+<p>Both objects come from <code>configTOTAL_HEAP_SIZE</code> — a static array (<code>ucHeap</code>): the "heap" is just <code>.bss</code>. Which allocator serves it is a philosophy:</p>
+<ul>
+<li><strong>heap_1</strong>: <code>pvPortMalloc</code> only, no free, ~30 lines. The discipline: <em>allocation is bring-up only</em> — create every task, queue, and mutex in <code>main()</code> before <code>vTaskStartScheduler()</code>, then the heap is frozen: fragmentation impossible, OOM at boot where you can see it.</li>
+<li><strong>heap_4</strong>: first-fit over a single free list that <em>coalesces</em> adjacent free blocks on every free (8-byte <code>BlockLink_t</code> header: next pointer + size). Module 01 chapter 19's dlmalloc lineage shrunk: first-fit and address-ordered coalescing kept, size-class bins dropped — tens-of-KB arena, few long-lived objects. ~200 readable lines: the allocator to read first.</li>
+</ul>
+<p>Runtime create/<code>vTaskDelete</code> needs heap_4 and its fragmentation risk; <code>xTaskCreateStatic</code> (since v9) gets heap_1's guarantees with the linker script as bookkeeper — memory is a budget. The scheduler also creates one task you didn't ask for: <strong>idle</strong>, priority 0, <code>configMINIMAL_STACK_SIZE</code> — guaranteed to run when nothing else is ready. Chapter 03's power loop lands in its hook: <code>vApplicationIdleHook</code> is the WFI home, one line inside the OS.</p>
+<h2 id="the-queue-an-spsc-ring-that-learned-to-block">The queue: an SPSC ring that learned to block</h2>
+<p>Chapter 03's ring had one writer, one reader, no locks by construction. The queue generalizes it to MPMC by fusing the ring with two blocked-task lists:</p>
+<pre><code> xQueueCreate(8, sizeof(uint32_t))
++--------------------------------------+     xTasksWaitingToReceive (empty):
+| pcHead    [0][1][2][3][4][5][6][7]   |       prio 3: TCB-G -&gt; TCB-H   (sorted)
+| pcReadFrom ^       pcWriteTo |        |       prio 1: TCB-K
+| uxLength 8   uxItemSize 4            |     xTasksWaitingToSend (full):
+| xTasksWaitingToSend   -&gt; prio 2: TCB-S|       prio 2: TCB-S
+| xTasksWaitingToReceive -&gt; list above |       prio 0: TCB-T
++--------------------------------------+</code></pre>
+<p>Both wait lists are <em>priority-ordered</em> (<code>vListInsert</code>; FIFO within a priority) — the highest-priority waiter is the head, so wake order is dispatch order. Send on a full queue: the sender's <code>xEventListItem</code> links into <code>xTasksWaitingToSend</code>, its <code>xStateListItem</code> moves to the delayed list with the timeout, and the scheduler picks someone else — the "sleep until data" the superloop faked with a state flag. A receive that frees a slot reverses it: unlink TCB-S's event item, move its state item to <code>pxReadyTasksLists[2]</code>, and if 2 outranks the current task, switch <em>now</em>.</p>
+<p>This is module 07 chapter 04's material at 1/1000th the code: a Linux pipe is a ring buffer plus a waitqueue — two subsystems; an RTOS queue is the same two halves <strong>fused into one ~40-line object</strong>, no layers to spare. One shape, both ways: the RTOS wears it whole, the desktop OS splits it apart.</p>
+<p><strong>From an ISR, half the object is off-limits.</strong> An interrupt cannot block, so the ISR-safe family (<code>xQueueSendFromISR</code> et al.) only does the wake-surgery half, plus one deferral trick:</p>
+<pre><code class="language-c">void UART_ISR(void) {
+    uint32_t byte = UART-&gt;DR;               /* 1: grab the ephemeral data */
+    BaseType_t woken = pdFALSE;
+    xQueueSendFromISR(rxq, &amp;byte, &amp;woken);  /* 2: 4-byte copy + list surgery */
+    portYIELD_FROM_ISR(woken);              /* 3: pend PendSV, return into it */
+}</code></pre>
+<p>If the woken receiver outranks the interrupted task, <code>woken</code> is set; <code>portYIELD_FROM_ISR</code> pends PendSV and the ISR's <em>exception return</em> tail-chains into the switch — deferral costs one context switch, ~150 cycles, at exit. Doing the work in the ISR instead: copying a 2 KB DMA buffer in-handler is 2,000+ cycles with everything lower-priority locked out, <em>plus</em> the eventual switch; posting a 4-byte pointer is ~40 + 150. Plain return vs <code>portYIELD_FROM_ISR</code> is the latency knob: plain return waits for the next natural switch (up to a tick); yield runs now, for 150 cycles.</p>
+<p><strong>Software timers are one task.</strong> Every callback of every timer executes inside the timer daemon ("Tmr Svc", priority <code>configTIMER_TASK_PRIORITY</code>), fed by a command queue. Derive the rule: a single task means <em>every callback is delayed by every other</em> — a 100 ms timer drifts to 140 ms whenever a sibling burns 40 ms on a slow SPI transfer, and one blocking callback delays every timer by the block duration. Never block in a timer callback; if it needs to sleep, it is a task a timer should signal.</p>
+<h2 id="priority-inheritance-the-pathfinder-fix-and-its-limits">Priority inheritance: the Pathfinder fix and its limits</h2>
+<p>Set up the trap: low-priority L takes a mutex, high-priority H blocks on it, medium M preempts L. H now waits on M — a task the mutex never agreed to involve; M can run for hours. FreeRTOS's fix: when H blocks, the kernel rewrites the owner's <code>uxPriority</code> to H's priority (<code>uxBasePriority</code> remembers home; both restored on give) — so L, momentarily the most urgent task, finishes its critical section immediately. The stronger protocol is the ceiling: <code>uxPriorityCeiling</code> (the POSIX flavor, VxWorks folklore) boosts the owner to a <em>fixed</em> ceiling at acquire time — before anyone blocks — which also makes chained inversion and deadlock impossible, at the price of an offline ceiling table.</p>
+<p>The canonical story is module 03 chapter 05's, retold with the mechanism. Mars Pathfinder, 1997: the lander's RAD6000 ran VxWorks. A low-priority meteorological task published on the shared "information bus" while holding its mutex; a medium-priority communications task ran long; the high-priority bus-management task blocked on the mutex and starved behind M, and the watchdog reset the spacecraft every few days. JPL reproduced it under tracing; the fix was flipping that one semaphore to priority inheritance (VxWorks folklore: <code>t_priorityBoost</code>) — a flag change, uplinked. The feature had existed all along, unenabled. That is the whole lesson: the mechanism that saves you is a config bit, and the failure is silent.</p>
+<p>What inheritance does <em>not</em> fix: deadlock. Two tasks, two mutexes, opposite acquisition order — boosting the owners strengthens the cycle rather than breaking it. The cure is a discipline, not a mechanism: <strong>acquisition order</strong>, module 09 chapter 02's lock-ordering rule at µC scale — a global order on every mutex, assigned at design time, never reversed. Keep critical sections short: a boosted owner still serializes every waiter through L's code.</p>
+<h2 id="the-scheduler-in-one-word-a-bitmap-a-clz-and-per-priority-lists">The scheduler in one word: a bitmap, a CLZ, and per-priority lists</h2>
+<p>Dispatch is one lookup: <em>which ready task has the highest priority?</em> O(1) no matter how many tasks exist:</p>
+<pre><code> FreeRTOS (CM3/CM4 port)                       Linux O(1) runqueue (module 07 ch04)
+ uxReadyPriorities = 0x00000092                per-CPU rq: two arrays, active+expired
+   bit 7, 4, 1 set                               140 priority lists each
+   31 30 ... 8 7 6 5 4 3 2 1 0                   140-bit bitmap per array
+    .  .     . 1 . . . 1 . . 1 .                 sched_find_first_bit(map)
+              |       |     |
+              v       v     v                    epoch ends: swap(active, expired)
+  prio 7: [TCB-A]&lt;-&gt;[TCB-B]   &lt;- runs            RT 0-99 / nice 100-139
+  prio 4: [TCB-C]
+  prio 1: [TCB-D]&lt;-&gt;[TCB-E]   round-robin within a level = head to tail
+  CLZ(0x92) = 23; 31 - 23 = 7 -&gt; level 7, head</code></pre>
+<p>One 32-bit word holds one bit per priority level — <strong>32 levels per word</strong> (fast path: <code>configMAX_PRIORITIES</code> ≤ 32). Each set bit points at a per-priority ready list; the winner is the highest set bit, sold by the ISA as <strong>one instruction: CLZ</strong>, one cycle. Module 17 chapter 03's RTL returning: "count zeros" earns transistors for priority encoding (plus FP normalization). Round-robin within a level moves the head to the tail (<code>configUSE_TIME_SLICING</code>).</p>
+<p>Drawn side by side, the lineage is the point: Linux's O(1) scheduler (2.5/2.6, 2002-2007) is the <em>same shape</em> — bitmap, one list per priority — at 140 levels, per CPU, with an active/expired fairness swap. And <strong>the RTOS got there first</strong>: VxWorks- and QNX-class bitmap schedulers date to the 1980s. Linux dropped the shape for CFS in 2.6.23 (2007) — desktop priorities are dynamic; FreeRTOS keeps it — embedded priorities are fixed: no epochs, one word. Module 07 chapter 04's runqueue and this bitmap are one idea at 10⁵× the scale, named both ways.</p>
+<p><strong>O(1) dispatch answers "who," never "whether."</strong> For the other question, rate-monotonic analysis, one page:</p>
+<ol>
+<li>Fixed priorities, periodic tasks: priority = 1/period (shortest first) — RMA, the assignment your bitmap encodes.</li>
+<li>Utilization U = Σ Cᵢ/Tᵢ. Liu-Layland: schedulable if <strong>U ≤ n(2^(1/n) − 1)</strong>.</li>
+<li>The bound's logic in five lines: the worst case is the <em>critical instant</em> — all jobs release together; the lowest task's response then satisfies R = Cₙ + Σᵢ ⌈R/Tᵢ⌉ Cᵢ (each higher task interferes ⌈R/Tᵢ⌉ times inside R); the tightest bad case puts that fixed point on the deadline; solving the worst alignment gives the bound. As n → ∞, n(2^(1/n)−1) → <strong>ln 2 ≈ 0.693</strong> (2^(1/n) = e^(ln2/n)). Harmonic periods relax the bound to 1.0.</li>
+</ol>
+<p>n: 1 → 1.00, 2 → 0.828, 3 → 0.780, 5 → 0.743, ∞ → 0.693.</p>
+<p>Worked example, WCETs measured (not guessed):</p>
+<div class="table-wrap"><table><thead><tr><th>task</th><th>period</th><th>WCET</th><th>RMA priority</th></tr></thead><tbody><tr><td>sensor</td><td>10 ms</td><td>2 ms</td><td>3 (highest)</td></tr><tr><td>control</td><td>20 ms</td><td>4 ms</td><td>2</td></tr><tr><td>telemetry</td><td>50 ms</td><td>12 ms</td><td>1</td></tr></tbody></table></div>
+<p>U = 0.20 + 0.20 + 0.24 = <strong>0.64 ≤ 0.780</strong> → schedulable, margin 0.14. Ship it. Then the feature lands: telemetry's fusion update measures <strong>34 ms</strong>; U = 1.08 — above 100% total demand, a miss is certain, and the timeline shows which and when:</p>
+<pre><code>ms:    0    10   20   30   40   50   60
+T1 10/2  [##]  [##]  [##]  [##]  [##]  [##]        # sensor, 2 ms
+T2 20/4  [####]    [####]    [####]---&gt;[####]      # control, 4 ms
+T3 50/34 [---------34 ms, preempted 5x----------]  @ deadline 50: 2 ms still owed
+                                                          |
+        t=50: T1 &amp; T2 release, outrank T3's remainder -&gt;   v
+        50-52 T1, 52-56 T2, 56-58 T3 finishes -&gt; job 1 LATE by 8 ms
+        job 2 starts 8 ms behind; at U &gt; 1 the backlog grows.</code></pre>
+<p>Note what the bound is <em>not</em>: necessary — between 0.693 and 0.780 a set may still schedule (response-time analysis: iterate R = Cₙ + Σ⌈R/Tᵢ⌉Cᵢ to a fixed point, compare to D). The honest summary: <strong>an RTOS is not real-time by itself.</strong> The kernel sells bounded <em>mechanisms</em> — the 150-cycle switch, the O(1) dispatch, the priority-ordered wake — and the datasheet prints "real-time" as if the guarantee shipped in the 10 KB. The guarantee is offline arithmetic against measured WCETs: a tool for building real-time systems, not one.</p>
+<h2 id="walls-between-tasks-freertos-mpu">Walls between tasks: FreeRTOS-MPU</h2>
+<p>Chapter 01's arithmetic returns with a job. The M4 MPU has <strong>8 regions</strong>, 32-byte granularity, power-of-two size and alignment. The FreeRTOS-MPU port spends them: 3 fixed globals (flash RO+X, kernel RAM privileged-RW, peripherals privileged-RW), leaving <strong>3-4 per task</strong> — its stack (RW) plus 2-3 shared buffers. That is the scarcity arithmetic: a task needing more windows aliases buffers into one region — the pressure keeps µC isolation deliberately coarse.</p>
+<p>The switch rewrites the world: entering an unprivileged task, the port writes its regions — <code>RNR</code> (select), <code>RBAR</code> (base), <code>RASR</code> (attrs): 3 registers × 3-4 regions ≈ a dozen <code>MSR</code>s plus memory- system sync and pipeline discard — tens of cycles, the order of the FPU save, folded into the 150-200 cycle switch. What it buys is containment: the UI task's wild pointer raises a MemManage fault naming the address and task — instead of silently overwriting the control task's stack and shipping. Module 15 chapter 04's containment story at 10²-10³× smaller scale:</p>
+<div class="table-wrap"><table><thead><tr><th></th><th>Container (module 15 ch04)</th><th>FreeRTOS-MPU task</th></tr></thead><tbody><tr><td>what's walled</td><td>a process's kernel views</td><td>a task's addresses</td></tr><tr><td>mechanism</td><td>MMU page tables per process + TLB</td><td>8 MPU regions, rewritten per switch</td></tr><tr><td>granularity</td><td>4 KB pages, unlimited</td><td>32 B-4 GB, power-of-2, 8 total</td></tr><tr><td>per-switch cost</td><td>one base-register write + TLB refill</td><td>~12+ region-register writes</td></tr><tr><td>memory cost of the walls</td><td>page tables, KB-MB per process</td><td>zero — regions are registers</td></tr><tr><td>wall failure</td><td>OOPS / signal / container killed</td><td>MemManage fault names the task</td></tr><tr><td>scale</td><td>GB RAM, GHz, 10⁴ processes</td><td>8-512 KB RAM, 10-100 tasks</td></tr></tbody></table></div>
+<p>~1 KB of protection state instead of a virtual-memory subsystem: same idea, three orders of magnitude apart.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>Tickless idle is a power story.</strong> At 1 kHz SysTick wakes the core every millisecond; WFI between ticks burns run-adjacent current. <code>configUSE_TICKLESS_IDLE</code> suppresses the tick in the idle hook and re-arms a low-power timer (RTC/LPTIM) for the next <em>deadline</em> (<code>vTaskStepTick</code>). A CR2032 holds 220 mAh: stop mode at 2 µA = 110,000 h ≈ <strong>12.5 years</strong>; the ticking core at ~500 µA = 18 days; waking once per 10 s for 10 mA × 2 ms averages ≈ 4 µA ≈ <strong>6 years</strong> — the µA-years regime of meters and tags.</li>
+<li><strong>Stacks are sized by measurement, 90% ceiling.</strong> <code>uxTaskGetStackHighWaterMark(handle)</code> returns the minimum free words ever seen (the untouched 0xA5 fill). Run the worst case, then re-size so the mark sits ≥10% free — "why 128 words" becomes measured, not guessed.</li>
+<li><strong>The nastiest bug class: kernel APIs from the wrong interrupt level.</strong> The <em>non</em>-FromISR API called in an ISR often "works": it suspends the scheduler from interrupt context and corrupts wake-bookkeeping under nesting — deferred, silent (or a <code>configASSERT</code> catch, if enabled). Same class, worse: an ISR <em>above</em> <code>configMAX_SYSCALL_INTERRUPT_PRIORITY</code> calling even the FromISR API — the kernel raises BASEPRI to the fence in critical sections, but an ISR more urgent than the fence is unmaskable and interrupts mid-surgery. Worked: <code>xQueueReceive</code> has half-unlinked a waiter when the ISR's send re-inserts into the torn list — later, dispatch walks <code>pxNext</code> into a stale TCB: a hard fault in <code>list.c</code>, or a task silently unlinked and never scheduled again.</li>
+<li><strong>ISRs share one stack, and almost nobody sizes it.</strong> All handlers run on the MSP: budget = <strong>8 words × (1 + max nesting) + the deepest handler chain</strong> (+18 words/level with FP). Nesting 2 and a 60-word chain: 24 + 60 = 84 words = 336 B — teams size one handler and forget the multiplication.</li>
+<li><strong>The fence is a BASEPRI number that runs backwards.</strong> On Cortex-M, <em>numerically lower = more urgent</em>: fence 5 means priorities 5-15 may call the kernel, 0-4 are kernel-free and must not — the inversion that makes "I set my UART ISR to priority 1" the bug above.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>All labs run on QEMU with FreeRTOS's MPS2 demo (AN385: Cortex-M3 at 25 MHz, no hardware needed):</p>
+<pre><code class="language-console">$ git clone --depth 1 https://github.com/FreeRTOS/FreeRTOS.git
+$ cd FreeRTOS/FreeRTOS/Demo/CORTEX_MPS2_QEMU_GCC/build
+$ make &amp;&amp; qemu-system-arm -machine mps2-an385 -nographic -kernel build/RTOSDemo.out</code></pre>
+<ul>
+<li><strong>The switch pattern.</strong> In <code>main.c</code>: a priority-2 task printing after <code>vTaskDelay(1)</code>, a priority-1 task <code>vTaskDelayUntil</code> every 10 ticks, a 500 ms software timer printing. The five config lines: <code>configCPU_CLOCK_HZ 25000000</code>, <code>configTICK_RATE_HZ 1000</code>, <code>configMINIMAL_STACK_SIZE 128</code>, <code>configTOTAL_HEAP_SIZE ((size_t)40*1024)</code>, <code>configMAX_PRIORITIES 5</code>. Expected: the low task prints once per tick, the high every 10th line, the timer every 500th — three "frequencies" interleaved by the bitmap.</li>
+<li><strong>Priority inversion, on and off.</strong> Low takes a mutex and busy-loops, medium busy-loops, high wakes and blocks. Print <code>vTaskPriorityGet(NULL)</code> inside low while holding. With <code>xSemaphoreCreateMutex()</code> (<code>configUSE_MUTEXES 1</code>): low reports "boosted to 3" the moment high blocks — inheritance live. With <code>xSemaphoreCreateBinary()</code> (no inheritance) the same program starves high. The two logs are the deliverable.</li>
+<li><strong>Break a canary.</strong> A task with a 64-word stack and a <code>char buf[512]</code> it <code>memset</code>s, with <code>configCHECK_FOR_STACK_OVERFLOW 2</code>: <code>vApplicationStackOverflowHook(task, name)</code> fires with the <em>task name</em> — the canary named the stack, one switch late.</li>
+<li><strong>RMA on paper.</strong> Compute the chapter's table by hand, then a fresh set: periods 5/10/40 ms, WCETs 1/2/12 ms. Answer: U = 0.7 ≤ 0.780, schedulable — and at WCET 13 ms (U = 0.725) it still passes: the bound is not tight.</li>
+</ul>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Interview answers.</strong> "What does a context switch cost?" — 8 + 8 words, 100-200 cycles on M4, 33 more with the FPU, 0.15% at 1 kHz. "Why is dispatch O(1)?" — one bitmap word plus CLZ.</li>
+<li><strong>Debugging the silent class.</strong> Random faults in <code>list.c</code>, or a task that stops being scheduled: audit ISR priorities against the fence and call sites for the FromISR family. It reproduces only with the scheduler mid-surgery.</li>
+<li><strong>Design numbers.</strong> heap_1 + create-in-main vs heap_4 + runtime create is a stated trade; stack budgets come from high-water marks; guard regions cost ~1-2% RAM and name silent corruption.</li>
+<li><strong>Vendor claims.</strong> "Real-time" means bounded mechanisms; ask for WCET measurements and run RMA — Pathfinder wasn't fixed by a better kernel, just a flag finally set.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 20 chapter 01</strong> — the MPU region arithmetic the guard and MPU-tasks spend.</li>
+<li><strong>Module 20 chapter 02</strong> — the linker script placing <code>ucHeap</code>; the MSP every ISR shares.</li>
+<li><strong>Module 20 chapter 03</strong> — the WFI loop that becomes the idle hook; the SPSC ring that grows into the queue.</li>
+<li><strong>Module 20 chapter 05</strong> — the single address space that makes MPU-task walls the only containment.</li>
+<li><strong>Module 07 chapter 04</strong> — the O(1) runqueue: FreeRTOS's bitmap is its shape — the RTOS wore it first, Linux proved it scales, CFS retired it; the queue repeats the lineage, waitqueue + ring fused here, split there.</li>
+<li><strong>Module 03 chapter 05</strong> — the Pathfinder inversion, retold with the mechanism that fixes it (and the one it doesn't).</li>
+<li><strong>Module 15 chapter 04</strong> — containers vs MPU-tasks: walls at 10³× the RAM — the comparison table's two columns.</li>
+<li><strong>Module 01 chapter 19</strong> — heap_4 is dlmalloc's first-fit coalescing core shrunk to ~200 lines.</li>
+<li><strong>Module 09 chapter 02</strong> — lock ordering: the discipline covering what inheritance cannot.</li>
+<li><strong>Module 17 chapter 03</strong> — CLZ as RTL: the one-cycle priority encoder that justified an ISA corner.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Derive the latency contract of a cooperative RTOS: what single property of your source code bounds every task's worst-case latency, and why does adding FreeRTOS <em>without</em> changing that property fix nothing? What config parameter bounds it in the preemptive case, and at what cost per second?</li>
+<li><strong>Concept.</strong> The Cortex-M dispatcher finds "highest set bit" with CLZ in one cycle. Why is dispatch O(1) no matter how many tasks exist, why did the ISA spend silicon on CLZ (module 17 chapter 03), and why does Linux's O(1) scheduler need <em>two</em> priority arrays where FreeRTOS needs one word?</li>
+<li><strong>Predict the number.</strong> <code>xTaskCreate(vUart, "uart", 64, NULL, 1, NULL)</code> on a Cortex-M4. (a) How many bytes of stack does the task get? (b) Why is it likely to die on its first nested call chain? (c) With <code>configMINIMAL_STACK_SIZE</code> at 128, how big is the idle task's stack?</li>
+<li><strong>Predict the number.</strong> A 168 MHz M4F, 1 kHz tick, average 180 cycles per switch (FP tasks). What fraction of the CPU does the scheduler burn? At what tick rate would that reach 5%?</li>
+<li><strong>Predict the number.</strong> Periodic tasks: (8 ms, 1.6 ms), (16 ms, 3.2 ms), (64 ms, 20 ms). Compute U, the Liu-Layland bound, the RMA priority assignment, and the verdict.</li>
+<li><strong>Bug diagnosis.</strong> A product hard-faults in <code>list.c</code> every few days; when it doesn't fault, an unrelated task occasionally stops being scheduled forever. The UART ISR is at preemption priority 1 and calls <code>xQueueSendFromISR</code>; the kernel fence (<code>configMAX_SYSCALL_INTERRUPT_PRIORITY</code>) is 5. Explain both symptoms from one mechanism, and why the lab never sees it.</li>
+<li><strong>Bug diagnosis.</strong> A 100 ms software timer drifts to ~140 ms exactly when another timer's callback runs a slow flash write; a 10 ms timer drifts too, though its callback is 3 lines. Explain via the daemon, and give the fix.</li>
+<li><strong>Cross-chapter.</strong> Module 03 chapter 05's Pathfinder reset: name the three priorities in the story, the mechanism FreeRTOS applies the instant the high-priority task blocks, and the failure mode inheritance does <em>not</em> cover — plus the module 09 chapter 02 discipline that does.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>The longest stretch between <code>taskYIELD()</code> calls in <em>any</em> task — latency is a property of source, re-derived by every edit (the 123 ms SPI frame). An RTOS with the same unyielding code inherits the same 123 ms: yield points are still the only switch opportunities. Preemption bounds it with the SysTick quantum (1-10 ms) plus the switch: 1,000 × 150 = 150,000 cycles/s — 0.15% of a 100 MHz core.</li>
+<li>Task count never enters: the bitmap has one bit per <em>priority level</em> (32 per word) — a constant-size word — and CLZ picks the highest set bit in one cycle regardless of the TCBs hanging on the lists. CLZ exists because priority encoding (and FP normalization) is worth a one-cycle circuit — module 17 chapter 03. Linux needs active + expired arrays to demote a running task without losing it (an epoch swap); FreeRTOS has fixed priorities and no fairness budget, so one word suffices.</li>
+<li>(a) 64 words × 4 B = <strong>256 bytes</strong>. (b) That is the whole stack: a <code>printf</code> family or modest call chain needs 200-400 B, and overflow smashes the data below — the 0xA5 canary catches it one switch late. (c) 128 words = <strong>512 bytes</strong> — <code>configMINIMAL_STACK_SIZE</code> is words, the same unit trap.</li>
+<li>1,000 × 180 = 180,000 ÷ 168,000,000 = <strong>0.107% ≈ 0.11%</strong>. 5% of 168 MHz = 8.4 M cycles/s ÷ 180 ≈ 46,600 — a <strong>47 kHz</strong> tick rate, which no one should want.</li>
+<li>U = 0.20 + 0.20 + 0.3125 = <strong>0.7125</strong>; bound for n = 3: 3(2^(1/3)−1) = <strong>0.780</strong>. Priorities: 8 ms highest, then 16 ms, then 64 ms (priority = 1/period). 0.7125 ≤ 0.780 → <strong>schedulable</strong> — margin 0.067, thin enough that WCET 20 → 24 ms (U = 0.775) hits the edge and 26 ms (0.806) breaks it.</li>
+<li>The ISR sits <em>above</em> the BASEPRI fence (numerically lower = more urgent), so the kernel's critical sections — which raise BASEPRI to 5 — cannot mask it: it interrupts list surgery mid-surgery. The half-unlinked waiter plus the ISR's insertion tears the circular list; dispatch then walks <code>pxNext</code> into a stale TCB → the <code>list.c</code> fault, or the victim TCB is silently unlinked → the task never runs again. The lab never sees it: it needs the ISR inside a specific switch-path window — rare at bench rates, days at production rates. Fix: move the ISR to priority ≥ 5, or defer the kernel call to a task.</li>
+<li>All timer callbacks run serially in the one "Tmr Svc" daemon: every callback is delayed by every other. The flash-write callback's ~40 ms holds the daemon, so the 100 ms callback fires late; the 3-line callback is late for the same reason — its runtime is irrelevant, its queue position isn't. Fix: the slow work belongs in a <em>task</em> signaled by the callback, never in the callback itself.</li>
+<li>Low = the meteorological task publishing on the bus (holding the mutex); medium = the communications task that preempted the publisher; high = the bus-management task that blocked and starved behind medium until the watchdog reset. FreeRTOS's mechanism when high blocks: <em>inheritance</em> — the owner's <code>uxPriority</code> is raised to the blocked task's (<code>uxBasePriority</code> remembers home), so low finishes at high urgency. Inheritance does not fix deadlock — boosted owners can still cycle on two mutexes; the cure is acquisition order, module 09 chapter 02's lock-ordering rule, never reversed.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 20 — Embedded &amp; firmware</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="../connections.html">Map</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

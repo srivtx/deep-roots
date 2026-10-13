@@ -493,6 +493,12 @@ dlmalloc.
 - **Chapter 23** — the unification table: "allocator" is one axis every language's
   memory model sits on.
 
+*Forward links — where the rest of the program picks this chapter up:*
+
+- **Module 02 ch04 (heap exploitation)** — tcache poisoning is this chapter's metadata as the attack surface — the bins you learned are the target list.
+- **Module 22 ch01 (the caching allocator)** — PyTorch's GPU allocator is the arena/block flavor of this chapter's taxonomy, fragmentation included.
+- **Module 09 ch03 (lock-free allocation)** — hazard pointers and epochs are how allocators survive threads — this chapter's free list under concurrency.
+
 ## Quiz
 
 **Q1 (concept).** The OS deals 4096-byte pages; your program asks for 16-byte nodes.
