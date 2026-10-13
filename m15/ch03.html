@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Devices: virtio, vhost, SR-IOV — deep-roots</title>
+<meta name="description" content="Chapter 03 of module 15: Devices: virtio, vhost, SR-IOV">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Devices: virtio, vhost, SR-IOV — deep-roots">
+<meta property="og:description" content="Chapter 03 of module 15: Devices: virtio, vhost, SR-IOV">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Devices: virtio, vhost, SR-IOV — deep-roots">
+<meta name="twitter:description" content="Chapter 03 of module 15: Devices: virtio, vhost, SR-IOV">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 15 &middot; one machine, many owners</div>
+<h1 class="post-title">Devices: virtio, vhost, SR-IOV</h1>
+<div class="post-meta">chapter 03 &middot; ~22 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Chapter 01 gave the CPU a guest mode, chapter 02 gave memory a second page table; devices are the third illusion, and the naive version is slow: emulate a real NIC (QEMU's e1000) and every register the guest's driver pokes is an EPT violation, a ~1,000-2,000-cycle VM exit, and a detour into a QEMU userspace thread — one core caps around 50,000-100,000 packets/sec, 150-1,500x under line rate. virtio's answer: stop pretending. The guest runs a driver that knows it is virtual and shares a <em>ring</em> with the "device" — a descriptor table plus avail and used rings, all in the guest's own RAM — so whoever services the ring (a QEMU thread, a vhost kernel thread, or, with SR-IOV, the NIC's DMA engine behind an IOMMU's third page table) moves data by reading and writing guest memory directly. This chapter climbs that ladder, then spends the winnings on live migration — which works precisely because the rings make device state mostly "guest memory," and which SR-IOV breaks, the trade that shapes cloud tiering.</blockquote>
+<h2 id="one-packet-thirty-exits-the-price-of-pretending">One packet, thirty exits: the price of pretending</h2>
+<p>The obvious design is honesty in the other direction: don't change the guest, <em>pretend to be hardware</em>. QEMU models Intel's e1000 NIC; an unmodified guest boots its stock e1000 driver and talks to the "card" exactly as to silicon. Zero guest changes is why emulation still owns rescue ISOs and anything without a virtio driver.</p>
+<p>Now price it. The e1000 driver converses through MMIO registers (TDT, RDT, ICR — transmit/receive descriptor-tail pointers, interrupt cause) and DMA (the card reads descriptor rings and packet buffers from guest RAM). Chapter 02 derived the trap in channel 1: the e1000's register block is mapped into the guest's "physical" space with EPT entries marked non-present, so every register access is an EPT violation — a VM exit of ~1,000-2,000 cycles, chapter 01's number and the one that drives this chapter.</p>
+<p>Count the exits for one bidirectional 64-byte packet: TDT poke, interrupt mask/unmask, ICR acknowledge, RDT post, status reads — realistically 10-20 register accesses, each a full exit-and-return handled by a QEMU <em>userspace</em> thread that decodes and emulates the register. Add 2 context switches per userspace exit plus the packet copy: 30,000-80,000 cycles per packet. On a 3 GHz vCPU that is roughly 40,000-100,000 packets/sec per core. A 10 GbE NIC does 64-byte line rate at 14.88 Mpps (module 13 ch01); 100 GbE does 148.8 Mpps. Emulation is 150x-1,500x slower — two to three orders of magnitude, the number that motivates this chapter. The diagnosis is precise: per-register traps times register chatter the guest driver was never designed to minimize.</p>
+<p>The fix is not to emulate harder. It is to change the contract.</p>
+<h2 id="virtio-drop-the-costume-keep-the-contract">virtio: drop the costume, keep the contract</h2>
+<p>Paravirtualization is chapter 01's CPU move applied to devices: the <em>guest cooperates</em>, booting a driver that knows it talks to a hypervisor. The device appears on the PCI bus with vendor ID 0x1af4; legacy device IDs occupy 0x1000-0x103f (net = 0x1000, blk = 0x1001), while modern virtio 1.x IDs are 0x1040 plus the spec's device type (network = type 1, so modern virtio-net shows as 0x1041). Linux grew the drivers in 2.6.25 (2008). Every vendor invented one — vmxnet3 (VMware), netfront (Xen), hv_netvsc (Hyper-V) — and virtio won the standardization war (virtio 1.0, OASIS, 2016; packed rings in 1.1, 2019).</p>
+<p>The contract has two moving parts: <strong>shared memory for data, doorbells for signals</strong>. All data — packet bytes, disk blocks — lives in the guest's own RAM; the device, whoever implements it, reads and writes that memory <em>directly through the guest's memory map</em>. No trap is needed to move payload bytes. Chapter 02's balloon driver was secretly family: a virtio device whose "data" is control messages asking the guest for pages back.</p>
+<p>The two doorbells are profoundly asymmetric:</p>
+<ul>
+<li><strong>The kick</strong> (guest to device: "work posted") is a 2-byte write to a notify register in a PCI BAR — a <em>guest instruction touching trapped memory</em>: a PIO-instruction exit, or an EPT violation for an MMIO BAR (chapter 02). Observing a store the vCPU just executed requires trapping it — a VM exit by construction. What ioeventfd changes is <em>who handles it</em>: KVM recognizes "this write matches a registered eventfd," signals it, and re-enters the guest — QEMU never runs; the exit shrinks to an in-kernel detour.</li>
+<li><strong>The interrupt</strong> (device to guest: "work done") costs <em>no exit</em>. The device writes the used ring (plain guest RAM) then raises the queue's MSI-X vector by writing an <em>irqfd</em> — an eventfd KVM has bound to that vector. KVM latches the vector in the virtual local APIC and delivers it at the next vmentry, whatever the vCPU was doing. Guest-generated events must trap to be seen; host-generated events are state you push in. That asymmetry is half of why virtio is cheap.</li>
+</ul>
+<p>Before rings run, driver and device negotiate feature bits (EVENT_IDX = bit 29 for doorbell suppression, VERSION_1 = bit 32 for the 1.0 layout) — the mechanism that kept virtio compatible across 15+ years without breaking 2009 guests.</p>
+<h2 id="the-vring-byte-by-byte-the-ring-is-the-shared-memory">The vring, byte by byte: the ring is the shared memory</h2>
+<p>Derive the structure instead of quoting the spec. (1) No copying per buffer into a hypercall, or every packet pays a trap — buffers live in shared guest memory. (2) Operation is asynchronous and batched — work queues up without round trips. (3) Memory is bounded — a fixed-size ring with wraparound. (4) Neither side spins — two doorbells. Four requirements, and you have reinvented the virtqueue: descriptor table, avail ring, used ring. Here is one transmit queue with 256 entries (queue size is a power of two, at most 32768 per virtio 1.x; QEMU's virtio-net default is 256):</p>
+<pre><code class="language-text">one virtqueue, qsz = 256 — all addresses are guest-physical (GPA)
+
+GPA 0x1000  DESCRIPTOR TABLE — qsz * 16 = 4096 B
+            +0x0000  desc[0]:
+                       +0x00  le64 addr = 0x53000   -&gt; GPA of a packet buffer
+                       +0x08  le32 len  = 1514      -&gt; length of that buffer
+                       +0x0c  le16 flags= 0x0002    -&gt; 1=NEXT  2=WRITE  4=INDIRECT
+                       +0x0e  le16 next = 1         -&gt; desc[1] if NEXT is set
+            +0x0010  desc[1] ...                    -&gt; 16 B each
+            ...
+            +0x0FF0  desc[255]                      -&gt; chained descs = scatter-gather
+
+GPA 0x2000  AVAIL RING — 2 + 2 + 2*qsz + 2 = 518 B  (guest WRITES, device reads)
+            +0x000  le16 flags = 0                  (bit 1 = NO_INTERRUPT)
+            +0x002  le16 idx   = 8                  free-running count of heads
+                                                      posted; position = idx mod 256
+            +0x004  le16 ring[0..255]:              head descriptor ids
+                      ring[0..7]  = the 8 heads posted so far
+                      ring[8..255]= free slots
+            +0x204  le16 used_event = 5             (EVENT_IDX: "no interrupt until
+                                                      used.idx passes 5")
+
+GPA 0x3000  USED RING — 4 + 4 + 8*qsz + 4 = 2060 B  (device WRITES, guest reads)
+            +0x000  le32 flags = 0                  (bit 1 = NO_NOTIFY)
+            +0x004  le32 idx   = 5                  free-running count of heads done
+            +0x008  used[0..255], 2 words each:
+                        le32 id  = 4                which head completed
+                        le32 len = 1514             bytes actually transferred
+            +0x808  le32 avail_event = 8            (EVENT_IDX: "no kick until
+                                                      avail.idx passes 8")
+
+the packet itself: GPA 0x53000, 1514 B — an ordinary guest buffer,
+referenced only by descriptor 0's addr/len
+
+total span: 0x3000 + 2060 - 0x1000 = 10252 B — the whole queue fits in 11 KB</code></pre>
+<p>The handshake: the guest fills descriptors (chaining several for scatter-gather — header plus data, linked by <code>next</code>), writes the <em>head</em> id into <code>avail.ring[idx mod 256]</code>, increments <code>avail.idx</code>, kicks once. The device reads heads in order, DMAs (or memcpys — same contract) each <code>addr</code>/<code>len</code>, then writes <code>id</code> and the byte count into <code>used.ring[used.idx mod 256]</code>, increments <code>used.idx</code>, raises the interrupt; the guest's handler frees buffers and recycles descriptors. Batching falls out free — 8 descriptors, one kick; 8 completions, one interrupt — and <code>used_event</code>/<code>avail_event</code> (EVENT_IDX, bit 29) suppress the other side's doorbell until an index threshold, the same lever as NIC interrupt moderation.</p>
+<p>Two invariants are load-bearing. Single-writer discipline: the guest writes descriptors and avail, never used; the device writes used, never avail — no locks, one writer per structure. And everything the device reads (ids, addrs, lens) is <strong>guest-written memory parsed by privileged host code</strong>: the device must bounds-check every <code>id &lt; qsz</code> and every <code>addr/len</code>, because a malicious guest hands it attacker-controlled bytes. The descriptor table is the security boundary — every virtio escape bug lives there. One wart you meet when implementing a device: the avail ring's words are 16-bit, the used ring's 32-bit — a 2008 spec asymmetry that makes used entries 8 B, not 4.</p>
+<p>Say the lineage out loud, because it is one idea with three names: a NIC's DMA descriptor rings (module 13 ch01), io_uring's SQ/CQ rings (module 13 ch04), and this vring. Fixed-size power-of-two arena, free-running indices, two doorbells, one writer per structure — the vring is the NIC ring with the hardware removed; io_uring is the vring moved into the kernel for processes instead of VMs.</p>
+<h2 id="the-implementation-ladder-userspace-thread-kernel-thread-silicon">The implementation ladder: userspace thread, kernel thread, silicon</h2>
+<p>The ring is a <em>contract</em>, not an implementation — its superpower. Anyone who can map the guest's memory can be the device. The performance story is moving the ring's servant off the slow path, one rung at a time:</p>
+<pre><code class="language-text">WHO SERVICES THE RING (sending one burst of packets)
+
+rung 1  QEMU userspace (virtio, or e1000 emulation)
+   guest kick: PIO/MMIO write
+     -&gt; VM exit (~1,000-2,000 cycles)
+     -&gt; KVM returns to a QEMU userspace thread (2 context switches)
+     -&gt; QEMU walks the vring via its GPA-&gt;host map, memcpys the packets,
+        write()s them to /dev/tap (one more switch)
+   completion: tap wakes QEMU, QEMU writes the used ring, signals irqfd
+
+rung 2  vhost-net (the dataplane is a kernel thread)
+   guest kick: PIO/MMIO write
+     -&gt; VM exit, but KVM sees a registered ioeventfd: signal the eventfd,
+        re-enter the guest. QEMU never runs. No context switch.
+     -&gt; the vhost kernel thread (has the guest's RAM mapped) wakes,
+        reads the vring, moves the packet through an in-kernel tap socket
+   completion: vhost writes the used ring, writes the irqfd
+     -&gt; KVM injects MSI-X. The packet never leaves the kernel.
+
+rung 3  SR-IOV (the dataplane is silicon — next section)
+   guest VF driver writes descriptors into the NIC's own rings
+     -&gt; an ordinary store to a BAR: no exit, no hypervisor anywhere
+   completion: the VF raises MSI-X straight into the guest</code></pre>
+<p>Rung 1 is QEMU's default and already 10-50x better than e1000, because the ring amortizes the exit: one kick and one interrupt per <em>batch</em> instead of 10-20 traps per <em>packet</em>. The remaining tax: each kick exits and round-trips a userspace thread that calls back into the kernel for the tap.</p>
+<p>Rung 2, vhost-net (Linux kernel module, 2010), deletes userspace from the data path. At startup QEMU hands over the rings via <code>/dev/vhost-net</code> — <code>VHOST_SET_OWNER</code>, <code>VHOST_SET_MEM_TABLE</code> (the GPA-to-host map), per queue <code>VHOST_SET_VRING_NUM/ADDR/BASE</code>, <code>VHOST_SET_VRING_KICK</code> (an ioeventfd), <code>VHOST_SET_VRING_CALL</code> (an irqfd), <code>VHOST_NET_SET_BACKEND</code> (bind the tap). Then: a kick exits, KVM signals the ioeventfd and re-enters; the eventfd wakes a dedicated vhost kernel thread (pinned away from the vCPUs); that thread — same vring contract — moves packets between guest RAM and the tap socket entirely in kernel space, completing with a used-ring write plus an irqfd write that KVM turns into an MSI-X injection. The exit per kick becomes an in-kernel detour; the completion path never exits the kernel. Typical gain over userspace virtio: 3-5x. QEMU stays as the <em>control plane</em> — configuration, PCI emulation, live migration, virtio-net's control queue (MAC and offload changes): data plane in the kernel, control plane in userspace.</p>
+<p>Rung 2.5, vhost-user, points the move sideways: the dataplane in <em>another userspace process</em> — Open vSwitch or a DPDK app — controlled over a UNIX socket with the rings mapped in. Poll mode deletes even the kick's exit, at the price of a spinning core — the same doorbells-vs-spinning trade io_uring's SQPOLL makes one level down.</p>
+<h2 id="sr-iov-and-the-third-page-table">SR-IOV and the third page table</h2>
+<p>The ladder's endgame: stop servicing the guest's network at all — hand it real hardware. SR-IOV (Single Root I/O Virtualization, PCI-SIG, 2007) lets one Physical Function carve itself into Virtual Functions: VFs are genuine PCI functions with their own descriptor queues, BARs, and MSI-X vectors — up to 256 per PF by the spec's ceiling (real NICs expose 16-128; Intel's 82599 did 64). A VF is assigned via VFIO: the host binds it to <code>vfio-pci</code>, QEMU opens <code>/dev/vfio/N</code>, and the guest boots its <em>unmodified vendor driver</em> against the VF. Performance is native — zero exits in the data path, DMA at line rate, poll-mode drivers in the guest push latency to tens of microseconds. The 14.88 Mpps gap is closed completely.</p>
+<p>But the guest's driver writes buffer addresses it believes are physical, and if the VF's DMA engine took them literally, a malicious guest would DMA over the host kernel. For the PC's first ~30 years (ISA 1981 until Intel VT-d chipsets in 2008) that was no hypothetical: any card could DMA anywhere, and FireWire was the demo — the IEEE 1394 OHCI "physical response unit" let any peer DMA host RAM directly, which passerby laptops used in 2008 to patch the login check on locked Windows and macOS machines. Physical DMA was a <em>supported feature</em> for a decade before anyone treated it as an attack.</p>
+<p>The IOMMU (Intel VT-d, AMD-Vi) is the fix — literally a third page table. Count them: the guest's own page table (guest-virtual to guest-physical, walked by the CPU in guest mode), the EPT (guest-physical to host-physical, walked by the MMU, chapter 02), and the IOMMU's tables (I/O virtual addresses — <em>iova</em> — to host-physical, walked by the device's DMA engine; module 12 ch03's GMMU is the same invention grown for GPUs). QEMU's VFIO layer maps iova = guest-physical for exactly that VM's pages, so the guest keeps writing "physical" addresses and a third translator quietly reinterprets them — while <em>confining</em> the device: DMA outside the mapped pages faults. That confinement is the device isolation the PC lacked for 30 years, and what makes handing hardware to an untrusted guest survivable. Note the asymmetry: the CPU's path walks two tables, the device's one — device traffic doesn't compound chapter 02's nested-walk costs.</p>
+<p>The costs are operational. VF configuration belongs to the PF driver: creating VFs is a sysfs write (<code>echo 8 &gt; /sys/bus/pci/devices/&lt;PF&gt;/sriov_numvfs</code>, bounded by <code>sriov_totalvfs</code>). And the big one: <strong>live migration breaks</strong>. The VF's queue state, DMA mappings, and interrupt config live in <em>silicon on the source host</em>; the target cannot conjure an identical function mid-flight — at cutover the datapath vanishes. Hence the architecture rule stated bluntly: <strong>no SR-IOV for the migratable tier</strong>. The escape hatch is the bond pattern (Linux's net_failover driver, 2018-2019): pair the VF with a virtio "standby" NIC; before migration, flip the datapath onto virtio, migrate, flip onto the target's VF. Native speed when static, migratable when needed — switching rungs on demand.</p>
+<h2 id="live-migration-moving-a-program-that-will-not-stop-writing">Live migration: moving a program that will not stop writing</h2>
+<p>Migration is the payoff for everything above: move a running VM between hosts — drains, load balance, power — with downtime of tens of milliseconds. State to move: guest RAM (16 GB here), vCPU state (VMCS fields, chapter 01), and <em>device state</em>. RAM is the hard part because the guest keeps writing it while you copy.</p>
+<p><strong>Pre-copy</strong> is the classic loop. Pass 1: bulk-stream guest RAM to the target while the guest runs — 16 GB over a 10 Gbps link is about 16 s at ~1 GB/s effective. Meanwhile KVM enables <em>dirty logging</em>: the EPT write bits for guest RAM are cleared, so the guest's writes cause EPT violations (chapter 02's MMIO trap, weaponized differently — there it caught device-register writes, here the guest writing its own memory), each fault marking a dirty bitmap bit before the write goes through. Pass 2 copies only pages dirtied during pass 1; pass 3 what was dirtied during pass 2 — each pass smaller, <em>if</em> the guest dirties slower than the link copies.</p>
+<p>Convergence is one inequality. A pass copying set S over bandwidth B takes S/B seconds, during which the guest dirties at rate d; the next set is roughly S·(d/B). If d &lt; B the dirty set decays geometrically to zero; if d ≥ B it never shrinks. Worked example: 16 GB guest, dirty rate 5 GB/s (a build daemon cycling all its memory every ~3 s), 10 Gbps link ≈ 1 GB/s effective. Ratio 5 &gt; 1: after the 16 s first pass, every page has been rewritten — the next pass is 16 GB again, forever. <strong>It never converges.</strong> The same guest with a W^X-shaped workload (code pages written once at boot, a few hundred MB/s of heap churn) decays at ratio ~0.3 and is ready in 2-3 passes. "What's the dirty rate versus the link?" is the insider's <em>first</em> triage question on a stuck migration — QEMU 6.0+ has <code>calc-dirty-rate</code> to measure it live. Escape valves: auto-converge (throttle the vCPUs — manufacturing chapter 01's steal time — until d &lt; B), XBZRLE (delta-compression), or post-copy. The <strong>cutover</strong>: pause the vCPUs, copy the final dirty set plus device state, resume on the target — downtime = final-set/B, which must fit the limit you set (QEMU's default: 30 ms).</p>
+<p><strong>Post-copy</strong> inverts the order: resume the guest on the target <em>first</em>. Every un-transferred page faults — an EPT violation on the target, resolved by fetching that 4 KB page over the network from the source. No convergence problem, near-instant cutover — and an unrecoverable failure mode: if the network dies, the VM dies, because most of its memory exists only at the source (which must keep it pinned). Insiders price it in one sentence: <em>the VM's memory IS the network</em>. Fleets use it for huge, dirty guests that pre-copy can never converge.</p>
+<p>Last piece: <strong>what even is the state of a disk controller?</strong> For an emulated e1000: hundreds of registers, timer state, in-flight DMA — order-sensitive internal state QEMU serializes as a per-device "vmstate" blob. For virtio: queue addresses, feature bits, a status byte — a few hundred bytes — because the <em>data</em> lives in the guest's rings, self-describing, in guest RAM. That is the quiet reason virtio's clean model made migration practical at fleet scale. The ladder complicates it once: a vhost thread's state (ring positions, in-kernel socket) can't cross hosts, so at migration start QEMU stops vhost, reads the ring state back (<code>VHOST_GET_VRING_BASE</code>), migrates as plain userspace virtio, re-attaches vhost on the target — with a visible 3-5x network dip for the duration. SR-IOV's state is in silicon and cannot be serialized at all — which is precisely why it cannot migrate.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>PCI IDs are a compatibility oracle.</strong> <code>lspci -nn</code> showing <code>1af4:1000</code> means legacy virtio; <code>1af4:1041</code> means modern virtio-1.x net. Pre-2009 guests and rescue ISOs boot only on <code>1af4:1000</code> or a full e1000 — the one task emulation still earns. Windows guests need the separate virtio-win driver disk; forgetting it is the classic Windows-on-KVM first-week mistake.</li>
+<li><strong><code>idx</code> is free-running; the position is <code>idx &amp; (qsz-1)</code>.</strong> The counters run 0-65535 and wrap; the homegrown-device bug is subscripting the 256-entry table with <code>idx</code> directly — out of bounds within the first 256 operations. Power-of-two sizes exist so wraparound is a mask, not a division.</li>
+<li><strong>EVENT_IDX (bit 29) is the interrupt-moderation bit.</strong> Without it, a guest at 1 Mpps burns a doorbell storm — one interrupt per completion at the finest granularity. <code>used_event</code>/<code>avail_event</code> are the same lever as NIC coalescing, and the same tuning question.</li>
+<li><strong>The migration vhost dip is expected, not a bug.</strong> vhost state can't cross hosts, so the dataplane falls back to userspace for the migration's duration — a 3-5x network slowdown on every migrated vhost guest. Migrate in low-traffic windows.</li>
+<li><strong><code>sriov_numvfs</code> is THE knob.</strong> <code>echo N &gt; /sys/bus/pci/devices/&lt;PF&gt;/sriov_numvfs</code>, bounded by the device's <code>sriov_totalvfs</code>; the PF driver owns VF MACs and VLAN filters. An EINVAL usually means you asked for more than TotalVFs or the PF driver caps it lower.</li>
+<li><strong>One virtqueue pair per vCPU is the multi-queue setup.</strong> <code>ethtool -l eth0</code> shows the combined channels; VIRTIO_NET_F_MQ lets <code>ethtool -L eth0 combined N</code> change them live. <code>/proc/interrupts</code> names the vectors <code>virtio0-input.0</code>, <code>virtio0-output.0</code> — a single-queue guest at 10 Gbps bottlenecks a vCPU in softirq before the wire does.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Most readers of this module are <em>inside</em> a VM right now — that is the lab.</p>
+<pre><code class="language-console">$ systemd-detect-virt
+kvm                        # "kvm" = KVM guest, "qemu" = TCG emulation, "none" = bare metal
+$ lspci | grep -i -E 'virtio|sriov'
+00:03.0 Ethernet controller: Red Hat, Inc. Virtio network device
+$ lspci -nn | grep -i virtio
+00:03.0 Ethernet controller [0200]: Red Hat, Inc. Virtio network device [1af4:1041]</code></pre>
+<p><code>1af4:1041</code> is modern virtio-1.x; <code>1af4:1000</code> would be legacy (older QEMU or a compat flag). No virtio line at all: check what <code>lspci</code> <em>does</em> show — an emulated model, or a passed-through VF.</p>
+<pre><code class="language-console">$ ethtool -i eth0
+driver: virtio_net
+version: 1.0.0
+bus-info: 0000:00:03.0
+$ ls /sys/bus/pci/devices/0000:00:03.0/virtio0/
+$ ls /sys/bus/virtio/devices/
+virtio0  virtio1  virtio2  virtio3
+$ grep virtio /proc/interrupts
+ 27: ...  virtio0-config
+ 28: ...  virtio0-input.0
+ 29: ...  virtio0-output.0
+$ modinfo virtio_net | head -n 4
+filename:   /lib/modules/.../virtio_net.ko
+version:    1.0.0</code></pre>
+<p>What to notice: the PCI function <em>contains</em> a virtio device (the <code>virtio0</code> subdirectory — PCI is just the transport), and each queue pair has its own MSI-X vector line. You are reading the contract from the guest end; on the host side those doorbells are <code>KVM_IOEVENTFD</code>s.</p>
+<p>With a host that has KVM, run a tiny guest with virtio (user networking needs no root) and watch QEMU bind the doorbells:</p>
+<pre><code class="language-console">$ strace -f -e trace=ioctl,eventfd2 qemu-system-x86_64 -enable-kvm -m 1G \
+    -netdev user,id=n0 -device virtio-net-pci,netdev=n0 -drive file=d.qcow2 2&gt; qemu.log
+$ grep -cE 'KVM_IOEVENTFD|KVM_IRQFD' qemu.log
+6</code></pre>
+<p>Each <code>KVM_IOEVENTFD</code> is a kick register turned into an eventfd; each <code>KVM_IRQFD</code> an interrupt vector. Add a tap device with <code>vhost=on</code> (needs root) and the log grows the rung-2 handover: <code>VHOST_SET_OWNER</code>, <code>VHOST_SET_MEM_TABLE</code>, <code>VHOST_SET_VRING_ADDR/BASE/KICK/CALL</code>, <code>VHOST_NET_SET_BACKEND</code>. Recent strace decodes these names; older versions print raw <code>_IOC</code> numbers — then the <code>eventfd2</code> count is the fallback signal.</p>
+<p>The paper lab — migration arithmetic, worked. 16 GB guest, dirty rate 5 GB/s, 10 Gbps link ≈ 1 GB/s effective. First pass: 16 GB / 1 GB/s = 16 s, during which the guest dirties up to 5 GB/s x 16 s = 80 GB — but only 16 GB exist, so every page is dirty again; pass 2 copies 16 GB; the sequence never shrinks. Does it converge? <strong>No.</strong> Pre-copy needs d &lt; B: this guest needs a ~50 Gbps effective link to make progress, auto-converge throttling its vCPUs below ~1 GB/s of dirt, or post-copy with its partition risk. Ratio, threshold, remedy — the whole triage in three lines.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>The "network is slow in this VM" runbook.</strong> Identify the rung first: <code>ethtool -i</code> / <code>lspci -k</code> (virtio_net vs an emulated driver). Emulated means per-packet exits — confirm with <code>kvm_stat</code>'s exit-reason counts (chapter 01's tool) under load. Virtio but slow: check <code>ethtool -l</code> — one queue pair on a 16-vCPU guest bottlenecks a core in softirq; raise it with <code>ethtool -L</code>.</li>
+<li><strong>Fleet tiering and migration feasibility.</strong> The migratable tier runs virtio + vhost and eats the 3-5x dip during migrations; the pinned latency tier gets SR-IOV and drains by restart — or runs the net_failover bond to buy both. Before any drain, measure the dirty rate (<code>calc-dirty-rate</code>) and divide by effective link bandwidth: a ratio above 1 tells you <em>before</em> the 2 a.m. window that pre-copy will never converge — and which lever (throttle, compress, post-copy, restart) fits the SLA.</li>
+<li><strong>Interview whiteboards you can now draw cold:</strong> the e1000 ceiling derivation (~50k-100k pps per core, 150-1,500x off line rate); the vring with byte offsets; the three page tables (guest PT, EPT, IOMMU) and who walks each — the CPU walks two, the device one.</li>
+<li><strong>Reading device-CVE writeups.</strong> A virtio descriptor table is guest-written memory parsed by privileged host code — a missing bounds check on <code>id</code> or <code>len</code> is a guest-to-host escape primitive. When the next QEMU or vhost CVE lands, you know which invariant failed and which ring word was trusted.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 15 ch01</strong> — the ~1,000-2,000-cycle exit cost is the currency this chapter spends; exit reasons are the device path's trap doors; auto-converge deliberately manufactures steal time.</li>
+<li><strong>Module 15 ch02</strong> — the kick is that chapter's MMIO-as-page-fault trick, inverted for dirty logging; the balloon is itself a virtio device.</li>
+<li><strong>Module 15 ch04</strong> — a container's network is a veth pair into a bridge; a VM's is a virtio ring into a tap — same wire, different depth of illusion.</li>
+<li><strong>Module 15 ch05</strong> — Firecracker's device model is virtio-net/blk plus a serial console (~50 kLOC vs QEMU's ~2 MLOC of attack surface); its snapshot-resume is this chapter's migration frozen to a file.</li>
+<li><strong>Module 13 ch01 + ch04</strong> — the lineage: NIC DMA rings, io_uring's SQ/CQ, the vring — one producer/consumer design, three deployments; EVENT_IDX is the same lever as interrupt moderation and SQPOLL coalescing.</li>
+<li><strong>Module 12 ch03</strong> — the GPU's GMMU and the IOMMU are the same invention: a page table walked by the device, because devices can't be trusted with physical addresses.</li>
+<li><strong>Module 01 ch03</strong> — three translators now stand between a program and its bytes (process PT, EPT, IOMMU); dirty logging's write-protect-and-collect-faults is the machinery of copy-on-write.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>A 3 GHz vCPU pushes 64-byte packets through QEMU's emulated e1000. Assume ~15 VM exits per bidirectional packet (TX tail poke, RX buffer post, interrupt raise/ack, status writes), ~1,500 cycles per exit round trip, and ~10,000 cycles of QEMU userspace emulation per packet. What is one core's packets/sec ceiling, and how many times below a 10 GbE NIC's 64-byte line rate (14.88 Mpps) is it?</li>
+</ol>
+<ol>
+<li>The kick (guest to device) costs a VM exit; the interrupt (device to guest) costs none. Explain the asymmetry from first principles — mechanically, what is each event, and why must one trap while the other cannot?</li>
+</ol>
+<ol>
+<li>A split vring has queue size 128. Compute (a) the descriptor table's byte size, (b) the avail ring's size including the <code>used_event</code> word, (c) the used ring's size including <code>avail_event</code>, and (d) in the legacy layout (descriptor table first, avail immediately after, used aligned up to a 4096-byte boundary), the total span from descriptor-table start to used-ring end.</li>
+</ol>
+<ol>
+<li>An 8 GB guest dirties memory at a steady 400 MB/s; the migration link sustains 1 GB/s effective. Does pre-copy converge? Roughly how many passes until the remaining dirty set is under 30 MB, what total copy time, and what downtime does the final pass imply against QEMU's default 30 ms budget?</li>
+</ol>
+<ol>
+<li>Every time ops live-migrates a vhost-backed VM, its network throughput drops from ~40 Gbps to ~8 Gbps for the migration's duration, then fully recovers. Nothing is broken. What is the mechanism?</li>
+</ol>
+<ol>
+<li>A latency-critical tenant runs with an SR-IOV VF. The host is drained via live migration; at cutover, every TCP connection through the VF resets. What died, mechanically, and what are the two standard escapes from this trade?</li>
+</ol>
+<ol>
+<li>You write a test "device" — a userspace loop implementing the vring correctly but never polling and never sleeping on the kick's ioeventfd. The guest driver posts 8 descriptors and bumps <code>avail.idx</code> from 8 to 16. Your device sees nothing. Why?</li>
+</ol>
+<ol>
+<li>Map the split vring onto io_uring (module 13 ch04) part by part; name the structural piece each has that the other lacks, and state the backpressure rule they share.</li>
+</ol>
+<details><summary>Answers</summary>
+<ol>
+<li><strong>~92,000 pps, ~160x below line rate.</strong> 15 exits x 1,500 cycles = 22,500 cycles, plus 10,000 cycles of userspace emulation = 32,500 cycles per packet. 3 x 10^9 / 3.25 x 10^4 ≈ 9.2 x 10^4 packets/sec. Gap: 14.88 Mpps / 92 kpps ≈ 162x; against 100 GbE line rate (148.8 Mpps), ~1,600x — three full orders.</li>
+</ol>
+<ol>
+<li><strong>A kick is a guest instruction; an interrupt is host-side state.</strong> The kick is a store the vCPU executes to trapped memory (PIO exit, or EPT violation on an MMIO BAR — chapter 02's mechanism); observing a store the vCPU just executed requires surfacing it <em>at that instruction</em>, and the only mechanism is a VM exit — ioeventfd merely ensures KVM, not QEMU userspace, handles it. The interrupt flows the other way: the device writes an irqfd, KVM latches the vector in the virtual local APIC, delivery happens at the next vmentry — pushing state into the guest needs no trap, because nothing in the guest needs observing. One is observed by trapping; the other is injected.</li>
+</ol>
+<ol>
+<li><strong>(a) 2,048 B, (b) 262 B, (c) 1,036 B, (d) 5,132 B.</strong> (a) 128 x 16 = 2,048. (b) 2 (flags) + 2 (idx) + 2 x 128 (ring) + 2 (used_event) = 262. (c) 4 (flags) + 4 (idx) + 8 x 128 (id+len pairs) + 4 (avail_event) = 1,036. (d) desc + avail = 2,310; the used ring starts at the next 4096 boundary, offset 4,096, ending at 4,096 + 1,036 = 5,132 bytes from the descriptor-table start. The 4096 alignment is a legacy-layout requirement (modern virtio drops it).</li>
+</ol>
+<ol>
+<li><strong>Converges: ~7 passes, ~13.3 s total, final pass ≈ 30 ms.</strong> Decay ratio d/B = 0.4/1.0 = 0.4 &lt; 1, so the dirty set shrinks geometrically: after pass k it is about 8 x 0.4^k GB. 8 x 0.4^k &lt; 0.03 GB needs 0.4^k &lt; 0.00375, i.e. k &gt; ln(0.00375)/ln(0.4) ≈ 6.1 — 7 passes. Total copy time: 8 + 3.2 + 1.28 + 0.51 + 0.21 + 0.08 + 0.03 ≈ 13.3 s. The final ~30 MB at 1 GB/s ≈ 30 ms of cutover downtime — right at QEMU's default 30 ms budget; one more pass (~12 ms of dirt) buys margin.</li>
+</ol>
+<ol>
+<li><strong>The vhost dataplane can't cross hosts, so it falls back one rung.</strong> At migration start QEMU stops the vhost kernel thread and reads its state back (<code>VHOST_GET_VRING_BASE</code>) — an in-kernel thread's ring positions and socket state can't be serialized and moved. Until migration completes, QEMU services the rings in userspace, paying the rung-1 cost (exit + 2 context switches + userspace work per kick) instead of rung 2's — the 3-5x drop. It is the ladder's expected toll, which is why migrations run in low-traffic windows.</li>
+</ol>
+<ol>
+<li><strong>The datapath's backing hardware did not move with the vCPUs.</strong> The VF's queues, DMA mappings, and MSI-X state live in the source host's NIC silicon; the target has no identical function holding that state, so at cutover the guest's driver is talking to hardware that no longer exists — packets black-hole, TCP times out and resets. Escapes: (1) policy — the SR-IOV tier doesn't live-migrate; drain by restarting the tenant ("no SR-IOV for the migratable tier"); (2) the bond/net_failover pattern — pair the VF (primary) with a virtio standby, flip the datapath to virtio before cutover, migrate, flip onto the target's VF after.</li>
+</ol>
+<ol>
+<li><strong>Ring entries are state, not signals.</strong> The only event the contract guarantees the device is the kick — the write to the notify register — and the guest driver didn't send one: drivers batch (post 8 buffers, kick once), so posting descriptors plus bumping <code>avail.idx</code> produces no observable event unless the device polls. A device that neither polls (busy-poll mode, a DPDK-style optimization) nor sleeps on the kick's ioeventfd is deaf to the only doorbell the spec promises. The ring is the database; the doorbell is the interrupt.</li>
+</ol>
+<ol>
+<li><strong>avail ↔ SQ index ring; descriptor table ↔ SQE array; used ↔ CQ ring.</strong> The avail ring is an array of indices into a descriptor array — exactly io_uring's submission index ring pointing into the SQE array; the used ring is a fixed-size completion array published by the consumer — exactly the CQ ring. The vring's extra piece: descriptor <em>chaining</em> (scatter-gather via <code>next</code>, plus the INDIRECT second level), where io_uring has one fixed-size SQE per operation. io_uring's extra piece: the 64-bit <code>user_data</code> tag carried to completion, where the vring identifies a completion only by head descriptor id. Shared backpressure rule: the producer's free-running index minus the consumer's index must stay strictly less than the ring size — hence both are powers of two (mask with qsz-1), and both suppress the quiet-direction doorbell (EVENT_IDX's event words vs SQPOLL/coalescing).</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch02.html"><span class="cn-label">previous</span><span class="cn-title">Ch 02</span></a>
+<a class="next" href="ch04.html"><span class="cn-label">next</span><span class="cn-title">Ch 04</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 15 — Virtualization, containers &amp; the cloud</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

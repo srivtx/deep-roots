@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Containers: the namespaced process — deep-roots</title>
+<meta name="description" content="Chapter 04 of module 15: Containers: the namespaced process">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Containers: the namespaced process — deep-roots">
+<meta property="og:description" content="Chapter 04 of module 15: Containers: the namespaced process">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Containers: the namespaced process — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of module 15: Containers: the namespaced process">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 15 &middot; one machine, many owners</div>
+<h1 class="post-title">Containers: the namespaced process</h1>
+<div class="post-meta">chapter 04 &middot; ~16 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A container is not a lightweight VM. It is a normal process — same syscalls, same page tables, same kernel — whose <em>views</em> of kernel-global resources have been swapped: 8 namespaces replace the pid counter, mount table, network stack, uid map (and 4 more) with per-process instances; cgroups set the bills (memory ends in a kill at <code>memory.max</code>, CPU ends in a freeze at <code>cpu.max</code>); overlayfs builds a private root filesystem from read-only image layers; seccomp, capabilities and LSM profiles shrink the set of doors. Nothing new was invented: a runtime is <code>clone()</code> with 6-8 flags, mounts, and cgroupfs writes. The security truth follows: the kernel is <em>shared</em>, so the wall is one kernel 0-day wide — the difference from the VM of chapters 01-03.</blockquote>
+<h2 id="one-mechanism-swap-the-pointers">One mechanism: swap the pointers</h2>
+<p>Chapters 01-03 built a fake computer: a guest CPU mode (VT-x), a second page table (EPT), virtual devices (virtio rings). A container skips all three. Mechanically, <code>docker run</code> is <code>clone()</code> with a handful of <code>CLONE_NEW*</code> flags, a <code>pivot_root()</code>, and a cgroup assignment.</p>
+<p>Module 01 chapter 04 derived that a process is a data structure the kernel walks. That struct also holds an <code>nsproxy</code> — pointers to namespace objects (the user namespace lives in <code>cred</code> instead — same idea, different struct). The kernel's virtualization-on-the-cheap pattern is one move, repeated 8 times: <strong>globals become per-task tables.</strong> The pid counter, the mount table, the network stack, the hostname, the uid checks — each was one global structure; each is now a table with a refcount, and each process's pointer aims either at the <em>initial</em> (host) instance or at a private copy. A container is the same data structure with different pointers:</p>
+<pre><code class="language-text">        process A (your shell)                process B ("the container")
++------------------------------+       +------------------------------+
+| struct task_struct           |       | struct task_struct           |
+|   nsproxy ----+              |       |   nsproxy ----+              |
++---------------|--------------+       +---------------|--------------+
+                |                                      |
++---------------v---------------------+  +--------------v-----------------------+
+| pid_ns  = global pid counter        |  | pid_ns  = fresh counter (init = 1)     |
+| mnt_ns  = global mount table        |  | mnt_ns  = private copy of the tree    |
+| net_ns  = global network stack      |  | net_ns  = fresh stack + one veth      |
+| user_ns = initial uid map (cred)    |  | user_ns= "0 -&gt; 100000" map (cred)     |
++-------------------------------------+  +---------------------------------------+
+  one kernel, one scheduler, one syscall table -- only the POINTERS differ</code></pre>
+<p>Two syscalls are the doors between worlds: <code>unshare(flags)</code> creates fresh namespaces and moves the caller in; <code>setns(fd, flags)</code> joins an existing one via <code>/proc/&lt;pid&gt;/ns/</code>. Docker, Podman and runc are orchestration on top. Stated precisely: <strong>a container is a process whose kernel-resource views are swapped</strong> — not a machine.</p>
+<h2 id="the-eight-views-one-per-global-table">The eight views, one per global table</h2>
+<p>Each namespace virtualizes exactly one global (merge kernels marked — a 20-year accretion, not a design):</p>
+<ul>
+<li><strong>mount</strong> (<code>CLONE_NEWNS</code>, Linux 2.4.19) — a copy of the mount table. A container's "rootfs" is just this: the runtime mounts the image at a scratch directory, <code>pivot_root()</code>s into it, unmounts the old root; the same table makes <code>/proc</code> and <code>/sys</code> per-container.</li>
+<li><strong>pid</strong> (<code>CLONE_NEWPID</code>, 2.6.24) — a fresh pid counter: the container's init is PID 1 in its namespace and 30,142 to the host; the <code>NSpid:</code> line in <code>/proc/&lt;pid&gt;/status</code> shows the chain, one number per nesting level, outermost first. PID 1 is where containers get weird: the kernel skips <em>default</em> fatal signal dispositions for PID 1 (an unhandled SIGTERM is ignored, not fatal), and PID 1 must <code>wait()</code> for reparented orphans or zombies accumulate. When PID 1 of a namespace exits, the kernel SIGKILLs every other process in it — the "your container dies differently when the app crashes" folklore.</li>
+<li><strong>net</strong> (<code>CLONE_NEWNET</code>, 2.6.29) — a private network stack: interfaces, routes, iptables rules, sockets, <code>/proc/net</code>. The wire out is a <strong>veth pair</strong> — a virtual crossover cable: one end moved into the container (renamed <code>eth0</code>), the other plugged into a host bridge, NAT to the physical NIC. <code>lo</code> in a new netns starts <em>DOWN</em>.</li>
+<li><strong>uts</strong> (<code>CLONE_NEWUTS</code>, 2.6.19) — hostname and domainname, nothing else.</li>
+<li><strong>ipc</strong> (<code>CLONE_NEWIPC</code>, 2.6.19) — SysV shared memory/semaphores and POSIX message queues (<code>/dev/mqueue</code>); shm sysctls are per-namespace.</li>
+<li><strong>user</strong> (<code>CLONE_NEWUSER</code>, 3.8) — the uid/gid <em>map</em>: who "root" is — the namespace that makes fake root safe, drawn:</li>
+<li><strong>cgroup</strong> (<code>CLONE_NEWCGROUP</code>, 4.6) — relativizes <code>/proc/self/cgroup</code> paths so the container sees <code>/</code>, not the host's bookkeeping path.</li>
+<li><strong>time</strong> (<code>CLONE_NEWTIME</code>, 5.6) — the newest: fixed offsets for <code>CLOCK_MONOTONIC</code>/<code>CLOCK_BOOTTIME</code> only (CRIU's restore of pending sleeps); <code>CLOCK_REALTIME</code> is not virtualized.</li>
+</ul>
+<pre><code class="language-text">            /proc/self/uid_map:   "0   100000   65536"
+
+     inside the user namespace               outside (the host)
+     uid 0 ........... uid 65535    maps to    uid 100000 ........ uid 165535
+     "root": full capability set               an unprivileged nobody --
+     *within this namespace*                   caps here are worth nothing</code></pre>
+<p>Uid 0 inside a user namespace holds all capabilities <em>in that namespace</em> — it can mount, set the hostname — while anything crossing the boundary is checked against the <em>outside</em> identity, uid 100000. Rootless Podman runs on this trick with a one-line map (<code>0 1000 1</code>).</p>
+<h2 id="namespaces-hide-cgroups-charge">Namespaces hide; cgroups charge</h2>
+<p>Namespaces are the <em>perception</em> half; cgroups are the <em>accounting</em> half — what it may consume. Cgroup v1 (2007) let each controller live on its own hierarchy — a task could be in <code>memory/</code> on one tree and <code>cpu/</code> on another, so ownership became unattributable. Cgroup v2 (merged 4.5, 2016) mandates <strong>one unified hierarchy</strong> with every controller on it: one path, one owner — why systemd 240+ (2019), Docker 20.10 (2021) and Kubernetes 1.25 (2022) all completed the flip.</p>
+<p>The memory controller is the one that kills. <code>memory.current</code> grows as pages are charged to the cgroup; two thresholds sit above it:</p>
+<pre><code class="language-text">   a page allocation (mmap growth / brk / fault-in)
+        |
+        v
+   charge -&gt; memory.current grows ............... toward the limits
+        |
+   memory.high reached?  ---yes---&gt; hard reclaim: the ALLOCATING task is made
+        |                              to evict pages itself. The app sees
+        |                              LATENCY, not death (memory.events
+        |                              counts "high"; memory.pressure = PSI)
+   memory.max  reached?  ---yes---&gt; OOM inside the cgroup: kernel picks the
+        |                              highest-badness task *inside this
+        |                              cgroup only* and SIGKILLs it (module
+        |                              07 ch05's arithmetic, scoped).
+        v                              memory.events counts "oom_kill".
+                                      The dead app's exit code: 137</code></pre>
+<p><code>memory.high</code> is the humane limit — the kernel reclaims aggressively (the app slows, refaults in <code>memory.stat</code>) but nothing dies. <code>memory.max</code> is the wall — the OOM killer's candidates restricted to the cgroup. <code>memory.swap.max</code> caps anonymous pages in swap; with <code>swap.max 0</code> the cgroup hits <code>memory.max</code> that much sooner. <strong>Exit code 137 = 128 + 9 (SIGKILL)</strong> — THE forensic number: the shell reports 137; the proof is <code>memory.events</code>' <code>oom_kill</code> counter, not a traceback (the process died mid-allocation, never reaching <code>MemoryError</code>).</p>
+<p>The CPU controller is the one that stalls. <code>cpu.max</code> takes <code>"quota period"</code> in microseconds, implementing CFS bandwidth control: the cgroup's tasks may burn <code>quota</code> of CPU per <code>period</code>, and the <strong>default period is 100 ms</strong> (100,000 µs — systemd's <code>CPUQuota=40%</code> writes <code>cpu.max = 40000 100000</code>). Exceed it and the kernel <em>throttles</em>: every runnable task in the cgroup is dequeued until the period boundary refills the quota. The incident-class arithmetic: a single-threaded app with a 0.9 CPU quota runs 90 ms and freezes 10 ms every period — the literal "10 ms stall per 100 ms." Threads amplify it: 4 threads with a 40 ms quota burn it in 10 ms of wall time, then the whole cgroup sleeps 90 of every 100 ms — and since the quota is shared, one spinning thread freezes its siblings. The record is in <code>cpu.stat</code>: <code>usage_usec</code> (CPU actually used), <code>nr_periods</code> (boundaries elapsed, ~10 per second), <code>nr_throttled</code> (periods in which the quota ran out) and <code>throttled_usec</code> (total time FROZEN — accumulates, never resets).</p>
+<p><code>nr_throttled</code> climbing at <code>nr_periods</code>' rate means the cgroup is fully walled — the insider's first check when the complaint is "the container is slow but the host is idle." For latency-sensitive work <code>cpu.weight</code> (1-10000, default 100) is the softer tool: it shares rather than walls — you get your proportion, never a freeze.</p>
+<h2 id="the-rootfs-is-an-overlay-the-copy-up-bill">The rootfs is an overlay: the copy-up bill</h2>
+<p>A container image is layers of tarballs plus a manifest: each layer is a <em>diff</em> — files added or replaced, whiteouts for deletions — and the manifest lists the order (<code>docker history</code> prints it). Layers are read-only and shared across every container of that image; only the top is private.</p>
+<p>At run time the runtime mounts an <strong>overlayfs</strong> with the image layers stacked as <code>lowerdir</code>s (leftmost = topmost, same convention as <code>$PATH</code>) and a per-container <code>upperdir</code> (plus a <code>workdir</code> for atomic renames). That is module 14 chapter 05's machinery reused verbatim — with its cost structure attached: <strong>copy-up</strong>. The first write to a lower-layer file copies the <em>entire file</em> into the upperdir first. Editing a 100 MB file that shipped in the image copies 100 MB before your edit starts — "containers are free until you edit big files," module 01 chapter 03's copy-on-write at file granularity. Deleting a lower file never touches the image: overlayfs writes a <strong>whiteout</strong> — a character device node, major/minor 0:0 — into the upperdir to hide the lower entry (why <code>rm</code> in a Dockerfile layer never shrinks an image).</p>
+<pre><code class="language-text">   what the process sees              the real directories on the host
+  +---------------------+   merged  +-- lowerdir: .../overlay/L2 (top)
+  |  /etc  /usr  /home  | &lt;-------- +-- lowerdir: .../overlay/L1 (base)
+  +---------------------+   view    +-- upperdir: .../diff  &lt;- YOUR writes
+  first write to /etc/foo                +-- workdir:  overlayfs scratch
+     -&gt; whole file copied lower -&gt; upper (100 MB file = 100 MB copy)</code></pre>
+<h2 id="one-kernel-four-walls-and-the-honest-table">One kernel, four walls, and the honest table</h2>
+<p>The security truth, unsoftened: <strong>the kernel is shared.</strong> A VM escape needs a hypervisor bug; a container escape needs one bug in the kernel <em>every container and the host already trust</em> — every CVE from modules 02 and 03 is an escape path. Four defenses layer on that one wall:</p>
+<ul>
+<li><strong>seccomp-bpf</strong> — a syscall allowlist enforced by a BPF filter in the kernel, installed before the app runs (<code>Seccomp: 2</code> means filter mode). The default container profile allows roughly 300 of the ~350 syscalls on x86-64 Linux 6.x (the count grows each release — call it ~300 of ~400). The blocked tail is the dangerous tail: module loading, <code>kexec</code>, raw <code>bpf(2)</code>, <code>ptrace</code>... Denied calls return <code>EPERM</code> — except a few returning <code>ENOSYS</code> so libraries fall back: <code>clone3</code> is the famous case (glibc's <code>pthread_create</code> retries with old <code>clone</code>). Blind blocking breaks here: the program sees "not implemented," not "not permitted."</li>
+<li><strong>capabilities</strong> — root's powers split into ~40 <code>CAP_*</code> bits (41 as of kernel 6.5; cap 40 is <code>CAP_CHECKPOINT_RESTORE</code>). Containers drop the <em>bounding set</em>: Docker's default keeps 14 of the 41 — decode <code>CapEff: 00000000a80425fb</code> with <code>capsh --decode</code> and out come exactly chown, dac_override, fowner, fsetid, kill, setgid, setuid, setpcap, net_bind_service, net_raw, sys_chroot, mknod, audit_write, setfcap. No <code>CAP_SYS_ADMIN</code> means no mounting and no module loading — the precise sense of "container root ≠ host root."</li>
+<li><strong>AppArmor/SELinux</strong> — module 05's mandatory access control, returned: the container runs under a profile (<code>docker-default</code> on Ubuntu/Debian, <code>container_t</code> on RHEL) that confines it to its own files and sockets even past every other check.</li>
+<li><strong>user namespaces</strong> — the uid map: even a full compromise of "root" inside maps to nobody outside.</li>
+</ul>
+<p>Both named escapes attack the same insight — the wall is only as good as the code behind the doors. <strong>runc CVE-2019-5736 (February 2019):</strong> a malicious container opened <code>/proc/self/exe</code> while the runtime was exec'ing into it — the link pointed at the <em>host's runc binary</em> — and overwrote it; the next <code>docker exec</code> ran the attacker's bytes as root. The runtime itself was the attack surface. <strong>Dirty Pipe (CVE-2022-0847, kernels 5.8-5.16.10):</strong> module 03 ch02's anatomy in one line — <code>splice()</code> from a file into a pipe left the stale <code>PIPE_BUF_FLAG_CAN_MERGE</code> flag set, so a following <code>write()</code> merged attacker bytes into the page cache of a read-only file. Overwrite <code>/etc/passwd</code> for root, or a host binary for escape — using only <code>pipe</code>, <code>splice</code>, <code>write</code>, all allowed by every default seccomp profile.</p>
+<div class="table-wrap"><table><thead><tr><th></th><th>process</th><th>container</th><th>VM</th></tr></thead><tbody><tr><td>what starts</td><td><code>fork()</code> + <code>execve()</code></td><td><code>clone()</code> + <code>pivot_root()</code> + cgroup attach</td><td>VMLAUNCH into a guest OS</td></tr><tr><td>start time</td><td>~0.05-1 ms</td><td>~5-50 ms (<code>unshare</code>) to 0.2-1 s (<code>docker run</code>)</td><td>seconds to a minute (full guest); 125 ms microVM (ch05)</td></tr><tr><td>memory overhead</td><td>0</td><td>~0 (layers shared as page cache)</td><td>~100-200 MB guest-OS floor (tens of MB if trimmed)</td></tr><tr><td>isolation interface</td><td>none</td><td>~350-400 syscalls</td><td>~50,000 instruction encodings + ~60 exit reasons</td></tr><tr><td>host code behind it</td><td>the kernel, same as you</td><td>the whole ~30 MLOC kernel (6.x) — <em>shared with the host</em></td><td>only the exit handlers (QEMU ~2 MLOC, Firecracker ~50 kLOC — ch05)</td></tr><tr><td>typical density</td><td>thousands/host</td><td>hundreds/host</td><td>tens/host (thousands of microVMs)</td></tr><tr><td>escape cost</td><td>no wall</td><td>one kernel 0-day</td><td>a chain: guest kernel bug + hypervisor bug</td></tr></tbody></table></div>
+<p>The "attack surface is an API surface" argument needs one refinement: raw counting misleads. A VM's ~50,000 instruction encodings dwarf a container's ~400 syscalls — but instructions execute in silicon and never touch host software; the host code a guest reaches is the handful of exit reasons handled by the VMM. A container's syscalls <em>all</em> land in ~30 million lines of kernel C the host also depends on. Count the doors that reach host code, and the smaller surface is the stronger wall — the VM's.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li>Read exit codes as <code>128 + signal</code>: <strong>137</strong> = SIGKILL (almost always the cgroup OOM), <strong>143</strong> = SIGTERM (graceful stop). Confirm 137 with <code>memory.events</code>' <code>oom_kill</code> — <code>dmesg</code> is usually unavailable inside a container (<code>kernel.dmesg_restrict=1</code>).</li>
+<li>The throttling signature is <em>period-quantized</em>: stalls land on the 100 ms grid, so latency histograms grow teeth at exact 100 ms multiples.</li>
+<li><code>/proc</code>'s filtering is fixed at mount time — <code>ps</code> inside <code>unshare -p</code> still lists host processes until <code>unshare --mount-proc</code> remounts it.</li>
+<li>A whiteout is a character device <code>0,0</code> in the upperdir — <code>ls -l</code> on the overlay's <code>diff/</code> shows <code>c</code>-typed nodes: deletions stored as files.</li>
+<li>In a fresh netns, <code>lo</code> is DOWN; every runtime's first network act is <code>ip link set lo up</code> — "network unreachable" after <code>unshare -n</code> is this.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Everything below runs with coreutils alone; Docker/Podman is optional and marked.</p>
+<p><strong>1. Build a container with no container software.</strong></p>
+<pre><code class="language-console">$ unshare -Urmpf bash
+#  -U new user ns   -r map your uid to 0 inside   -m new mount ns
+#  -p new pid ns    -f fork: the new shell becomes pid 1 of it
+bash# id                            # proof 1: uid=0(root) -- fake root
+bash# echo $$                       # proof 2: 1 -- fresh pid counter
+bash# cat /proc/self/uid_map        # proof 3: 0  1000  1 -- the map (your uid)
+bash# grep NSpid /proc/self/status  # proof 4: NSpid: 1 -- seen from HERE</code></pre>
+<p>Four lines, four clone flags — the entire container trick. (If <code>-U</code> fails with <code>Operation not permitted</code>, your distro gates user namespaces — Ubuntu 24.04's AppArmor policy, Debian's <code>kernel.unprivileged_userns_clone=0</code> — retry as root without <code>-Ur</code>.) From a second terminal, <code>grep NSpid /proc/&lt;pid&gt;/status</code> prints <code>NSpid: 30142 1</code>, and <code>readlink /proc/self/ns/mnt</code> differs between the two shells — different nsfs inode = different namespace. We never called <code>pivot_root</code>, so <code>/</code> is still the host's; a real runtime would mount the image's overlay and pivot into it.</p>
+<p><strong>2. Read your cgroup.</strong></p>
+<pre><code class="language-console">$ cat /proc/self/cgroup
+0::/user.slice/user-1000.slice/session-3.scope</code></pre>
+<p>The single <code>0::</code> line is v2's unified hierarchy (v1 printed one line per controller, <code>11:blkio:/...</code>); inside Docker it reads <code>0::/system.slice/docker-&lt;id&gt;.scope</code>, or <code>0::/</code> under a cgroup namespace.</p>
+<p><strong>3. Get killed by the memory controller.</strong></p>
+<pre><code class="language-console">$ sudo systemd-run --scope -p MemoryMax=100M python3 -c 'a="x"*10**9'; echo "exit=$?"
+exit=137
+$ sudo cat /sys/fs/cgroup/system.slice/run-*.scope/memory.events | tail -n 2
+oom 5
+oom_kill 1</code></pre>
+<p><code>MemoryMax=100M</code> writes <code>memory.max = 104857600</code>; the 1 GB string crosses it; the cgroup OOM killer SIGKILLs Python mid-allocation; the shell reports 128+9; <code>oom_kill: 1</code> proves it was the kernel. (If <code>systemd-run --user</code> refuses the property, your systemd doesn't delegate memory — use <code>sudo</code>.)</p>
+<p><strong>4. The doors, checked.</strong></p>
+<pre><code class="language-console">$ grep -E 'NSpid|Seccomp|Cap' /proc/self/status
+NSpid: 30142
+Seccomp: 0            (or 2: systemd filters some user sessions)
+CapEff: 000001ffffffffff   (full root set; decode with capsh --decode)</code></pre>
+<p><strong>5. Pay the copy-up bill by hand.</strong></p>
+<pre><code class="language-console">$ sudo mkdir -p /tmp/ov/{lower,upper,work,merged}
+$ sudo dd if=/dev/urandom of=/tmp/ov/lower/big.bin bs=1M count=100
+$ sudo mount -t overlay \
+    -o lowerdir=/tmp/ov/lower,upperdir=/tmp/ov/upper,workdir=/tmp/ov/work \
+    /tmp/ov/merged
+$ sudo sh -c 'echo x &gt;&gt; /tmp/ov/merged/big.bin'    # first write
+$ sudo du -sh /tmp/ov/upper                        # ~100 MB: whole file copied up
+$ sudo cat /tmp/ov/lower/big.bin | wc -c           # unchanged: 104857600
+$ sudo rm /tmp/ov/merged/big.bin
+$ sudo ls -l /tmp/ov/upper/                        # c--------- 0,0 node: the whiteout</code></pre>
+<p>(Inside the step-1 shell, no <code>sudo</code> needed on kernel 5.13+, which allows user-ns overlay mounts.)</p>
+<p><strong>6. Optional, marked — real runtimes:</strong> <code>docker run --rm alpine sh -c 'grep -E "NSpid|Seccomp|CapEff" /proc/self/status; cat /proc/self/uid_map'</code> shows <code>Seccomp: 2</code>, <code>CapEff: 00000000a80425fb</code> (the 14 default caps), and no uid_map (Docker's default uses no user namespace); rootless Podman's <code>uid_map</code> shows a real one.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>The "slow but idle" triage.</strong> Before profiling anything, read the cgroup's <code>cpu.stat</code> (<code>nr_throttled</code>, <code>throttled_usec</code>) and <code>memory.pressure</code>/<code>memory.stat</code> (high-throttle refaults). Thirty seconds of file reads replaces an hour of flame graphs — frozen time is invisible to in-container profilers: it is spent <em>off-CPU</em>.</li>
+<li><strong>Exit-code forensics.</strong> A pod that dies with 137 and no stack trace was killed by the cgroup OOM killer mid-allocation — check <code>memory.events</code> before blaming the code, and <em>which</em> limit (high vs max vs swap.max) before raising anything.</li>
+<li><strong>Quota vs weight.</strong> For latency-sensitive services prefer <code>cpu.weight</code> (proportional share, never freezes) over <code>cpu.max</code> (period-quantized stalls); quotas suit batch work where neighbors matter more than your p99.</li>
+<li><strong>Image and volume economics.</strong> Big mutable data belongs in volumes, not image layers: every first edit pays a full copy-up, and deletions leave whiteouts that keep the image fat — the multi-stage-build argument, stated mechanically.</li>
+<li><strong>The trust decision.</strong> Untrusted code on a shared kernel is one 0-day from the host — why multi-tenant platforms pick VMs, microVMs (ch05) or gVisor; the API-surface table is the interview-grade "container vs VM" answer.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch04</strong> — the process as a data structure: the <code>nsproxy</code>/<code>cred</code> pointers <em>are</em> the container.</li>
+<li><strong>Module 01 ch03</strong> — copy-up is COW at file granularity; the uid map is a translation table for privilege.</li>
+<li><strong>Module 07 ch05</strong> — the OOM killer's arithmetic, scoped to the memcg; exit 137 is its signature.</li>
+<li><strong>Module 14 ch05</strong> — overlayfs internals: this chapter is that machinery's biggest customer.</li>
+<li><strong>Module 05</strong> — AppArmor/SELinux: the container profile is MAC scoped per container, one layer up.</li>
+<li><strong>Modules 02-03</strong> — every kernel memory bug is a container escape path; Dirty Pipe is module 03 ch02-shaped (an unreset flag on a shared structure).</li>
+<li><strong>Module 15 ch01-03</strong> — what containers skip: no VMCS round trips (~1,000-2,000 cycles), no EPT walk, no virtio rings — why they start in milliseconds.</li>
+<li><strong>Module 15 ch05</strong> — the answers to the one-kernel problem: gVisor's userspace kernel, Firecracker's 125 ms VM wall, the who-owns-the-bytes table.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>A teammate says: "So a container is just a lightweight VM." Give the two-sentence correction, and name the one component both share that makes a container's blast radius <em>larger</em> than a VM's.</li>
+</ol>
+<ol>
+<li>A container runs <code>python app.py</code> as PID 1. Kubernetes sends SIGTERM; the process ignores it; 30 s later it is SIGKILLed mid-write. Why did SIGTERM do nothing — and why does the same signal stop <code>nginx</code> cleanly?</li>
+</ol>
+<ol>
+<li>On the host, a container's init has PID 30,142. Predict what <code>grep NSpid /proc/30142/status</code> prints from a host shell and what <code>grep NSpid /proc/self/status</code> prints <em>inside</em> the container — and why they differ.</li>
+</ol>
+<ol>
+<li>You run <code>sudo systemd-run --scope -p MemoryMax=100M python3 -c 'a="x"*10**9'</code> followed by <code>echo $?</code>. What prints, what produced it, and which file proves the cause?</li>
+</ol>
+<ol>
+<li>A cgroup has <code>cpu.max = 40000 100000</code> and runs a 4-thread busy loop on an idle 4-core host. Describe the cgroup's experience during one 100 ms period, and the two <code>cpu.stat</code> counters that record it.</li>
+</ol>
+<ol>
+<li>"The container is slow but the host is idle; <code>top</code> inside shows only 40% CPU." Give the first file you read and the numbers you expect if the diagnosis is CFS throttling.</li>
+</ol>
+<ol>
+<li>A job edits an 8 GB file that shipped in the image. On a VM it took 90 s; on Kubernetes the first run takes 4 minutes and the node's disk under <code>/var/lib/containers</code> grows by 8 GB. What happened, and what is the fix?</li>
+</ol>
+<ol>
+<li>Dirty Pipe (CVE-2022-0847) escapes containers using <code>pipe</code>, <code>splice</code>, and <code>write</code> — all in Docker's default seccomp allowlist. Why is that not a seccomp failure? Which module 03 ch02-style property explains it, and what defense actually stops it?</li>
+</ol>
+<details><summary>Answers</summary>
+<ol>
+<li><strong>A swapped-view process, sharing the kernel.</strong> A container is a normal process whose namespace views are swapped — no guest CPU mode, no second page table, no device model — talking to the host kernel through the same ~350 syscalls as the host's own processes. The shared component is the <em>kernel</em>: one kernel 0-day is simultaneously an escape from every container and a compromise of the host; a VM escape must cross into the far smaller VMM.</li>
+</ol>
+<ol>
+<li><strong>PID 1 has no default signal dispositions.</strong> The kernel skips default fatal dispositions for PID 1: a terminating signal with no handler is ignored, not fatal. Python installs no SIGTERM handler, so Kubernetes waits out <code>terminationGracePeriodSeconds</code> (default 30 s) then delivers SIGKILL mid-write; the nginx master installs a handler that drains connections. Fix: <code>docker --init</code> / tini as PID 1, or a handler in the app.</li>
+</ol>
+<ol>
+<li><strong>Reader-relative listing.</strong> Host shell: <code>NSpid: 30142 1</code> — one number per nesting level, outermost first. Inside: <code>NSpid: 1</code>. NSpid is relative to the reader: an ancestor-level reader sees the full chain, a reader inside sees only its own level down.</li>
+</ol>
+<ol>
+<li><strong><code>exit=137</code>.</strong> <code>MemoryMax=100M</code> sets <code>memory.max</code>; the 1 GB string's page charges cross it; the cgroup-scoped OOM killer SIGKILLs Python mid-allocation — the shell reports 128+9 = 137. Python never raised <code>MemoryError</code> — it died before the allocator could fail. Proof: <code>memory.events</code> shows <code>oom_kill 1</code>.</li>
+</ol>
+<ol>
+<li><strong>10 ms of running, 90 ms frozen.</strong> The 4 threads burn the 40 ms quota in 10 ms of wall time; the kernel dequeues every runnable task for the remaining 90 ms. <code>nr_throttled</code> increments once per period (~10/s); <code>throttled_usec</code> accumulates ~90,000 µs per period and never resets.</li>
+</ol>
+<ol>
+<li><strong><code>cpu.stat</code> in the cgroup directory</strong> (for a pod, <code>/sys/fs/cgroup/.../&lt;pod&gt;/cpu.stat</code>). Expect <code>nr_throttled</code> near <code>nr_periods</code> — e.g. 30 periods, 27 throttled after 3 s — and <code>throttled_usec</code> growing at roughly (period − quota) per period (~60 ms per 100 ms for a 0.4-CPU quota, single-threaded). The CFS wall, not the app, is the bottleneck; fix: higher quota or <code>cpu.weight</code>.</li>
+</ol>
+<ol>
+<li><strong>Overlayfs copy-up.</strong> The file lives in a read-only image layer; the first write copies the whole 8 GB file into the container's upperdir before the edit starts — 8 GB of I/O, 8 GB of disk. Module 01 ch03's copy-on-write at file granularity, via module 14 ch05's machinery. Fix: big mutable data in a volume or bind mount.</li>
+</ol>
+<ol>
+<li><strong>Seccomp gates doors, not what runs behind them.</strong> The filter decides which syscalls may be issued; <code>pipe</code>/<code>splice</code>/<code>write</code> are allowed — the bug is in the kernel's implementation: the splice path left the stale <code>PIPE_BUF_FLAG_CAN_MERGE</code> flag on the pipe buffer (kernel 5.8+), so the following write merged attacker data into the page cache of a read-only file. Module 03 ch02's shape: one unreset flag on a shared structure, reachable through a legal API. Only the kernel patch stops it; the structural defense is not sharing the kernel — the VM wall or gVisor (ch05).</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 15 — Virtualization, containers &amp; the cloud</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

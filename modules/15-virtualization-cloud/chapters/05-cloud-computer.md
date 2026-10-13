@@ -1,0 +1,631 @@
+# Chapter 05 — The cloud as a computer
+
+> **The 30-second version.** Stop drawing the cloud as a cloud. A datacenter is one
+> machine — the *warehouse-scale computer* — whose backplane is a spine-leaf fabric
+> (honestly ~3:1 oversubscribed at the rack, never the brochure's "non-blocking"),
+> whose northbridge is the rack's top-of-rack switch, and whose kernel is the fleet
+> scheduler: your instance is a job in a globally distributed epoll loop. The
+> economics that pay for it all are oversubscription — 2 vCPUs are one SMT2 core at
+> ~1.2-1.3× throughput, memory is sold 1.05-1.5× over the DIMMs, and network and
+> disk are token buckets: what you're guaranteed is the refill rate, not the pipe.
+> At the bottom sit two deliberate bets on running strangers' code: Firecracker
+> (~50 kLOC of Rust, a whole VM per function, 125 ms boot, <5 MB overhead) and
+> gVisor (the kernel's ~400-syscall surface re-implemented in userspace at 2-10×
+> syscall cost). The chapter closes the whole program with one table: who owns the
+> bytes at every layer, process to DIMM, each row's fault domain, blast radius, and
+> escape cost.
+
+## One machine, ~10^5 cores: the datacenter as a motherboard
+
+The phrase is Barroso and Hölzle's ("The Datacenter as a Computer", 2009), and it
+is meant literally. Once a machine has ~10^5 servers, the interesting computer is
+the building, and every part you learned in modules 01-14 has a correspondent one
+level up:
+
+| one computer | the datacenter |
+|---|---|
+| backplane / system bus | spine-leaf fabric |
+| northbridge | top-of-rack (ToR) switch |
+| DIMM banks | the servers in the racks |
+| power rail | the PDU feeding the rack |
+| process table | the fleet scheduler's placement tables |
+| syscall interface | the cloud API (`RunInstances`, ...) |
+
+The fabric deserves its honest arithmetic. A spine-leaf network has two tiers:
+every ToR (leaf) uplinks to every spine switch, and ECMP hashing spreads flows
+across the spines — no spanning tree, many parallel paths. Now count one ToR: 48
+downlink ports at 25 GbE = 1,200 GbE of demand from the rack; 4 uplinks at
+100 GbE = 400 GbE of escape. That is **3:1 oversubscription**, and it is the
+industry's common compromise (roughly 2:1 for HPC tiers, 5:1 for cheap tiers —
+name the tier before quoting a number). The brochure's "non-blocking" is
+technically true and practically empty: it promises the *spine fabric's internal*
+links never oversubscribe; it says nothing about the 3:1 at the leaf your traffic
+must cross. Two servers in the same rack talk at full line rate through the ToR's
+switching chip; the same two servers across racks enter the ratio.
+
+```
+        +------------------------------------------------------+
+        | control plane: the fleet scheduler                   |
+        | (== the kernel's process table: bin-packs ~10^6 jobs |
+        |  onto ~10^5 machines, order of 1 placement per second)|
+        +-------------------------+----------------------------+
+        spine switches == the backplane (ECMP; itself non-blocking)
+     +--------+--------+--------+--------+--------+--------+
+     |        |        |        |        |        |        |
+  +------+ +------+ +------+ +------+ +------+ +------+
+  | ToR  | | ToR  | | ToR  |   each ToR == a northbridge:
+  +--+---+ +------+ +------+   48 x 25GbE down / 4 x 100GbE up
+     | |                                 = 3:1 oversubscription
+ [ ~40 servers/rack ] == the DIMM banks  PDU == the power rail
+```
+
+The scheduler is where the analogy earns its keep. Module 01 ch04 derived the
+process as a data structure the kernel walks; the fleet scheduler walks the same
+idea at 10^6 scale: a table of machine structs (capacity, health, labels) and a
+table of job structs (requests, constraints, priority), and a bin-packing loop
+that settles on the order of one placement decision per second. Google's
+published example is Borg (EuroSys 2015 paper): cells of roughly 10^4-10^5
+machines. Bin-packing is memory allocation one level up — the same
+fragmentation-versus-density trade the kernel's page allocator makes, at
+gigabyte granularity instead of 4 KiB. **Your instance is a job in a globally
+distributed epoll loop**: schedulable, preemptible, migratable — a struct in
+someone else's table.
+
+The analogy breaks in exactly two places, and both are the chapter's subject.
+First, *time constants*: the kernel balances load in microseconds and preempts a
+CPU in nanoseconds; the fleet scheduler decides in milliseconds-to-seconds, and
+"moving a job" (live migration, ch03) takes seconds-to-minutes. Second, *failure
+is routine*: a motherboard does not lose a DIMM bank per day, but a fleet of
+10^5 machines loses whole servers at a low-single-digit percent per year
+(published fleet-reliability figures land around 1-4%/year; the exact number
+varies by study). The control plane treats machine death the way the kernel
+treats a page fault: drain, reschedule, carry on — forever. Everything between
+those two breaks is oversubscription, the next section.
+
+## Selling the same core twice: CPU and memory
+
+The cloud's economic engine is one bet, applied to every resource: *customers
+don't use what they buy at the same instant*. Here is the bet per resource, with
+the ratios that make it honest.
+
+**CPU.** On the mainstream EC2-style families, 1 vCPU is 1 SMT thread — 2 vCPUs
+are one physical core (check the instance page; the `.metal` and some dedicated
+families sell whole cores). SMT2's measured gain on server mixes is
+**1.2-1.3× one thread's throughput**, not 2×: the second thread only fills
+bubbles in the shared execution ports. Worse, the sharing is visible: a
+memory-bound sibling streaming through the core's L1/L2 evicts a compute-bound
+sibling's working set, costing it **20-40%** — module 01 ch02's shared-cache
+lesson biting one level up. This is the noisy neighbor *inside* the core: your
+thread ran its fully-entitled time, so steal-time accounting sees nothing. Above
+the core, the oversubscription is visible: pack 10 instances × 2 vCPU (20 vCPUs
+of demand) onto an 8-core SMT2 host (16 threads of supply) and each saturated
+vCPU runs 16/20 = 80% of the time — the missing 20% is charged to the guest as
+**steal time**, the `st` column of `top`/`vmstat` (ch01's accounting: a vCPU
+that was runnable but ran someone else). `st` is the noisy neighbor's
+fingerprint without identity — by design, the guest cannot see whose. Inside
+the host, the contested share is `cpu.weight` (cgroup v2: default 100, range
+1-10000): under contention, weights 200 vs 100 split the contended CPU 2:1.
+
+**Memory.** Providers sell 1.05-1.5× the installed DIMMs (policy, not physics;
+the number varies by provider and tier). The tools are ch02's, at fleet scale.
+Ballooning — the garbage collector for VMs — is where fleets earn their
+folklore: the *memory pressure storm*. A node under pressure asks its guests for
+memory back; the balloon drivers force the guest kernels to reclaim; the guests
+evict their own page caches (their fast path) and may swap inside themselves
+(ch02's double-paging disaster); latency spikes across every guest on the node
+before anything officially "fails". The runbook rule writes itself: **bursty
+memory tenants and oversubscribed nodes don't mix** — keep them apart in the
+scheduler, the same way ch02 kept vNUMA guests node-local. The cheaper lever
+comes first: **MCR, the memory compression ratio** — compress cold guest pages
+in the host kernel at a typical 2:1-3:1 (workload-dependent) and nobody inside
+the guest feels it. Compress, then balloon, never host swap. And one policy
+locks in: cross-VM page sharing (KSM) is disabled on untrusted tiers, because
+dedup puts two tenants' pages on one physical cache line — module 02 ch07's
+FLUSH+RELOAD channel, priced in someone else's secrets.
+
+## The token bucket economy: network and disk
+
+Network and disk oversubscription share one data structure: the **token
+bucket**. Refill rate *r*, burst size *b*: you may spend *b* tokens instantly,
+and you sustain exactly *r*. Every "up to 10 Gbps" instance is a bucket at the
+hypervisor's virtio path; every burstable volume is a bucket of IO credits. The
+law that decodes the billing curve: **your sustained rate is the refill rate**.
+
+The network arithmetic: a host with a 100 GbE NIC happily sells "up to 10 Gbps"
+to 10 VMs — 100 GbE of burst demand, fine while uncorrelated, and the
+hypervisor's buckets cap each VM regardless. But the host's own uplink into the
+ToR is section 1's 3:1. On AWS's Nitro machines the bucket isn't even in
+software: dedicated cards own the network and volume IO (the endpoint of ch03's
+implementation ladder — SR-IOV-family offload), which is how an EBS volume
+appears in the guest as a local NVMe device (`nvme-Amazon_Elastic_Block_Store`)
+while actually being a network RPC to a replicated storage fleet.
+
+Disk is where the token bucket has a name on the spec sheet. A gp2 volume:
+**baseline 3 IOPS per GiB** (refill), **burst cap 3,000 IOPS**, **initial
+credit balance 5,400,000 I/O credits** (AWS's EBS docs; gp3, from December
+2020, replaced the mechanic with a flat 3,000 IOPS baseline). A 100 GiB volume
+sustains 300 IOPS forever, bursts to 3,000 while credits last. Run the law: an
+application averaging 600 IOPS drains the full bucket at 600 - 300 = 300
+credits/s → 5,400,000 / 300 = 18,000 s = **5 hours**, then the volume clamps to
+300 IOPS and the queue depth explodes. The CPU version is the t2.small:
+1 vCPU, **12 CPU-credits/hour** (1 credit = 1 vCPU-minute) = 20% of one core
+sustained, full core in bursts — same law, different bucket.
+
+```
+ IOPS
+ 3000 |        ____________________________                    burst cap
+      |       /                            \__                 (while credits last)
+      |      /                                \__
+  300 |-----/----------------------------------\---------------- refill = sustained
+      |    app runs at 600; bucket drains 300/s
+      +-----|<---------- 5 h from full -------->|---------------> t
+             then: clamp to 300, latency cliff
+```
+
+The last trade is placement: **local NVMe vs network volume**. Local NVMe
+answers in ~20-50 µs (module 14 ch01's numbers) and dies with the host; a
+network volume is replicated within the zone, snapshot-able, and ~100-200 µs on
+its fast path (io-class volumes, small queue depth — gp-class runs ~1 ms;
+measure with fio before quoting). Those two latencies are the entire
+stateless-service architecture: local disk as cache, replicated volume as
+truth, host death as a cache flush nobody mourns.
+
+## Firecracker: a VM per function
+
+Lambda's brief, stated as a threat model: run *mutually distrusting strangers'*
+code, thousands of concurrent sandboxes per host, cold start budget **125 ms**,
+isolation stronger than a container. Chapter 04 disqualified the container:
+one kernel 0-day escapes it, and Lambda's tenants are exactly the people who
+find kernel 0-days. Full QEMU fails the other constraints: 1.5-2 MLOC of C
+(as of the 2020s) of device-emulation attack surface, and ~100-200 MB of
+per-VM overhead (ch04's table) — 2,000 VMs × 150 MB = 300 GB of host RAM spent
+before a single customer workload runs.
+
+Firecracker (AWS, 2018, open-sourced; Rust) is the cuts, listed:
+
+- **The device model**: no PCIe bus topology, no USB, no display. The guest
+  sees virtio-net, virtio-block, a serial console (Firecracker 1.x adds vsock;
+  1.3+ a balloon) on virtio-mmio — a surface you can audit in an afternoon,
+  where QEMU's machine re-creates an entire chipset.
+- **The VMM itself**: jailed (chroot-style, minimal fds) behind a seccomp
+  allowlist.
+- **No live migration** — a Lambda sandbox lives minutes; instead,
+  **snapshot/restore**: the microVM's memory and device state frozen to files,
+  resumed on any host in the fleet. It is the fork trick scaled: read-only
+  shared memory, copied on first write — module 01 ch03's copy-on-write
+  semantics implemented by the VMM instead of the kernel. Restore lands in
+  single-digit-to-tens of milliseconds for Lambda-sized VMs (grows with
+  memory size).
+- **The numbers**: 125 ms from launch to workload (the Firecracker paper's
+  own figure), **<5 MB** of VMM memory overhead per microVM (paper's figure),
+  thousands of microVMs per host — 2,000 × 5 MB = 10 GB, density QEMU cannot
+  reach at 2,000 × 150 MB.
+
+The honest summary: Firecracker is *less general than QEMU on purpose*. It
+cannot boot a 2003 Windows ISO, pass through a USB webcam, or migrate. What it
+does is shrink the code that parses untrusted input from ~1.5-2 MLOC to
+~30-50 kLOC — roughly **40× less attack surface** — and that ratio, not any
+benchmark, is the design argument. Fargate and Fly.io adopted it for the same
+arithmetic.
+
+## gVisor: the kernel moves to userspace
+
+The opposite pole from Firecracker: don't add a boundary *below* the kernel —
+a second page table, a guest mode — but shrink the boundary the kernel
+*exposes*. gVisor (Google, open-sourced 2018; the `runsc` OCI runtime) inserts
+the **sentry**, a Go program that stands where the kernel stands in a
+container's life: the container's syscalls are intercepted (via ptrace, a KVM
+platform, or sytrap since 2022) and *implemented* — the file system (a helper
+"gofer" process brokers real host files), the network stack (netstack, a
+userspace TCP/IP), and the memory management, all in Go.
+
+The cost is paid per syscall, and it is honest: the intercept plus the sentry's
+own work makes syscall-bound paths **2-10× slower** (gVisor's documentation
+concedes syscall-heavy workloads suffer). The tell is frequency, not volume: an
+`accept()`-storm benchmark (a busy web server's connection churn) hurts, a
+streaming upload mostly doesn't. The payoff is the same argument as ch04's
+"attack surface is an API surface", extended: the container's ~400 syscalls
+never reach the host kernel — the kernel sees only the sentry's own narrow
+set, on the order of tens of syscalls — and a bug in the sentry's
+re-implementations crashes a sandbox instead of rooting the host. The
+line item ch04 never had: the sentry *is* the kernel — VFS, netstack, and
+the app's page tables (an mm managed from userspace), all Go code a bug
+cannot turn into ring 0.
+
+Both poles answer the same threat model with opposite geometry: Firecracker
+gives each workload its own untrusted kernel behind a ~50 kLOC wall (you pay a
+kernel per workload); gVisor replaces the kernel's surface with Go (you pay
+2-10× on each syscall). Strangers' code needs one of them; trusted teams'
+containers need neither.
+
+## Who owns the bytes: the whole program in one table
+
+The program began with module 01's question — *who owns which bytes, and who
+moves them* — asked about a single process. The cloud answers it five times,
+once per layer. Build the table a row at a time, each row one chapter of this
+module:
+
+- **Process**: owns its virtual address space; the physical bytes are the
+  kernel's (module 01 ch03's allocator, ch04's process struct).
+- **Container**: owns namespace views, cgroup limits, and the overlayfs
+  upperdir; the bytes are host pages charged to its cgroup (ch04).
+- **VM**: owns its guest-physical memory — a QEMU `mmap` translated by EPT
+  and charged to the host's accounting (ch02); its kernel is its own.
+- **Hypervisor**: KVM *inside* the host kernel (ch01's architecture: the host
+  kernel is the hypervisor) — the real page tables, the host's slab and heap.
+- **Host**: the DIMMs and ECC — module 01 ch01's bit flips stop here; the last
+  line of defense is hardware.
+
+| Layer | Who owns the bytes | Fault domain | Blast radius | Escape cost |
+|---|---|---|---|---|
+| Process | its VAs; physical bytes are the kernel's slab | the process | the process (kernel reclaims) | one memory bug in a syscall — module 02's premise |
+| Container | ns views + cgroup limits + overlay upperdir | the cgroup | the node's kernel → every container on it | one kernel 0-day in the ~400-syscall surface |
+| VM | guest-physical = a QEMU mmap + EPT | the VM (its own kernel) | the QEMU process, at worst | a VMM/KVM bug — ~50 kLOC (Firecracker) to ~1.5-2 MLOC (QEMU) of surface |
+| Hypervisor (host kernel) | the real page tables + host slab/heap | the node | every VM on the node; the scheduler drains in seconds | from a VM: a KVM bug; from outside: physical access |
+| Host | the DIMMs + ECC | the hardware | everything above it | physical access / firmware |
+
+```
++---------------------------------------------------------------+
+| HOST: DIMMs + ECC (module 01 ch01's flips stop HERE)          |
+| +-----------------------------------------------------------+ |
+| | HYPERVISOR: KVM in the host kernel; real page tables,     | |
+| | slab, heap (ch01)                                         | |
+| |  +-----------------------------------------------------+ | |
+| |  | VM: guest-physical = a QEMU mmap + EPT (ch02)       | | |
+| |  |  +-------------------------------------------------+ | | |
+| |  |  | CONTAINER: ns views + cgroup + overlay (ch04)  | | | |
+| |  |  |  +-------------------------------------------+ | | | |
+| |  |  |  | PROCESS: its address space (module 01)    | | | | |
+| |  |  |  +-------------------------------------------+ | | | |
+| |  |  +-------------------------------------------------+ | | |
+| |  +-----------------------------------------------------+ | |
+| +-----------------------------------------------------------+ |
++---------------------------------------------------------------+
+```
+
+Read the table as a trade: each layer up buys a stronger wall (escape cost
+rises from "one 0-day" to "physical access") by accepting a bigger fault
+domain (from "one process" to "the whole node"). The cloud is what happens
+when someone decides that trade at fleet scale, ~10^5 times, with a scheduler
+sweeping up the failures.
+
+## What insiders know
+
+- `st` is per-vCPU wall-clock, not host load: 20% means *your* vCPU was ready
+  and unpaid-for 20% of the time. It never names the neighbor — a fingerprint
+  without identity, which is why cloud support asks for the *time pattern*
+  (business hours = the neighbor's schedule, not yours).
+- The SMT sibling is the noisy neighbor you cannot prove: your vCPU ran 100%
+  of its entitled time and still lost 20-40% to cache eviction. No column in
+  `top` shows it; only co-tenancy placement does.
+- `cpu.weight` (default 100, range 1-10000) is the *contested* share — 200 vs
+  100 splits contended CPU 2:1 — while `cpu.max` is a hard ceiling. Weight is
+  an argument, quota is a wall.
+- The burst law: sustained = refill. t2.small: 12 credits/hour = 20% of a core
+  forever. gp2: 3 IOPS/GiB forever, 3,000 while the 5.4M-credit bucket lasts.
+  Both clamp at exactly the refill rate, and both cliffs look like "the disk
+  got slow at hour 5", not like an error.
+- The lever order under memory pressure: compress (MCR 2:1-3:1, the guest
+  never feels it), balloon second (the guest thrashes), host swap never (the
+  latency cliff of ch02).
+- Firecracker's design argument is one division: ~1.5-2 MLOC / ~30-50 kLOC ≈
+  40× less untrusted-input-parsing code than QEMU. Quote the ratio, not a
+  benchmark.
+- gVisor pain predictor: syscall frequency, not bytes. 2-10× per syscall —
+  an `accept()` storm hurts, a bulk upload doesn't.
+- The interview trap: "the container is slow, the host is 65% idle" — look at
+  `cpu.stat`'s `nr_throttled` before anything else. The host's idleness and
+  the container's quota are independent variables (ch04's 10 ms-per-100 ms
+  stall class).
+
+## See it yourself
+
+**1. The noisy-neighbor arithmetic on paper** (the lab you can always run —
+no VM needed):
+
+```text
+Scenario 1 - CPU: how much steal should you expect?
+  host: 8 cores x SMT2 = 16 hardware threads
+  sold: 10 instances x 2 vCPU = 20 vCPUs, all CPU-saturated
+  fair share per vCPU = 16/20 = 80% of a thread
+  => each vCPU is runnable-but-not-running 20% of wall time: st ~ 20%
+
+Scenario 2 - memory: is 1.25x oversubscription safe?
+  host: 128 GB; guests: 10 x 16 GB = 160 GB promised
+  60% average usage = 96 GB resident: comfortable (25% headroom)
+  85% average = 136 GB > 128 GB: the balloon comes out, guests evict
+  their own page caches, cache hits become disk reads (ch02's spiral).
+  Safety depends on the variance, not the mean.
+
+Scenario 3 - the rack uplink: when the 3:1 bites
+  40 servers x 25 GbE = 1,000 GbE offered per ToR; 4 x 100 GbE up
+  average 10% utilization: invisible
+  00:00 UTC: 30 servers start 20 GbE backups = 600 GbE vs 400 up
+  => 200 GbE queues (or drops); every server in the rack pays tail
+  latency, including the 10 running nothing
+```
+
+**2. The steal column decoded.** Run `vmstat 1` and watch the last column:
+
+```console
+$ vmstat 1 3
+procs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----
+ r  b   swpd   free   ...                            ...    us  sy  id  wa  st
+ 1  0      0  41200                              ...      3   1  95   0   0
+```
+
+On a laptop or bare metal, `st` is 0.0 forever — the column exists for the
+day you are the guest. On a busy shared VM during business hours, 0-20% is
+routine. The point is knowing which of the five columns is the loud
+neighbor's fingerprint.
+
+**3. Your own quota, your own stall** (cgroup v2: `stat -fc %T
+/sys/fs/cgroup` prints `cgroup2fs`):
+
+```bash
+sudo systemd-run --unit=cap50 -p CPUQuota=50% python3 -c 'x=0
+while True: x += 1'
+sudo systemd-run --unit=nocap python3 -c 'x=0
+while True: x += 1'
+top -d 2      # press 1: nocap's python ~100% of a core, cap50's pinned ~50%
+cat /sys/fs/cgroup/system.slice/cap50.service/cpu.max    # 50000 100000
+cat /sys/fs/cgroup/system.slice/cap50.service/cpu.stat
+sudo systemctl stop cap50.service nocap.service
+```
+
+`CPUQuota=50%` compiles to `cpu.max` = `50000 100000`: 50 ms of CPU per
+100 ms period — half a core, hard ceiling. While saturated, `cpu.stat` reads
+like a confession:
+
+```text
+usage_usec 5123400
+nr_periods 10240
+nr_throttled 10231        <- throttled in nearly every period
+throttled_usec 5119000    <- roughly the missing half
+```
+
+That is ch05's container-vs-instance lesson in one file: the instance is
+slow, the host is idle, and the owner of the problem is your own cgroup.
+
+**4. The pid-namespace arithmetic** (needs unprivileged user namespaces;
+Debian/Ubuntu default on):
+
+```bash
+unshare -Ufp sh -c 'echo "pid as I see it: $$"; grep NSpid /proc/self/status'
+# pid as I see it: 1
+# NSpid: 31245 1                <- host pid first, innermost pid last
+
+unshare -Urmpf --mount-proc sh -c 'grep NSpid /proc/self/status'
+# NSpid: 1                      <- NSpid lists from the procfs mount's
+#                                  namespace down; remounting /proc in the
+#                                  new ns collapses the line
+```
+
+The gap between those two outputs *is* the pid namespace: one process, two
+counters, and the list's length tells you how many namespaces deep you are.
+
+**5. The burst-credit curve from a real spec sheet** (gp2's numbers, EBS
+docs):
+
+```python3
+size_gib, app_iops = 100, 600
+baseline = 3 * size_gib          # 300 IOPS: the refill = sustained rate
+credits  = 5_400_000             # full bucket at t=0
+drain    = app_iops - baseline   # 300 credits/s net burn
+print(credits / drain / 3600)    # 5.0 h until the clamp to 300
+```
+
+Change `app_iops` to 700 and re-run: 3.75 h. The bucket empties in inverse
+proportion to how far above the refill rate you live.
+
+## How to use this knowledge
+
+- **Capacity planning before the incident**: size for the refill rate, treat
+  burst as a battery. The 5-hour gp2 arithmetic is a spreadsheet cell, and
+  the answer "we clamp at 14:00 daily" is knowable the week before launch.
+- **The first 60 seconds of "it's slow"**: `us/sy/id/wa/st`, then
+  `cpu.stat` — five numbers with five different owners (your app, your
+  kernel, idle, your disk, someone else's scheduler), and the diagnosis is
+  *which* number moved.
+- **Choosing an isolation pole**: strangers' code → Firecracker-class
+  microVMs or gVisor, priced in LOC of attack surface (~50 kLOC vs ~2 MLOC)
+  and syscall latency (2-10×); trusted teams → containers, priced in kernel
+  0-days. The table's last column is the decision.
+- **Justifying stateless architecture with latency**: local NVMe at
+  ~20-50 µs as cache, replicated volumes at ~100 µs-1 ms as truth — the
+  numbers, not fashion, are the argument, and the host-death-as-cache-flush
+  failure mode is the design's *feature*.
+- **The interview answer**: "why does Lambda boot a VM per call?" — 125 ms
+  boot, <5 MB overhead, ~40× less attack surface than QEMU, thousands per
+  host. Four numbers, each doing one sentence of work.
+
+## Connections
+
+- **Module 15 ch01**: steal-time accounting was introduced there as the
+  vCPU's bookkeeping — this chapter is its payoff: the noisy neighbor's
+  signature, decoded.
+- **Module 15 ch02**: ballooning, KSM, and the overcommit tools are this
+  chapter's memory-pressure storm and its 1.05-1.5× policies, one level up.
+- **Module 15 ch03**: the implementation ladder ends in Nitro's offload
+  cards and Firecracker's four-device model — the "no SR-IOV for the
+  migratable tier" trade, inverted for sandboxes that never migrate.
+- **Module 15 ch04**: the escape-cost column extends ch04's
+  container-vs-VM table; the seccomp/capability defenses are the container
+  row's blast-radius argument.
+- **Module 01 ch01** (bit flips → ECC as the last line), **ch02** (shared
+  L1/L2 → SMT sibling interference), **ch03** (page tables + COW → EPT,
+  snapshot/restore as fork), **ch04** (the process-as-struct sentence, scaled
+  into the fleet scheduler).
+- **Module 02 ch07**: FLUSH+RELOAD — the reason cross-tenant page sharing is
+  disabled on untrusted tiers, density traded for confidentiality.
+- **Module 14 ch01** (NVMe latency: the local side of the placement trade)
+  and **ch05** (overlayfs: the container row's upperdir).
+- **Module 17 (queued)**: "a device's registers are a page fault" returns
+  for memory-mapped peripherals — the EPT-violation trick, unvirtualized.
+
+## Quiz
+
+1. **Concept.** The chapter maps a datacenter onto one computer: fabric =
+   backplane, ToR = northbridge, scheduler = process table. Name the *two*
+   places this analogy structurally breaks, with the number that measures
+   each break.
+
+2. **Concept.** "The cloud sells the same core twice." Explain why 2 vCPUs
+   deliver ~1.2-1.3× (not 2×) one core's throughput, why a memory-bound
+   SMT sibling costs its compute-bound neighbor 20-40% without ever
+   appearing in `st`, and why providers oversubscribe memory at 1.05-1.5×
+   rather than 2×.
+
+3. **Predict the number.** You rent a 16-vCPU instance on a mainstream
+   family (2 vCPUs = 1 SMT2 core) and run a fully CPU-saturated,
+   perfectly parallel workload.
+   (a) Aggregate throughput relative to 16 dedicated physical cores?
+   (b) One of your vCPUs is scheduled beside a stranger's memory-bound
+   vCPU; your thread there is compute-bound — expected slowdown on that
+   thread?
+
+4. **Predict the number.** A 200 GiB gp2 volume (baseline 3 IOPS/GiB, burst
+   cap 3,000, full 5,400,000-credit bucket) serves an application averaging
+   1,000 IOPS.
+   (a) What IOPS can it sustain forever?
+   (b) How long until the clamp, from a full bucket?
+   (c) What does the application *experience* at the clamp?
+
+5. **Predict the output.** Two commands, one character of difference:
+
+   ```bash
+   unshare -Ufp sh -c 'grep NSpid /proc/self/status'
+   unshare -Urmpf --mount-proc sh -c 'grep NSpid /proc/self/status'
+   ```
+
+   Predict the *shape* of each NSpid line, and explain what the procfs
+   mount's pid namespace has to do with the difference.
+
+6. **Diagnose.** Two tenants report "slow", same hour, different hosts.
+   Tenant A: `vmstat 1` shows `st` 15-20% from 09:00-17:00, 0% at night,
+   `wa` ≈ 0. Tenant B: container P99 tripled, host is 65% idle, the
+   container's own CPU reads 40%, and `cpu.stat` shows `nr_throttled`
+   incrementing every period. Name each root cause and the first check for
+   each.
+
+7. **Diagnose.** A node with 128 GB hosts guests promised 160 GB. At 14:00,
+   the balloon target rises, and within a minute every guest's P99 latency
+   triples; inside the guests, `free -h` shows cache collapsing and `si`
+   (swap-in) climbing. Why did the *fix* (ballooning) make things worse
+   before better, and what was the cheaper lever that should have fired
+   first?
+
+8. **Cross-chapter.** Module 02 ch02 showed that one 8-byte frame overwrite
+   can take over a process; ch04 argued "attack surface is an API surface"
+   (a container exposes ~400 syscalls, a VM ~50k instructions plus a
+   handful of exits). A kernel 0-day like Dirty Pipe (CVE-2022-0847, a pipe
+   buffer flag bug allowing writes into read-only pages) escapes a
+   container trivially.
+   (a) Why does the *same 0-day* not escape a Firecracker microVM?
+   (b) Which two numbers from this chapter quantify why AWS chose a
+   ~50 kLOC VMM over either containers or QEMU for Lambda?
+
+<details><summary>Answers</summary>
+
+1. **Time constants and failure as routine.** Break one: the kernel preempts
+   in nanoseconds and load-balances in microseconds; the fleet scheduler
+   places on the order of one decision per second and moves a job by live
+   migration in seconds-to-minutes — a ~10^6× gap between the levels' clock
+   speeds. Break two: a motherboard treats a DIMM loss as a catastrophe; the
+   fleet treats a machine loss as a page fault — at ~1-4%/year per machine
+   across ~10^5 machines, that is roughly one dead "DIMM bank" every few
+   hours, drained and rescheduled in seconds. Both breaks are exactly why
+   oversubscription (the next section) is even possible: the slack between
+   the levels is the product being sold.
+
+2. **Because the shared resources are shared.** SMT2's two threads share the
+   core's execution ports and caches: the second thread fills bubbles, worth
+   1.2-1.3× on typical server mixes, not 2× — the ports were never idle
+   twice over. The sibling interference (20-40%) is the cache half of that
+   sharing: a memory-bound stream evicts the L1/L2 working set (module 01
+   ch02), and `st` stays 0 because steal-time accounting measures only
+   *scheduling* — the hypervisor gave the vCPU its fully entitled time; the
+   contention happened *inside* the core. Memory oversubscription stops at
+   1.05-1.5× (not 2×) because the reclaim tools are violent: the balloon
+   forces guests to evict their own page caches and double-page, and the
+   memory-pressure storm (scenario 2 of the lab) turns one extra gigabyte
+   sold into every guest's P99. The ratio is set by how much reclaim pain
+   the provider will sell before customers notice.
+
+3. (a) **60-65%.** 16 vCPUs = 8 physical cores × SMT2. A fully saturated
+   workload gets 8 × 1.2-1.3 ≈ 9.6-10.4 core-equivalents of throughput —
+   call it 60-65% of 16 dedicated cores. The 2-vCPU-per-core mapping is a
+   35-40% discount the spec page never prints. (b) **20-40%** on that
+   thread: the stranger's stream thrashes the L1/L2 you share with it, and
+   since your vCPU ran its entitled 100% of time, no accounting anywhere
+   will show it — only the benchmark does.
+
+4. (a) **600 IOPS** — baseline is 3 IOPS/GiB × 200 GiB; the refill rate is
+   the only rate that lasts. (b) Net drain is 1,000 - 600 = 400 credits/s;
+   5,400,000 / 400 = 13,500 s = **3.75 hours**. (c) Not an error — a cliff:
+   the volume clamps to 600 IOPS while the application still demands 1,000,
+   so ~400 IOPS of demand queues; queue depth grows, latency follows (the
+   queue *is* the latency), and the monitoring story becomes "the disk got
+   slow at hour 4", with healthy error rates throughout. The burst-credit
+   mechanic fails silent — that is its defining property.
+
+5. **First command: two numbers, e.g. `NSpid: 31245 1`. Second: one number,
+   `NSpid: 1`.** The NSpid line lists the process's pid in each pid
+   namespace *starting at the namespace of the procfs mount* and walking
+   down to the process's own. In the first command, `/proc` is still the
+   original mount (its namespace is the host's), so the line shows the host
+   pid then the new-namespace pid — the two-counters-one-process truth of
+   ch04. In the second, `--mount-proc` remounts `/proc` *inside* the new
+   pid namespace, so the list starts there and collapses to the single
+   innermost pid. The number of entries always equals how many namespaces
+   deep you are below the procfs mount — a nesting counter hiding in a
+   status line.
+
+6. **Tenant A: hypervisor CPU oversubscription — the noisy neighbor.**
+   `st` 15-20% means the vCPU was runnable 15-20% of the wall clock and the
+   hypervisor ran someone else; the 09:00-17:00 pattern is the neighbor's
+   business-hours load, which is why the *time series* is the first check
+   (steal never names the thief — check when, not who). Fixes: placement
+   isolation, instance classes with dedicated tenancy, or moving. **Tenant
+   B: their own CFS quota.** The host's 65% idle and the container's 40% CPU
+   are both consistent with a cgroup capped below demand: `nr_throttled`
+   incrementing every period (100 ms default) says the cgroup exhausts its
+   `cpu.max` quota and stalls until the next period — ch04's
+   10-ms-per-100 ms stall class. First check: `cat cpu.max` — the owner of
+   the problem is the tenant's own config, and the fix is a quota raise or
+   a shorter period for latency-sensitive work. Same symptom, two owners:
+   A's CPU is owned by the hypervisor, B's by B.
+
+7. **The balloon forces the reclaim to happen all at once, in the wrong
+   place.** When the host asks for memory back, the balloon driver
+   allocates inside the guest, and the guest's kernel must free pages
+   *now*: its cheapest victim is the page cache — the very thing making
+   its workloads fast. Every read that was a cache hit becomes a disk
+   read; if the guest is really tight, it swaps *inside itself* to satisfy
+   the balloon, and each of those pages then faults back through the host
+   — ch02's double-paging spiral, now multiplied across 10 guests. The
+   result is exactly the observed tripled P99 with no failed health
+   check. The cheaper first lever is host-side compression — MCR
+   ~2:1-3:1, cold guest pages squeezed in the host kernel while guests
+   run unaware. The runbook rule: bursty-memory tenants and oversubscribed
+   nodes don't mix — schedule them apart before the balloon ever wakes.
+
+8. (a) **Because the 0-day's code runs in the host kernel, which a
+   container shares but a microVM does not.** A container's processes issue
+   syscalls into the host kernel directly — the vulnerable pipe path is
+   inside the trust boundary, so the bug is reachable from the tenant's
+   side of the API surface. A Firecracker guest's kernel is *itself*
+   untrusted code: the guest's syscalls trap into the guest kernel, not the
+   host's, and Dirty Pipe corrupting the guest's pipe buffers breaks the
+   guest's own sandbox, nothing more. To reach the host, the attacker now
+   needs a bug in the VMM's ~4-device surface or in KVM — a bug class
+   whose exposure module 15 ch01-03 shrank on purpose. Same bug, two
+   completely different blast radii — the table's last column in action.
+   (b) **~50 kLOC vs ~1.5-2 MLOC (~40× less untrusted-input-parsing code
+   than QEMU)** — the container option was disqualified by the shared
+   kernel (one 0-day, tenant-reachable), and QEMU by its surface and its
+   ~100-200 MB/VM overhead. Add the density pair — 125 ms boot, <5 MB per
+   microVM — and thousands of strangers fit per host. Firecracker is the
+   arithmetic's answer, not a benchmark's.
+
+</details>

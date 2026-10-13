@@ -7,10 +7,10 @@
 computer science and rebuilds it from first principles — the physics, the hardware, the
 data structures, the design decisions and their consequences — so that what other people
 memorize, we *derive*. The first module is the root of them all: **the memory models of
-programming languages**. The other eleven fields — security, bugs, decompilation,
-Android, iOS, desktop kernels, COBOL, concurrency, compilers, databases, GPUs — are
-built on it, because every one of them is a consequence of how programs store and
-reclaim bytes.
+programming languages**. Sixteen more modules build on it — security, bugs, decompilation,
+Android, iOS, desktop kernels, COBOL, concurrency, compilers, databases, GPUs, networking,
+file systems, virtualization, browsers, hardware — because every one of them is a
+consequence of how programs store and reclaim bytes, all the way down to the transistors.
 
 **Site (dark mode + light mode): <https://srivtx.github.io/deep-roots/>** ·
 [Interactive quiz](https://srivtx.github.io/deep-roots/quiz.html) ·
@@ -18,9 +18,9 @@ reclaim bytes.
 
 ---
 
-## The program — 12 modules, all live
+## The program — 17 modules, all live
 
-**82 chapters · ~266,000 words · 59 chapter quizzes (8 questions each) · 12 final exams.**
+**107 chapters · ~375,000 words · 84 chapter quizzes (8 questions each) · 17 final exams.**
 
 | Module | Field | Chapters |
 |--------|-------|----------|
@@ -36,6 +36,11 @@ reclaim bytes.
 | 10 | [Compilers & runtime internals](modules/10-compilers-runtimes/README.md) | 5 |
 | 11 | [Database storage engines](modules/11-db-storage-engines/README.md) | 5 |
 | 12 | [GPU & AI accelerator memory](modules/12-gpu-memory/README.md) | 4 |
+| 13 | [Networking internals](modules/13-networking-internals/README.md) | 5 |
+| 14 | [File systems & storage](modules/14-filesystems-storage/README.md) | 5 |
+| 15 | [Virtualization, containers & the cloud](modules/15-virtualization-cloud/README.md) | 5 |
+| 16 | [Browser engine internals](modules/16-browser-internals/README.md) | 5 |
+| 17 | [Digital hardware: from transistors to silicon](modules/17-hardware-design/README.md) | 5 |
 
 Every module follows the same chapter template (see
 [CONVENTIONS.md](modules/01-memory-models/CONVENTIONS.md)): a 30-second version, teaching
@@ -113,7 +118,7 @@ Twenty-three chapters in five parts. Every chapter ends with a quiz, a
 ```
 deep-roots/
 ├── index.html, quiz.html, chapters/, roadmap.html   # the site (GitHub Pages)
-├── m02/ ... m12/                                    # per-module site pages (02-12)
+├── m02/ ... m17/                                    # per-module site pages (02-17)
 ├── assets/                                          # dual-theme styles, theme.js, favicon
 ├── modules/
 │   ├── 01-memory-models/                            # LIVE — 23 chapters + final exam
@@ -129,7 +134,12 @@ deep-roots/
 │   ├── 09-concurrency-distributed/                  # LIVE — 5 chapters + exam
 │   ├── 10-compilers-runtimes/                       # LIVE — 5 chapters + exam
 │   ├── 11-db-storage-engines/                       # LIVE — 5 chapters + exam
-│   └── 12-gpu-memory/                               # LIVE — 4 chapters + exam
+│   ├── 12-gpu-memory/                               # LIVE — 4 chapters + exam
+│   ├── 13-networking-internals/                    # LIVE — 5 chapters + exam
+│   ├── 14-filesystems-storage/                     # LIVE — 5 chapters + exam
+│   ├── 15-virtualization-cloud/                    # LIVE — 5 chapters + exam
+│   ├── 16-browser-internals/                       # LIVE — 5 chapters + exam
+│   └── 17-hardware-design/                          # LIVE — 5 chapters + exam
 ├── tools/build_site.py                              # markdown → styled HTML pipeline
 ├── agents.md                                        # automatic session ledger
 └── README.md

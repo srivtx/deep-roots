@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 15 — Virtualization, containers &amp;amp; the cloud — deep-roots</title>
+<meta name="description" content="Module 15 of the deep-roots program: one machine, many owners — 5 chapters from first principles, with labs, quizzes, and a final exam.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 15 — Virtualization, containers &amp;amp; the cloud — deep-roots">
+<meta property="og:description" content="Module 15 of the deep-roots program: one machine, many owners — 5 chapters from first principles, with labs, quizzes, and a final exam.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 15 — Virtualization, containers &amp;amp; the cloud — deep-roots">
+<meta name="twitter:description" content="Module 15 of the deep-roots program: one machine, many owners — 5 chapters from first principles, with labs, quizzes, and a final exam.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">deep-roots learning program &middot; module 15</div>
+<h1 class="post-title">Module 15 — Virtualization, containers &amp; the cloud</h1>
+<div class="post-meta">5 chapters &middot; ~21k words &middot; one machine, many owners</div>
+<p class="section-intro">Every chapter: first principles, What insiders know, a See it yourself lab, connections, and a quiz with worked answers.</p>
+<div class="chapter-list">
+<div class="chapter-row"><div class="cr-num">01</div><div class="cr-body"><h3><a href="ch01.html">The virtualization problem and the CPU's new mode</a></h3><p>Popek-Goldberg, the x86 holdout, VT-x — why the CPU grew a guest mode.</p></div><div class="cr-arrow">&rarr;</div></div><div class="chapter-row"><div class="cr-num">02</div><div class="cr-body"><h3><a href="ch02.html">Memory virtualization: EPT and the second page table</a></h3><p>Nested translation's cost, ballooning, KSM — overcommit as a garbage collector.</p></div><div class="cr-arrow">&rarr;</div></div><div class="chapter-row"><div class="cr-num">03</div><div class="cr-body"><h3><a href="ch03.html">Devices: virtio, vhost, SR-IOV</a></h3><p>Emulation → paravirtual rings → kernel dataplanes → passthrough, and live migration.</p></div><div class="cr-arrow">&rarr;</div></div><div class="chapter-row"><div class="cr-num">04</div><div class="cr-body"><h3><a href="ch04.html">Containers: the namespaced process</a></h3><p>Namespaces, cgroups, overlayfs, seccomp — the sandbox that shares a kernel.</p></div><div class="cr-arrow">&rarr;</div></div><div class="chapter-row"><div class="cr-num">05</div><div class="cr-body"><h3><a href="ch05.html">The cloud as a computer</a></h3><p>Oversubscription arithmetic, Firecracker, gVisor — the who-owns-the-bytes table.</p></div><div class="cr-arrow">&rarr;</div></div>
+</div>
+<div class="arc-label">the exam</div>
+<div class="chapter-list">
+<div class="chapter-row"><div class="cr-num">fin</div><div class="cr-body"><h3><a href="final-exam.html">Module 15 final exam</a></h3><p>Every chapter, worked answers behind the fold.</p></div><div class="cr-arrow">&rarr;</div></div>
+</div>
+
+<div class="post-footer"><p>Part of <a href="../index.html">deep-roots</a>. Prerequisite: <a href="../index.html#module-01">Module 01 — memory models</a>. Sources: <a href="https://github.com/srivtx/deep-roots/tree/main/modules/15-virtualization-cloud">modules/15-virtualization-cloud</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

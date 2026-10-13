@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory virtualization: EPT and the second page table — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 15: Memory virtualization: EPT and the second page table">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Memory virtualization: EPT and the second page table — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 15: Memory virtualization: EPT and the second page table">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Memory virtualization: EPT and the second page table — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 15: Memory virtualization: EPT and the second page table">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 15 &middot; one machine, many owners</div>
+<h1 class="post-title">Memory virtualization: EPT and the second page table</h1>
+<div class="post-meta">chapter 02 &middot; ~16 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A guest OS owns a page table mapping guest virtual to guest "physical" addresses; the hypervisor owns the real mapping to host RAM. Composing the two naively costs 24 translation memory accesses for one guest load in the worst case (4 guest-table reads, each itself needing a 4-access EPT walk, plus 4 for the final guest-physical address) — survivable only because the TLB caches the composed result. Software first dodged it with shadow page tables (one merged table, synced by write-protecting the guest's own — the era when guest kernel builds crawled); hardware then did it properly: EPT/NPT, the MMU walks both tables, misses cost about 2× native, and large pages (2 MB / 1 GB) plus TLB tags (VPID/ASID) claw the rest back. The same non-present EPT bit turns MMIO registers into page faults — a device write is a VM exit. It all serves one economic reason: overcommit. The promised 8 GB is a ceiling, not a reservation, reclaimed by a balloon (a garbage collector that asks the program to enumerate its garbage), KSM (copy-on-write across VMs — and a side channel), or, worst case, host swap.</blockquote>
+<h2 id="two-owners-one-address-the-composition-problem">Two owners, one address: the composition problem</h2>
+<p>Module 01 ch03 derived the page table as the kernel's answer to "who owns which bytes." Virtualization breaks that ownership: inside a VM there are <strong>two kernels with two opinions about one address</strong>:</p>
+<ul>
+<li>The <strong>guest kernel</strong> owns a page table mapping <em>guest virtual</em> (GVA) to <em>guest physical</em> (GPA) — CR3, 4 levels of 512 entries, 9 index bits per level, 4 KB pages, module 01 ch03's machinery — and it believes GPAs are RAM.</li>
+<li>The <strong>hypervisor</strong> owns the real mapping: the guest's "RAM" is an <code>mmap</code> in a QEMU process (ch01), and it must enforce <em>GPA → host physical</em> (HPA) without trusting the guest.</li>
+</ul>
+<p>One guest load, <code>mov rax, [rbx]</code>, now needs GVA → GPA then GPA → HPA: two translations, and the MMU was designed to perform one. Every fix below answers "how do you compose two page tables" — and the answer decides whether guest memory runs at native speed or a third of it.</p>
+<h2 id="counting-the-naive-walk-24-translations-for-one-load">Counting the naive walk: 24 translations for one load</h2>
+<p>Before the fixes, count the naive composition: x86-64, 4-level guest paging, 4-level EPT (Intel 2008; AMD's NPT/RVI, Barcelona 2007, structurally identical). The MMU reads the guest's PML4E, PDPTE, PDE, PTE — 4 accesses — but each entry lives at a <strong>guest-physical</strong> address, untouchable without an EPT translation: 4 more each. The PTE's payload, the data's GPA, needs its own walk: 4 more.</p>
+<pre><code class="language-text">ONE guest load, uncached worst case — x86-64, 4-level guest
+paging + 4-level EPT (no TLB, no paging-structure caches).
+
+  guest virtual address (48-bit)
+      |
+      |  MMU begins the GUEST walk at guest CR3
+      |
+      |  [ 1] read guest PML4E   (a GPA)
+      |           +-- EPT walk for that address: [ 2][ 3][ 4][ 5]
+      |  [ 6] read guest PDPTE   (a GPA)
+      |           +-- EPT walk:                   [ 7][ 8][ 9][10]
+      |  [11] read guest PDE     (a GPA)
+      |           +-- EPT walk:                   [12][13][14][15]
+      |  [16] read guest PTE     (a GPA)
+      |           +-- EPT walk:                   [17][18][19][20]
+      |
+      v   PTE payload: guest physical address of the DATA
+      |
+      |  the GPA is still not RAM — the EPT translates it:
+      |                                    [21][22][23][24]
+      v   host physical address, finally
+      |
+  [25] the data access the CPU wanted in the first place</code></pre>
+<p><strong>24 translation accesses plus 1 data access = 25 memory references for one guest load</strong> (the honest range, depending on page sizes and leaf levels, is roughly 20-30). Native code needs 4. If every bracketed number were a DRAM round trip (~100 ns), one load would cost ~2.4 µs — a doubly pessimistic bound, since walk reads mostly hit cache, but it states the stakes: a naive composition is unusable.</p>
+<p>Why doesn't the recursion go deeper — why doesn't reading an EPT entry's own address need a third table? The <strong>EPT pointer (EPTP) is a host-physical address</strong>, and hardware treats reads of EPT-internal entries as already-physical: the recursion is cut by fiat at one level of indirection per privilege boundary — <em>each new owner of memory buys one level, not a tower.</em></p>
+<p>The escape hatch is the TLB: a hit resolves in about 1 cycle and caches the <strong>composed</strong> translation (GVA straight to HPA), so the 25-access worst case happens only on misses. Everything else below is one of three jobs: keep the hit rate high, keep misses cheap, don't flush on VM switches.</p>
+<h2 id="the-two-fixes-the-shadow-that-lies-and-the-ept-that-composes">The two fixes: the shadow that lies, and the EPT that composes</h2>
+<p><strong>Fix one — shadow page tables (software, 1999-2008).</strong> If the CPU can't walk two tables, give it one that lies: the hypervisor <em>merges</em> both translations into one real page table (shadow entry = compose(guest PTE, GPA mapping)) and points guest CR3 at it — the CPU walks one table at native cost. The bill comes due on <em>correctness</em>: the guest writes to its page tables constantly, and every write desynchronizes the shadow, so the hypervisor <strong>write-protects the guest's page-table pages</strong> — the next guest PTE write faults, exits (1,000-2,000 cycles, ch01's number), and the shadow is re-synced. PTE-churning workloads — <code>make -j16</code> forks thousands of processes, each fork and COW fault writing PTEs — pay an exit per protected write: "shadow paging makes guest kernel builds slow" (an era-remembered 5-10× on PTE-churning phases; the per-exit mechanism is exact).</p>
+<p><strong>Fix two — EPT/NPT (hardware, Intel 2008 / AMD 2007).</strong> Teach the MMU to perform the composition: the guest's tables are walked first (GVA → GPA), and every guest-physical result — including each page-table read — is translated through the EPT (GPA → HPA) <em>by hardware</em>. No shadows, no write-protection, no re-sync: guest PTE writes become ordinary memory writes, 0 exits. The trade is the miss path — in practice ~2× native's miss cost (measured 1.5-2×, depending on how much of the walk the caches absorb).</p>
+<p>An EPT leaf entry, read once — its bits are ch03's whole I/O story in miniature:</p>
+<pre><code class="language-text">EPT leaf entry, 8 bytes (Intel, 4-level EPT, one 4 KB page):
+
+  bit  0      read            bits 3-5   memory type (0 = uncacheable)
+  bit  1      write           bit  7     large page (2 MB leaf one level
+  bit  2      execute                      up, 1 GB two levels up)
+  bit  8      accessed        bit  9     dirty
+  bits 12-51  host physical frame number
+
+  r=0, w=0, x=0  ==  "no mapping here at all"</code></pre>
+<p>Two mitigations do the heavy lifting on the miss path:</p>
+<ul>
+<li><strong>EPT large pages.</strong> A 2 MB EPT entry covers what 512 separate 4 KB entries would; a 1 GB entry, 512×512. Fewer levels per miss, far fewer TLB entries for the same memory. The catch: it needs the guest-physical region backed by a 2 MB-aligned contiguous host mapping — one of the <em>real</em> jobs of transparent huge pages inside guests. Guest THP is not (only) about the guest's TLB; it enables the host's EPT large pages.</li>
+<li><strong>VPID / ASID.</strong> TLB entries are tagged with the VM's identity — a 16-bit VPID on Intel, the ASID on AMD — so switching VMs no longer flushes the TLB. Without tags, every vCPU handoff — and every exit/re-entry, which is <em>most of them</em> — throws away the composed translations; the next few thousand accesses each pay the composed walk. Hence the lore of "why single-vCPU pinning mattered": pre-VPID, pinning the vCPU and its QEMU thread to one core kept that core's deeper caches warm and the flush tax rarer. With VPID the entries survive the switch; invalidation becomes surgical (INVVPID).</li>
+</ul>
+<h2 id="a-device-s-registers-are-a-page-fault-mmio-behind-the-ept">A device's registers are a page fault: MMIO behind the EPT</h2>
+<p>Devices live in memory-mapped register banks: a program writes a register by storing into a PCI BAR's physical range. In a VM, the guest driver makes the same store — to a GPA inside the emulated BAR. The hypervisor leaves that region of the EPT <strong>non-present</strong> (r=w=x=0, memory type uncacheable). The store faults — an <em>EPT violation</em>, a VM exit (exit reason 48 in KVM's <code>vmx.h</code>) whose exit qualification carries the faulting GPA and the read/write/execute bits — and QEMU's device model emulates the register write in software.</p>
+<p><strong>A device's registers are a page fault.</strong> One sentence unifying three chapters: the NIC doorbell of module 13 ch01 (a store to a BAR that rings hardware), the memory-mapped peripherals of module 17 (the same trick, no hypervisor), and ch03's virtio (the same trap, made cheap). Why cheap matters: one exit costs 1,000-2,000 cycles, so a driver busy-polling an MMIO status register — ~5 cycles per iteration on bare metal — runs at ~1,000+ cycles, ~200× slower, while a QEMU thread burns 100% CPU emulating a register that never changes. Polling MMIO is faulting in a tight loop.</p>
+<h2 id="selling-the-same-dimm-twice-the-balloon-the-scanner-the-cliff">Selling the same DIMM twice: the balloon, the scanner, the cliff</h2>
+<p>It all serves one economic reason: <strong>overcommit</strong> — promise more RAM than exists. A 1.05-1.5× fleet policy (ch05's honest ratios) lets a 64 GB host run 12 guests promised 8 GB each: 96 GB sold, 64 GB owned. Module 01 ch03's overcommit lesson replays one level up: the guest kernel's <code>malloc</code> is a ceiling too — promised-but-untouched bytes cost nothing. The 8 GB is a <em>ceiling, not a reservation</em>. When the bet fails, three tools remain, in descending order of politeness.</p>
+<p><strong>The balloon (virtio-balloon).</strong> A driver inside the guest that allocates and frees memory <em>on command</em>. The flow:</p>
+<pre><code class="language-text">hypervisor                guest kernel              balloon driver
+    |                                                   |
+    |---- "inflate: give me 2 GB back" ----------------&gt;|
+    |                    guest allocates 2 GB (kernel memory)
+    |&lt;--- "here are the 2 GB worth of GPAs" ------------|
+    |  QEMU madvise(MADV_DONTNEED)s those pages of its
+    |  guest-RAM mmap -&gt; 2 GB of host frames return to the
+    |  host free list for other guests</code></pre>
+<p>The guest did the hard part: it <em>chose</em> what to evict, running its own reclaim instead of letting the host guess. This is a <strong>garbage collector for VMs</strong> — module 01 ch14/ch15's cycle collector inverted: a tracing collector walks from roots to find garbage; the balloon asks the <em>program</em> to enumerate its own. The failure mode is equally inverted: when the guest has nothing to give — page cache needed, anonymous memory hot — it swaps <em>inside itself</em> to satisfy the balloon, and one page can hit disk twice (the guest's virtual disk is a file on the host). The <strong>double paging disaster</strong> — swap inside swap — is why ballooning is a policy tool, not a free lunch.</p>
+<p><strong>KSM (Kernel Samepage Merging).</strong> Guests running the same OS image have byte-identical memory. The kernel thread <code>ksmd</code> scans: checksum candidates, byte-compare real ones, merge duplicates into one <strong>write-protected shared page</strong> — module 01 ch03's copy-on-write across <em>virtual machines</em> (a write to a merged page faults and gets a private copy). Measured reality: 100 Windows guests booting one image share 40-70% of memory; the counters are <code>/sys/kernel/mm/ksm/pages_shared</code> (pages in the tree) and <code>pages_sharing</code> (pages saved). The costs: CPU for the scan (tunable: <code>pages_to_scan</code> per pass, <code>sleep_millisecs</code> between — 100 and 200 ms on the mainline defaults I checked; cat yours), and a security problem. Dedup makes two tenants' pages <em>physically identical</em> — same cache line — the enabling condition for FLUSH+RELOAD (module 02 ch07 returns): tenant A evicts the shared line (<code>clflush</code>), waits, reloads and times it — a fast reload means tenant B touched it in between — and the <em>pattern</em> of touched lines across a shared page leaks secrets; Yarom and Falkner (USENIX Security 2014) extracted an RSA private key from a co-located Xen VM this way. The mitigation is blunt: security-conscious multi-tenant fleets run KSM off (<code>run=0</code>); <code>merge_across_nodes=0</code> — often cited here — only limits merging to one NUMA node, a locality knob, not a defense.</p>
+<p><strong>Host swap: the last resort.</strong> If the balloon declined and KSM found nothing, the host pages guest memory to host swap — physical memory virtualized as swap. The numbers make the runbook rule ("never let a fleet node hit it") self-evident: RAM's design point is ~100 ns; a fault satisfied from NVMe costs tens of microseconds (~100-300×), from spinning disk milliseconds (~10,000×). A workload engineered around 100 ns does not degrade gracefully across that 3-4 order-of-magnitude cliff — it stops: a node sliding into host swap shows a step function in guest latency, not a slope.</p>
+<h2 id="fictions-on-top-of-fictions-vnuma-and-ept-on-ept">Fictions on top of fictions: vNUMA and EPT-on-EPT</h2>
+<p><strong>vNUMA.</strong> Tell a guest it has 2 sockets — 2 vNUMA nodes — and its kernel earnestly optimizes for them: node-local allocation, per-node affinity. On a 1-socket host that topology is fiction: the scheduler pins threads to nodes that map to nothing and splits per-node data across a nonexistent boundary, and NUMA-local workloads run at ~60% of what the same host delivers with a truthful topology (rule of thumb, NUMA-sensitive benchmarks). The fixes: give the guest a topology matching the host, or pin vCPUs and run <code>numad</code> so the fictional nodes land on real locality. Auto-NUMA balancing can't help — it optimizes toward the fiction.</p>
+<p><strong>Nested virtualization.</strong> Run a hypervisor inside a VM (L1 inside L0) and the EPT becomes guest-controlled data. L1's EPT manipulations — writing entries, INVEPT — are VMX operations executed from L0's VMX non-root mode, so they <em>trap to L0</em>: an exit caused by handling an exit. L2's exits bounce twice: L2 → L0, reflected into L1, handled, resumed — it works because every level plays the same trick on the one below. The cost lands on TLB misses — the composed GVA→GPA→L1-HPA→L0-HPA walk is deeper, ~2× miss cost even after L0 builds KVM's merged <em>shadow EPT</em> for L2 (shadow paging's move, one level down). This is why a hypervisor inside your cloud VM (minikube's KVM driver) is heavier than it looks.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>Exit reason 48 vs 49.</strong> 48 is <code>EXIT_REASON_EPT_VIOLATION</code> (rights mismatch or unmapped GPA — expected, e.g. every MMIO access); 49 is <code>EPT_MISCONFIG</code> (reserved bits set — a <em>hypervisor</em> bug, almost always, not a guest one). A steady 49 stream is a bug report.</li>
+<li><strong>The flag check that tells the truth.</strong> <code>lscpu</code> will not print EPT/NPT; the honest check is the flags line: <code>grep -c ept /proc/cpuinfo</code> (Intel) / <code>grep -c npt</code> (AMD). Reading 0 <em>inside a cloud VM is normal</em> — the virtual CPU model hides host capabilities.</li>
+<li><strong>A migrating VM gets slower before it moves.</strong> Dirty tracking for live migration (ch03) write-protects EPT entries, which splits large pages — mid-migration, the TLB miss rate climbs as 2 MB mappings become 4 KB ones. The pre-copy perf dip is EPT fragmentation, not bandwidth.</li>
+<li><strong>Ballooning is invisible in the guest's process table.</strong> Inflated pages are kernel memory held by the driver: <code>MemTotal</code> unchanged, <code>MemAvailable</code> falling, no <code>ps</code> line to blame. That divergence is the tell; check <code>dmesg | grep -i balloon</code>.</li>
+<li><strong>The 16-bit VPID changed scheduling.</strong> Pre-VPID, VM switches flushed the TLB and the next few thousand accesses re-walked the composed translation — the origin of "pin the vCPU" folklore. Today the flush is selective (INVVPID), and pinning survives as NUMA advice, not TLB advice.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Run what your situation allows — on a cloud VM you are the <em>guest</em>, half the lab.</p>
+<pre><code class="language-console"># The honest capability check (Intel 'ept', AMD 'npt'):
+$ grep -c ept /proc/cpuinfo
+8                # EPT present: CPU count; 0 on a cloud guest
+$ lscpu | grep -i -E 'ept|npt'    # usually silent — don't trust it
+
+# Large-page policy (if you're the guest, this is an EPT knob):
+$ cat /sys/kernel/mm/transparent_hugepage/enabled
+always [madvise] never            # the bracket marks the active policy
+
+# Am I ballooned? (inside any VM with virtio):
+$ lsmod | grep virtio_balloon     # present = the host *can* ask for RAM
+$ grep -E 'MemTotal|MemAvailable' /proc/meminfo
+$ dmesg | grep -i balloon
+
+# KSM ships off — observe the zeroes:
+$ cat /sys/kernel/mm/ksm/run /sys/kernel/mm/ksm/pages_shared \
+      /sys/kernel/mm/ksm/pages_sharing
+0 0 0
+$ cat /sys/kernel/mm/ksm/pages_to_scan /sys/kernel/mm/ksm/sleep_millisecs
+100 200
+
+# The overcommit made visible — same VM, twice:
+$ free -h    # INSIDE the guest: 'total' = what was PROMISED
+$ free -h    # ON the host: QEMU's RSS = what was TOUCHED
+
+# Paper lab (always available): recompute the 25-access worst case,
+# then the 2 MB / 2 MB variant — answer in the quiz.</code></pre>
+<p>What to notice: the guest reports the ceiling, the host's RSS the truth.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>"The VM is slow but the host is idle" triage.</strong> Work the chain: steal time (<code>top</code>'s <code>st</code>, ch01), guest THP fragmentation (<code>perf stat -e dTLB-load-misses</code> in the guest), ballooning (<code>MemAvailable</code> falling, no process to blame), EPT large-page coverage.</li>
+<li><strong>Capacity math.</strong> Overcommit ratios are a policy choice with a costable failure: at 1.5× you bet tenants touch 2/3 of their promise; the balloon reclaims politely, host swap does not. The 100 ns → tens-of-µs cliff is the design-review number.</li>
+<li><strong>Security review of a shared-tenant provider.</strong> Ask whether KSM or any content-based dedup runs on the node class you're buying; if yes, you're renting the FLUSH+RELOAD precondition. A yes/no question, not a vibe.</li>
+<li><strong>Explaining the nested tax.</strong> A hypervisor inside a cloud VM is heavy: composed EPT walks cost ~2× on TLB misses, and exits reflect through two levels.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 15 ch01</strong> — the VM exit (1,000-2,000 cycles) is this chapter's unit of spend.</li>
+<li><strong>Module 15 ch03</strong> — every virtio kick is an EPT violation; migration write-protects EPT entries and splits large pages.</li>
+<li><strong>Module 15 ch04</strong> — containers skip the second table entirely; the contrast makes both designs legible.</li>
+<li><strong>Module 15 ch05</strong> — overcommit ratios (1.05-1.5×), steal time, the memory-pressure-storm runbook rule.</li>
+<li><strong>Module 01 ch03</strong> — the page table and COW, extended twice: EPT is the same walk composed, KSM the same COW across VMs.</li>
+<li><strong>Module 01 ch14/ch15</strong> — the cycle collector, inverted by the balloon: the collector that asks the program to name its garbage.</li>
+<li><strong>Module 02 ch07</strong> — FLUSH+RELOAD returns through KSM's shared pages: dedup puts two tenants on one cache line.</li>
+<li><strong>Module 13 ch01</strong> — the NIC's doorbell: the same "registers are addresses" illusion the EPT turns into page faults.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Translating an EPT entry's own address requires no third page table. Why — and if it <em>did</em> require one, what happens to the 25-access count?</li>
+</ol>
+<ol>
+<li>A guest load hits a 2 MB guest huge page, and the EPT maps that whole region with a large-page entry. Uncached worst case, <em>including</em> the data access: how many memory accesses?</li>
+</ol>
+<ol>
+<li>A 64 GB host runs 12 guests, each promised 8 GB (96 GB sold); each guest touches 5.5 GB at steady state. Does the host survive unaided — and if KSM merges 40% of resident guest memory, then?</li>
+</ol>
+<ol>
+<li>On a shadow-paging hypervisor, a guest kernel build (<code>make -j16</code>) runs 5-10× slower than in an EPT VM on the same host. Explain the mechanism, and predict which <em>other</em> workloads suffer the same fate.</li>
+</ol>
+<ol>
+<li>A NUMA-optimized benchmark runs at ~60% of bare-metal speed inside a 2-socket vNUMA guest on a 1-socket host. Diagnose, and give the two operational fixes.</li>
+</ol>
+<ol>
+<li>A guest driver busy-polls an MMIO status register; throughput collapses (~200×), a QEMU thread at 100% CPU. Explain with the exit arithmetic; name the fix ch03 builds.</li>
+</ol>
+<ol>
+<li>(Cross-module.) KSM merges a page shared by two tenants' VMs. Describe the FLUSH+RELOAD attack this enables — which observation says "the victim touched this line" — and why <code>merge_across_nodes=0</code> is not the fix.</li>
+</ol>
+<ol>
+<li>Before VPID, every VM switch flushed the TLB and the next few thousand accesses paid the composed walk. Explain why single-vCPU pinning helped anyway, and what the 16-bit VPID actually buys.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The EPTP is a host-physical address.</strong> Reads of entries <em>inside</em> the EPT are already physical — hardware cuts the recursion by fiat at one level of indirection per privilege boundary. If it didn't, each EPT-internal read would need a third-table walk, and that a fourth — the composition grows without bound (4 × (1 + 4 × (1 + ...))), no finite walk terminates. One owner, one indirection: the invariant that keeps virtualizable memory finite.</li>
+</ol>
+<ol>
+<li><strong>16.</strong> A 2 MB guest huge page makes the guest walk 3 entries (PML4E, PDPTE, PDE-leaf — the PDE <em>is</em> the leaf). Each is a GPA translated by an EPT whose leaf here is also 2 MB, a 3-access walk: 3 × (1 + 3) = 12. The data's GPA gets the same 3-access walk: +3. The data access: +1. Total 16, versus 25 with 4 KB pages at both levels — the gap × every TLB miss is why THP-in-guest is an EPT feature.</li>
+</ol>
+<ol>
+<li><strong>Survives only with KSM.</strong> Touched: 12 × 5.5 GB = 66 GB against 64 GB — 2 GB short, so unaided the node tips into host swap or must balloon guests with nothing to give. With 40% merged, footprint = 66 × 0.6 = 39.6 GB — fits, ~24.4 GB headroom. A fleet riding on a dedup ratio is why KSM's cost and side channel are policy debates, not footnotes.</li>
+</ol>
+<ol>
+<li><strong>Every protected PTE write is a VM exit.</strong> Shadow paging syncs by write-protecting the guest's page-table pages: guest PTE write → fault → exit (1,000-2,000 cycles) → shadow re-sync. A kernel build is the pathological input — thousands of forks, COW faults, mmap/munmap churn: millions of PTE writes, each paying the exit tax. Under EPT, guest PTE writes are ordinary writes: 0 exits. The same fate hits anything PTE-churning — spawning build systems, JVMs resizing heaps — not steady daemons.</li>
+</ol>
+<ol>
+<li><strong>The guest's NUMA topology is fiction.</strong> The 2 vNUMA nodes correspond to nothing; the guest kernel optimizes for them — node-local allocation, per-node affinity — constraining scheduling and splitting per-node structures across a boundary that maps to one physical socket. Fixes: (a) a truthful topology (1 vNUMA node), or (b) pin vCPUs and run <code>numad</code> so the fictional nodes land on real locality. Auto-NUMA balancing optimizes toward the fiction — useless.</li>
+</ol>
+<ol>
+<li><strong>Polling MMIO is faulting in a loop.</strong> The EPT leaves the BAR non-present, so each poll read is an EPT violation → VM exit (1,000-2,000 cycles) → QEMU's device model emulates the read (the 100% CPU thread). A ~5-cycle loop becomes ~1,000+ cycles per iteration: ~200×. Ch03's fix is a design pattern, not a faster emulator: devices interrupt on state change (MSI-X injection needs no exit), and data moves through shared rings in guest RAM so only the doorbell touches MMIO.</li>
+</ol>
+<ol>
+<li><strong>Dedup creates the shared cache line; timing reads the pattern.</strong> KSM put both tenants' identical copies on one physical page — same cache lines (module 01 ch03's COW; module 02 ch07's channel). Attack loop: <code>clflush</code> the target line, let the victim run, reload and time. A <em>fast</em> reload means the victim touched the line between flush and reload; slow means it didn't. The touched-set across the page reveals the victim's execution path — Yarom and Falkner (2014) recovered an RSA private key from a co-located Xen VM. <code>merge_across_nodes=0</code> only restricts merging to one NUMA node — a locality knob; tenants still share lines. Real mitigation: KSM off (<code>run=0</code>) or per-tenant restrictions.</li>
+</ol>
+<ol>
+<li><strong>Pin to keep the deep caches warm; VPID to keep the translations.</strong> Pre-VPID, a VM switch — and every exit/re-entry, including each MMIO exit — flushed the guest-usable TLB; the next few thousand accesses re-walked the composed translation. Pinning didn't stop the flushes, but kept one core's caches and paging-structure caches hot, making each refill cheaper and handoffs rarer. VPID tags each entry with the VM's 16-bit ID, so root↔non-root transitions preserve the composed entries — the flush becomes a surgical INVVPID of the stale translations. Ch01's exit cost made flushes frequent; this chapter's walk cost made them expensive.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 15 — Virtualization, containers &amp; the cloud</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RTL: the other discipline — deep-roots</title>
+<meta name="description" content="Chapter 03 of module 17: RTL: the other discipline">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="RTL: the other discipline — deep-roots">
+<meta property="og:description" content="Chapter 03 of module 17: RTL: the other discipline">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RTL: the other discipline — deep-roots">
+<meta name="twitter:description" content="Chapter 03 of module 17: RTL: the other discipline">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 17 &middot; the root under the root</div>
+<h1 class="post-title">RTL: the other discipline</h1>
+<div class="post-meta">chapter 03 &middot; ~17 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A software language tells a machine what to do <em>next</em>; a hardware description language tells a factory what circuit to <em>build</em>. Every line of Verilog is hardware that exists all at once, in parallel, forever — there is no "after line 7" for line 8 to wait in. From that inversion: a small grammar (modules, <code>wire</code> vs <code>reg</code>, two kinds of <code>always</code>); two assignment operators (<code>=</code> computes now, <code>&lt;=</code> remembers until the clock edge — the ch02 flip-flop as punctuation); four-state logic where X is a <em>diagnostic</em>; and a synchronous FIFO in ~40 lines whose full/empty ambiguity (N+1 occupancies, N pointer values) is dissolved by one extra pointer bit — the same ring discipline as the DMA ring, the vring, and io_uring. Then what synthesis does with your text, and why "passes in simulation" is weaker than "works in silicon."</blockquote>
+<h2 id="the-lines-are-not-order-text-that-describes-a-machine">The lines are not order: text that describes a machine</h2>
+<p>In RTL the text describes a circuit that exists all at once: every <code>assign</code> and every <code>always</code> block is a live circuit, and synthesis reads the whole description to <em>infer</em> gates and registers. Four software intuitions must die, each a real bug class.</p>
+<p><strong>"The loop executes."</strong> A <code>for</code> in RTL is <em>unrolled hardware</em>: N iterations mean N copies of the body, built before the machine runs.</p>
+<pre><code class="language-verilog">// This loop does not "run". It DESCRIBES four gates that exist forever.
+always @(*) begin
+    for (i = 0; i &lt; 4; i = i + 1)
+        out[i] = in[i] ^ key[i];   // 4 XOR gates, parallel, 0 sequence
+end</code></pre>
+<p>The trip count must be known at elaboration; a bound from a <em>runtime signal</em> cannot synthesize — gates cannot be grown after manufacturing.</p>
+<p><strong>"The variable holds."</strong> Verilog's <code>reg</code> is a historical naming disaster: <em>maybe</em> a flip-flop, maybe a wire, decided only by how it is driven.</p>
+<pre><code class="language-verilog">reg [7:0] a, b;
+always @(*)          a = x + y;    // this reg is an ADDER (combinational)
+always @(posedge clk) b &lt;= x + y; // this reg is 8 FLIP-FLOPS</code></pre>
+<p><strong>"Two drivers is caught by the compiler."</strong> In C two writes are ordered; in RTL they are two circuits fighting over one wire:</p>
+<pre><code class="language-verilog">assign y = a &amp; b;   // driver 1
+assign y = c | d;   // driver 2: disagreement -&gt; X in sim, a SHORT in silicon</code></pre>
+<p>Two continuous <code>assign</code>s on one net give X — contention. Sneakier: two <code>always</code> blocks writing one <code>reg</code> — simulators accept it silently and pick an arbitrary winner; synthesis <em>rejects</em> it as a multiple-driver error. Simulation is the permissive one, the inverse of the software intuition.</p>
+<p><strong>"The simulator is the truth."</strong> Sim passes, silicon fails: X-optimism, uninitialized memory, masked clock crossings (insiders' section). The simulator is a fast model, not an oracle.</p>
+<h2 id="two-assignments-one-rule-computes-remembers">Two assignments, one rule: <code>=</code> computes, <code>&lt;=</code> remembers</h2>
+<p>The working grammar is five constructs: <code>module</code> with a port list (a reusable circuit's boundary); <code>wire</code> for nets driven continuously, <code>reg</code> for things driven from <code>always</code> blocks (syntax, not hardware); <code>assign</code> = continuous, combinational, live at every instant; <code>always @(*)</code> = combinational, drive with blocking <code>=</code>; <code>always @(posedge clk)</code> = sequential, drive with nonblocking <code>&lt;=</code>.</p>
+<p><strong>Blocking <code>=</code> in combinational blocks, nonblocking <code>&lt;=</code> in clocked blocks — mixing them in one block is a firing offense</strong> (lint tools escalate it). The classic bug that makes the rule real:</p>
+<pre><code class="language-verilog">// swap_bug.v — the same two statements, two semantics.
+`timescale 1ns/1ns
+module swap_bug;
+    reg clk = 0;
+    always #5 clk = ~clk;
+    reg [7:0] a = 8'hAA, b = 8'h55;   // blocking  '=' (BAD)
+    reg [7:0] p = 8'hAA, q = 8'h55;   // nonblocking '&lt;=' (GOOD)
+
+    always @(posedge clk) begin
+        b = a;    // blocking: b becomes AA *now*, in this round...
+        a = b;    // ...so this reads the NEW b: a &lt;- AA. No swap: both AA.
+    end
+
+    always @(posedge clk) begin
+        q &lt;= p;   // nonblocking: reads see the OLD values (AA, 55);
+        p &lt;= q;   // writes land after the block. Real swap: p=55, q=AA.
+    end
+
+    initial begin
+        @(posedge clk); #1;
+        $display("blocking '=': a=%02h b=%02h", a, b);   // aa aa
+        $display("nonblocking: p=%02h q=%02h", p, q);    // 55 aa
+        $finish;
+    end
+endmodule</code></pre>
+<p>The mechanism is the simulator's <strong>event queue</strong>: time advances in evaluation rounds, <em>delta cycles</em>, no time passing between rounds.</p>
+<pre><code> posedge clk at t = 5 ns
+ ------------------------------------------------------------------ time -&gt;
+ round 0 (evaluate):  blocks run; reads see values from t &lt; 5.
+                      'b = a': b flips 55 -&gt; AA IN ROUND 0, so 'a = b'
+                      sees the new b.
+                      'q &lt;= p', 'p &lt;= q': reads see old AA/55; the
+                      WRITES are queued, not done.
+ round 1 (NBA):       queued nonblocking writes land: q &lt;- AA, p &lt;- 55.
+ (postponed):         $display sees the settled values.</code></pre>
+<p><code>&lt;=</code> schedules the write into the next round — the flip-flop's contract: the value becomes visible only <em>after</em> the edge. Blocking <code>=</code> in a clocked block models a logic chain resolving within one edge; every later statement sees the update, and your "two registers" collapse into one. The rule is not style: <code>&lt;=</code> is the only assignment whose semantics match the hardware you meant.</p>
+<p>Last piece: <strong>four-state logic</strong>. Every bit is 0, 1, X (unknown), or Z (high impedance). X is born of uninitialized state, contention, or out-of-range selects (<code>mem[11]</code> in an 8-slot memory). Insider stance: <strong>X is a diagnostic, not an error</strong> — silicon has no X, a real wire has a real voltage, so an X that quietly <em>vanishes</em> in gate-level sim is a bug hiding. Related: <code>initial</code> blocks are <em>simulation-only</em> — FPGA flows honor them as bitstream power-up values, ASIC flows ignore them.</p>
+<h2 id="the-ring-in-silicon-a-fifo-in-40-lines">The ring in silicon: a FIFO in ~40 lines</h2>
+<p>The program keeps meeting one structure: the DMA ring (module 13), the vring (module 15), io_uring (module 13 ch04). Hardware got there first, in ~40 lines:</p>
+<pre><code> index (ptr[2:0]):   0      1      2      3      4      5      6      7
+                  +------+------+------+------+------+------+------+------+
+                  |  01  |  02  |  03  |  04  |  05  |      |      |      |
+                  +------+------+------+------+------+------+------+------+
+                    stale   ^                                    ^
+                  (popped) rptr = 001                            wptr = 101
+                            next read: slot 1                    next write: slot 5
+
+   slot 7 + 1 wraps to slot 0: +1 is mod 8 on the low 3 pointer bits.
+   occupancy = wptr - rptr = 101 - 001 = 4 beats: 02 03 04 05.</code></pre>
+<pre><code class="language-verilog">// fifo_sync.v — synchronous FIFO in ~40 lines. Verilog-2001.
+// DEPTH = 2**ADDR_W slots, one clock, pointers carry 1 extra bit.
+module fifo_sync #(
+    parameter ADDR_W = 3,              // 3 ring bits -&gt; 8 slots
+    parameter DEPTH  = 8               // must equal 2**ADDR_W
+)(
+    input  wire       clk,
+    input  wire       rst,             // synchronous, active high
+    input  wire       wr_en,
+    input  wire [7:0] wdata,
+    input  wire       rd_en,
+    output wire [7:0] rdata,           // showahead: head when !empty
+    output wire       full,
+    output wire       empty
+);
+    reg [7:0] mem [0:DEPTH-1];         // storage: 8 words of 8 bits
+    reg [ADDR_W:0] wptr, rptr;         // 4 bits each: 3 ring + 1 wrap
+
+    // flags: pure functions of the pointers (combinational, no state)
+    assign empty = (wptr == rptr);                    // all 4 bits equal
+    assign full  = (wptr[ADDR_W] != rptr[ADDR_W])     // wrap bit differs
+               &amp;&amp; (wptr[ADDR_W-1:0] == rptr[ADDR_W-1:0]); // ring bits equal
+
+    assign rdata = mem[rptr[ADDR_W-1:0]]; // unregistered read of the head
+
+    always @(posedge clk) begin        // THE sequential block: '&lt;=' only
+        if (rst) begin
+            wptr &lt;= 0;
+            rptr &lt;= 0;
+        end else begin
+            if (wr_en &amp;&amp; !full)  wptr &lt;= wptr + 1'b1; // wraps mod 16
+            if (rd_en &amp;&amp; !empty) rptr &lt;= rptr + 1'b1; // ring bits mod 8
+        end
+    end
+
+    // memory ONLY here: one process per signal (no multi-driver fight)
+    always @(posedge clk)
+        if (wr_en &amp;&amp; !full)
+            mem[wptr[ADDR_W-1:0]] &lt;= wdata;
+endmodule</code></pre>
+<p>Read with ch02's eyes: storage and pointers are flip-flops; the flag equations are combinational logic feeding the enables. On an FPGA, a <code>reg</code> array with synchronous write infers a memory macro — synchronous read too would infer block RAM (BRAM); the <em>unregistered</em> read here (the "showahead"/first-word-fall-through style) maps to distributed LUT RAM on Xilinx parts. In an ASIC flow the array becomes an SRAM macro plus read muxes: same text, different memory compiler per target.</p>
+<p>The one deep problem — the reason this artifact is famous: <strong>full and empty have identical pointers.</strong> A FIFO with N slots has N+1 legal occupancies (0..N), but a naive N-value pointer pair encodes the gap <code>(w - r) mod N</code>, only N values. N+1 states pigeonholed into N values: two must collide, at both ends:</p>
+<pre><code> DEPTH = 4, naive 2-bit pointers:
+
+   EMPTY: w = 00, r = 00              FULL: w = 00, r = 00
+          (0 pushes)                        (4 pushes: 00-&gt;01-&gt;10-&gt;11-&gt;00)
+          identical pointer values. No boolean function of (w, r) alone
+          can separate them: the information is not there.
+
+ the fix, 3-bit pointers (2 ring + 1 wrap bit):
+   empty = (w == r)                          e.g. 000 vs 000
+   full  = w[2] != r[2] &amp;&amp; w[1:0] == r[1:0]  e.g. 100 vs 000</code></pre>
+<p>Two standard fixes, both in production everywhere. <strong>A count register</strong>: occupancy counter 0..N — for DEPTH=8 that is 9 values, 4 flip-flops, plus an adder on the flag path. <strong>The one-extra-bit pointer trick</strong> (used above): each pointer is ADDR_W+1 bits, counting 0..2N-1 and wrapping mod 2N; the top bit records how many times this pointer has wrapped past the other. Empty: all bits equal. Full: ring bits equal, wrap bit differs — 2 flip-flops total, and the flags are comparators. This is the scheme in Cummings' SNUG 2002 FIFO papers and the industry default. Note what the extra bit really is: the pointers are now <em>unreduced counters</em> (mod 2N), occupancy is just <code>w - r</code> — software rings use the same trick magnified (quiz 8).</p>
+<h2 id="two-clocks-one-handshake-gray-pointers-skid-buffers-bought-ip">Two clocks, one handshake: Gray pointers, skid buffers, bought IP</h2>
+<p>When write and read live in different clock domains, the pointers must cross — chapter 01's CDC problem. The read domain needs wptr to decide "empty," passing it through a 2-flop synchronizer. The hazard: a multi-bit value sampled mid-change can <em>tear</em> — some bits old, some new: a garbage pointer that never existed.</p>
+<p>The fix is <strong>Gray coding</strong>: increments in which exactly one bit changes. Binary 3 (<code>011</code>) to 4 (<code>100</code>) changes 3 bits; a torn sample could read <code>111</code> — a pointer apparently 4 ahead, telling the read side data exists that does not, so it reads <em>unwritten</em> memory. In Gray, a mid-change sample catches the single changing bit old or new — old pointer or new pointer, both valid, never a third value:</p>
+<pre><code> count   binary   gray     bit that changed
+   0      000     000        -
+   1      001     001       bit 0
+   2      010     011       bit 1
+   3      011     010       bit 0
+   4      100     110       bit 2     &lt;- only this bit flips, 3 -&gt; 4
+   5      101     111       bit 0</code></pre>
+<p>One property completes the argument: <strong>stale is the safe direction.</strong> Each domain decides using a stale copy of the other's pointer (2-3 cycles old — synchronizer latency). A stale write pointer makes the read side <em>under</em>-estimate available data — it stalls a beat too long, never a wrong read; a stale read pointer delays a write rather than overwriting unread data. The async FIFO is correct <em>because</em> its information is out of date in the conservative direction. Hence the folklore: "async FIFOs are where careers go to die" — it looks like the sync version plus a few lines, and every line is a correctness argument, so teams with tapeout deadlines buy it as IP.</p>
+<p>Within one domain, pipelines are kept fed by the <strong>ready/valid handshake</strong> (AXI-style): transfer happens when both are high; the AMBA AXI spec (ARM IHI 0022) requires <code>valid</code> to not wait for <code>ready</code>, while <code>ready</code> may wait for <code>valid</code>. The failure mode is <strong>stall propagation</strong>: a stalled stage holds its output, and if its <code>ready</code> is a combinational function of downstream's <code>ready</code>, the stall races back up the pipeline — a ready-chain through every stage, the long-path timing disaster (ch02's cycle budget spent on handshakes instead of work). The <strong>skid buffer</strong> breaks the chain with one extra register: output + skid register, capacity 2 beats, with <code>ready</code> a function of local state only ("skid empty") — no combinational path crosses the stage. The throughput arithmetic: a 1-cycle bubble in downstream <code>ready</code> costs nothing — the in-flight beat parks in the skid, drains next cycle, 100% of beats accepted; longer stalls fill the 2-beat capacity, then correctly backpressure upstream. Price: +1 cycle latency and 2 registers, paid wherever a ready-chain threatens timing closure.</p>
+<h2 id="from-description-to-gates-what-synthesis-does-with-your-text">From description to gates: what synthesis does with your text</h2>
+<p>Between your <code>.v</code> file and a chip is a compiler with a physical backend:</p>
+<pre><code> RTL (.v)
+   | elaboration (modules expanded, parameters resolved, loops unrolled)
+   v
+ generic gates -&gt; technology mapping: standard cells from the .liberty
+   v            (per cell: area, delay, capacitance, power)
+ placement (cells get x,y on the die map) -&gt; routing (metal layers)
+   v
+ signed-off netlist (timing, power, DRC checked)</code></pre>
+<p>The <strong>liberty file</strong> is the cell library's price list: a <code>NAND2_X1</code> in a 28 nm-class library occupies roughly 0.5 um^2 (0.4-1.0 um^2 across libraries and drive strengths), a DFF about 2 um^2. The synthesis report's total cell area over available die area is the first floorplan sanity check — gate count to mm^2 is this multiplication.</p>
+<p>The report you are judged on is <strong>timing</strong>. Per register-to-register path the tool checks setup: arrival before the next edge, with margin (slack). Negative slack means the cycle does not close:</p>
+<pre><code class="language-text"> Path 1: REG b/5 -&gt; NAND2 -&gt; XOR -&gt; 32b CARRY chain -&gt; REG sum/0
+   setup slack: -0.4 ns   (VIOLATED)   &lt;- the critical path
+ Path 2: REG a/2 -&gt; mux -&gt; REG b/1
+   setup slack:  1.1 ns   (MET)</code></pre>
+<p>A -0.4 ns violation on the ALU's carry chain means the 32-bit add does not fit. The fix ladder, in the order teams climb it: (1) <strong>restructure the RTL</strong> — pipelined or carry-select adder, change the description; (2) <strong>retime</strong> — move existing registers across combinational logic so the same machine (mathematically equivalent; Leiserson-Saxe 1991) rebalances its stages; (3) only then compromise the spec — slower clock, more latency. Reports come as a triangle — area, delay, power — and improving one usually costs another.</p>
+<p>Two targets make it concrete. <strong>FPGA:</strong> RTL maps to look-up tables, and a modern 6-input LUT (Xilinx 7-series onward) is literally a 64-bit ROM: any 6-input Boolean function in one cell, its 64-entry truth table programmed by the bitstream — no technology library needed, because <em>the function is the cell</em>. Dedicated carry chains make a 32-bit add run in about one LUT level plus carry propagation, ~1-2 ns on a mid-range 2010s-2020s part. <strong>ASIC:</strong> the standard cells above, mm^2 from the area report. Two economics foreshadowed for ch05: FPGA = ~0 NRE, high per-unit cost; ASIC = NRE in the millions before unit one (a 28 nm mask set is commonly cited at ~$1-2M) and low per-unit cost.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The missing-<code>default</code> latch trap.</strong> An <code>always @(*)</code> <code>case</code> with no <code>default</code> infers a <em>latch</em> when no arm matches: synthesis prints <code>Warning: Latch inferred for signal ...</code> (yosys, trimmed), and production lint escalates it to an error. Your "combinational" block silently has state; sim just holds the old value, so vectors that never hit the missing arm pass. Insiders put <code>default</code> in every <code>case</code>.</li>
+<li><strong>Reset strategy is about release, not assertion.</strong> Asynchronous reset asserts cleanly any time, but if <em>released</em> near the clock edge, different flops exit reset on different edges (recovery/removal timing): a state machine starting in two personalities. Fix: the reset synchronizer — ch01's 2-flop pattern, synchronizing reset <em>deassertion</em>.</li>
+<li><strong>The CDC checklist.</strong> Every signal crossing domains gets one of four documented treatments: single-bit 2-flop synchronizer, Gray-coded counter, async FIFO, or request/acknowledge handshake. A crossing with none of the four is a review-blocking defect.</li>
+<li><strong>"Sim passes, chip fails" top 3.</strong> (1) X-optimism: an <code>if (x)</code> with x = X cannot take the true arm, so sim falls into the <code>else</code> — if that is the branch you tested, the bug walks through masked. (2) Uninitialized memory: sim starts arrays at X or 0 (tool-dependent), silicon SRAM powers up random. (3) CDC races masked by the simulator's deterministic delta-cycle ordering — the race exists, your simulator always resolves it the same lucky way; reordering <code>always</code> blocks and re-running is a poor person's race detector.</li>
+<li><strong>Lint rules that survive every project.</strong> Blocking <code>=</code> inside <code>always @(posedge clk)</code> is Verilator's BLKSEQ-class warning and a default error in most production lint configs. The multi-driver check is the other non-negotiable: one process per signal.</li>
+<li><strong><code>initial</code> blocks are sim-only.</strong> FPGA flows honor them (power-up values in the bitstream); ASIC flows ignore them — which is why "works on the FPGA, hangs on the ASIC" so often means an unreset state machine that powered up friendly on one and hostile on the other.</li>
+<li><strong>Buy the async FIFO.</strong> Gray pointers, synchronizer latency, and full/empty in two domains have enough corners that standard practice is to license the block and spend the career capital elsewhere.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Install Icarus Verilog (~2 MB, no license): on Debian/Ubuntu, <code>apt install iverilog</code> (version 11 or 12; any release of the last 5 years runs this lab). Save the FIFO above as <code>fifo_sync.v</code>, the testbench below as <code>tb_fifo.v</code>, then:</p>
+<pre><code class="language-console">$ iverilog -o fifo_sim tb_fifo.v fifo_sync.v &amp;&amp; vvp fifo_sim
+fill 8 : f=1 e=0 w=1000 r=0000
+push 9 : dropped (w=1000 f=1)
+pop 3  : f=0 e=0 w=1000 r=0011
+wrap   : f=0 e=1 w=1011 r=1011
+ALL CHECKS PASSED</code></pre>
+<p>(Output desk-checked against the code above; f=full, e=empty, w/r are the 4-bit pointers.) This is the self-checking pattern — golden vectors in, compare every pop, count errors, one verdict — the discipline that scales to 50,000-test regressions; eyeballing waves does not.</p>
+<pre><code class="language-verilog">// tb_fifo.v — self-checking: golden vectors, error count, VCD trace.
+`timescale 1ns/1ns
+module tb_fifo;
+    reg        clk = 0, rst = 1, wr_en = 0, rd_en = 0;
+    reg  [7:0] wdata = 0;
+    wire [7:0] rdata;
+    wire       full, empty;
+    integer    errors = 0, i;
+
+    fifo_sync #(.ADDR_W(3), .DEPTH(8)) dut (
+        .clk(clk), .rst(rst), .wr_en(wr_en), .wdata(wdata),
+        .rd_en(rd_en), .rdata(rdata), .full(full), .empty(empty));
+
+    always #5 clk = ~clk;               // 10 ns period = 100 MHz
+
+    task push(input [7:0] v);           // one write beat
+        begin @(negedge clk) wr_en = 1; wdata = v;
+              @(negedge clk) wr_en = 0; end
+    endtask
+
+    task pop_check(input [7:0] golden); // one read beat + compare
+        begin @(negedge clk) rd_en = 1; #1;  // #1: let rdata settle
+              if (rdata !== golden) begin
+                  errors = errors + 1;
+                  $display("FAIL: popped %02h, expected %02h", rdata, golden);
+              end
+              @(negedge clk) rd_en = 0; end
+    endtask
+
+    initial begin
+        $dumpfile("fifo.vcd"); $dumpvars(0, tb_fifo);
+        @(negedge clk) rst = 0;
+
+        for (i = 1; i &lt;= 8; i = i + 1) push(i);       // golden 01..08
+        $display("fill 8 : f=%b e=%b w=%b r=%b", full, empty, dut.wptr, dut.rptr);
+        push(8'h09);                                   // full: dropped
+        $display("push 9 : dropped (w=%b f=%b)", dut.wptr, full);
+        for (i = 1; i &lt;= 3; i = i + 1) pop_check(i);  // golden 01..03
+        $display("pop 3  : f=%b e=%b w=%b r=%b", full, empty, dut.wptr, dut.rptr);
+        for (i = 4; i &lt;= 8; i = i + 1) pop_check(i);  // golden 04..08
+        push(8'h0A); push(8'h0B); push(8'h0C);        // wrap the ring bits
+        pop_check(8'h0A); pop_check(8'h0B); pop_check(8'h0C);
+        $display("wrap   : f=%b e=%b w=%b r=%b", full, empty, dut.wptr, dut.rptr);
+
+        if (errors == 0) $display("ALL CHECKS PASSED");
+        else             $display("%0d CHECKS FAILED", errors);
+        $finish;
+    end
+endmodule</code></pre>
+<p>Re-derive every transition by hand: 8 pushes put <code>wptr</code> at 1000 (not 000 — the wrap bit), the 9th push bounces off <code>full</code>, 3 pops leave occupancy 5 with <code>full</code> deasserted because the <em>ring bits</em> now differ, and the wrap phase proves the ring bits wrapped while the arithmetic stayed consistent.</p>
+<p><strong>Read the waveform as text.</strong> The testbench dumped <code>fifo.vcd</code>. Viewers exist (<code>gtkwave fifo.vcd</code>), but read it as text — a waveform is a log of changes (trimmed; single-character IDs vary by tool):</p>
+<pre><code class="language-text">$timescale 1ns $end
+$scope module tb_fifo $end
+$var reg 1 ! clk $end
+$scope module dut $end
+$var reg 4 " wptr $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+0!
+bxxxx "
+$end
+#5
+1!
+#45
+b0001 "</code></pre>
+<p>Anatomy: each signal gets an ID (<code>!</code>, <code>"</code>); <code>#45</code> = at 45 ns; <code>0!</code>/<code>1!</code> toggle the clock; <code>b0001 "</code> sets <code>wptr</code>; <code>bxxxx</code> is the uninitialized X, exactly where the four-state model predicts. Only <em>changes</em> are logged.</p>
+<p><strong>Reproduce the two canonical bugs.</strong> Run <code>swap_bug.v</code> from section 2 (<code>iverilog -o swap_sim swap_bug.v &amp;&amp; vvp swap_sim</code>): the broken pair prints <code>a=aa b=aa</code>, the fixed pair <code>p=55 q=aa</code>. For the latch, save the missing-<code>default</code> <code>case</code> from the insiders' bullet as <code>latch_trap.v</code> and, with yosys installed (<code>apt install yosys</code>), run <code>yosys -p 'read_verilog latch_trap.v; hierarchy; proc'</code> — the output includes (yosys 0.23+, trimmed) <code>Warning: Latch inferred for signal '\latch_trap.y' ...</code>. Icarus stays silent: a simulator has no opinion on what your combinational block infers; the synthesis warning is where the bug announces itself.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Datasheets decode.</strong> "RX FIFO 128 bytes, almost-full watermark at 112" = 128-slot ring, extra-bit pointers, watermark 16 beats below full because the write side's view of the read pointer is 2-3 cycles stale — the margin absorbs in-flight writes during synchronizer latency. You can size that margin yourself instead of trusting it.</li>
+<li><strong>RTL review gets a four-question litany.</strong> Where do loops unroll to? Which <code>reg</code>s are flops, which are wires? Who drives each signal? Which signals cross domains, and with which of the four sanctioned patterns? Fifteen minutes of that catches the bug classes that cost tapeouts.</li>
+<li><strong>Board bring-up triage.</strong> When the FPGA image that simulated clean misbehaves on the bench, run the top-3 in order: X resolved optimistically in sim; uninitialized state (did every FSM get a reset?); CDC (reorder the <code>always</code> blocks and re-run — if the answer changes, you found a race).</li>
+<li><strong>Pipeline performance arguments.</strong> A ready-chain that fails timing is not fixed by more synthesis effort: insert a skid buffer, pay the +1 cycle, keep 100% throughput through 1-cycle bubbles — and know why that beats slowing the clock 20%.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>17 ch01</strong> — the 2-flop synchronizer and CDC vocabulary, applied here to FIFO pointers.</li>
+<li><strong>17 ch02</strong> — the flip-flop that <code>&lt;=</code> models; the pipeline stages the skid buffer feeds; the FO4 stage budget the slack table cashes out.</li>
+<li><strong>17 ch04</strong> — the cache's tag and data arrays are this <code>reg</code>-array memory pattern at cache scale.</li>
+<li><strong>17 ch05</strong> — the area numbers here (0.5 um^2 NAND, 2 um^2 DFF) become the mm^2, yield, and chiplet arithmetic there.</li>
+<li><strong>01 ch02</strong> — the cache line this module rebuilds from transistors in ch04.</li>
+<li><strong>09 ch03</strong> — the software ring's head/tail is the same N+1-state problem; 09 ch01's happens-before is the memory-model form of the delta cycle's ordering contract.</li>
+<li><strong>13 ch04 / 15 ch03</strong> — io_uring and the vring: unreduced 32-bit head/tail indices, the one-extra-bit trick with 2^32/N wrap bits.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>A colleague writes <code>for (i = 0; i &lt; n; i = i + 1) acc = acc + data[i];</code> inside <code>always @(*)</code>, with <code>n</code> a runtime input. What does synthesis say, and what hardware does the <em>fixed</em> loop (<code>i &lt; 4</code>) become?</li>
+</ol>
+<ol>
+<li>Reset a <code>fifo_sync</code> with DEPTH=8 (4-bit pointers), then 8 pushes and 3 pops. Give <code>wptr</code>, <code>rptr</code> (binary), <code>full</code>, <code>empty</code>, and occupancy — and say why occupancy is not 3.</li>
+</ol>
+<ol>
+<li>In <code>swap_bug.v</code>, reorder the blocking pair to <code>a = b; b = a;</code> (start a=AA, b=55). What do <code>a</code> and <code>b</code> hold after one clock edge, and what general fact about blocking assignments does either ordering show?</li>
+</ol>
+<ol>
+<li>A design simulates correctly for every regression vector. On the FPGA, an output occasionally holds a stale value for a cycle when a 2-bit select equals 2'b11. The block is a <code>case</code> over that select with arms 00, 01, 10 and no <code>default</code>. Name the inferred hardware, the warning in the synthesis log, and why the regression missed it.</li>
+</ol>
+<ol>
+<li>A refactor leaves two <code>always @(posedge clk)</code> blocks both assigning <code>rptr</code> with <code>&lt;=</code> (one writes 0 on reset, one increments). What does the simulator do, what does synthesis do, and what would the circuit do if it could be built?</li>
+</ol>
+<ol>
+<li>For a FIFO with N=16 slots: count the occupancies to distinguish, the values a naive 4-bit pair's gap <code>(w - r) mod 16</code> can take, and why that proves full and empty are inseparable. Give the full and empty equations for the 5-bit fix.</li>
+</ol>
+<ol>
+<li>An async FIFO's write pointer, Gray-coded, changes 010 -&gt; 110. List every value the read domain's synchronized copy can take, and why neither causes a wrong <em>read</em> — then give a torn read possible if the pointer were binary 011 -&gt; 100.</li>
+</ol>
+<ol>
+<li>io_uring's submission ring keeps head and tail as full 32-bit indices and masks only to index memory (<code>idx &amp; (SQ_ENTRIES - 1)</code>), per module 13 ch04. Which of this chapter's two fixes is that, what became of the extra bit, and why does the ambiguity never arise even after many wraps?</li>
+</ol>
+<details><summary>Answers</summary>
+<ol>
+<li><strong>The tool rejects it (or forces a silent maximum).</strong> A <code>for</code> loop unrolls at elaboration: N iterations, N copies of the body, so the trip count must be known before hardware exists — gates cannot be manufactured after the chip is cut. With <code>i &lt; 4</code>: 4 copies of the body in parallel (4 XOR gates for the bitwise form in section 1) — no counter, no loop control, no sequence.</li>
+</ol>
+<ol>
+<li><strong>wptr=1000, rptr=0011, full=0, empty=0, occupancy=5.</strong> Each push increments wptr mod 16, each pop rptr mod 16: 8 and 3. Occupancy is the difference 1000-0011=0101b=5 — not 3, because 3 is rptr, the number of <em>pops</em>, not the beats waiting. full=0 because although the wrap bits differ, the ring bits (000 vs 011) differ too; empty=0 because the pointers differ.</li>
+</ol>
+<ol>
+<li><strong>a=55, b=55 — both copies of b.</strong> <code>a = b</code> takes 55 immediately (in round 0); then <code>b = a</code> reads the <em>new</em> a: 55 again. Either ordering leaves both variables holding one value copied twice. The general fact: blocking assignments execute in written order within one delta round, so later statements see earlier updates — you described a wire, not two registers, and no ordering makes a swap.</li>
+</ol>
+<ol>
+<li><strong>An inferred latch; "Latch inferred for signal ..."; the vectors never drove 2'b11.</strong> With no matching arm and no default, the only semantics available is "y keeps its value" — a level-sensitive latch, state in a "combinational" block. Synthesis prints the warning; simulation honors the hold silently, so vectors avoiding that select pass. The stale value appears only where 2'b11 actually occurs. Fix: <code>default</code> in every <code>case</code>.</li>
+</ol>
+<ol>
+<li><strong>Sim: arbitrary winner every cycle, no error; synthesis: multiple-driver error; silicon: contention.</strong> IEEE 1364 does not define the order of two nonblocking assignments to one reg from different processes, so each simulator resolves it its own way — plausibly the reset block's 0 wins every edge and the FIFO stays "empty" forever: a bug that looks stable but is merely arbitrary. Synthesis hard-errors on the multiply-driven register first. Forced into silicon, two drivers fight on one net — the contention current from section 1. Fix: one process per signal, reset and increment in one block with if/else priority.</li>
+</ol>
+<ol>
+<li><strong>17 occupancies, 16 gap values, pigeonhole.</strong> Occupancies 0..16 inclusive = 17 states; the gap takes 16 values, and gap 0 must carry both occupancy 0 and occupancy 16 — two states in one encoding, so no function of 4-bit pointers can separate them. With 5-bit pointers counting mod 32: empty = (w == r); full = w[4] != r[4] &amp;&amp; w[3:0] == r[3:0].</li>
+</ol>
+<ol>
+<li><strong>010 or 110 — old or new, nothing else.</strong> Gray changes exactly one bit per increment (bit 2 here), so a mid-change sample reads that bit settled 0 or 1: two real pointers, no third value. A stale 010 tells the read side there is <em>less</em> data than exists — it stalls a beat longer, never a read of unwritten memory: each domain uses the other's pointer in the conservative direction. Binary 011 -&gt; 100 changes 3 bits; a torn sample could read 111 (bit 2 new, bits 1:0 old) — a pointer that never existed, 4 ahead, inviting 4 reads of unwritten slots.</li>
+</ol>
+<ol>
+<li><strong>The one-extra-bit trick, generalized; the extra bit became 2^32 / N wrap bits.</strong> Unreduced counters make tail - head <em>be</em> the occupancy for every value up to 2^31 — the pointers distinguish 2^32 states, vastly more than the N+1 needed, so full and empty are comparisons on raw indices, unambiguous at any wrap count (mod-2^32 arithmetic absorbs wraps, as mod-16 arithmetic absorbed the 8-deep FIFO's wrap bit). Hardware pays flip-flops linearly in counter width, so silicon stops at one extra bit; a 32-bit field is free in software, so io_uring and the vring take the whole counter.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch02.html"><span class="cn-label">previous</span><span class="cn-title">Ch 02</span></a>
+<a class="next" href="ch04.html"><span class="cn-label">next</span><span class="cn-title">Ch 04</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 17 — Digital hardware: from transistors to silicon</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

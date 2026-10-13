@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The page's memory: leaks, workers, WASM — deep-roots</title>
+<meta name="description" content="Chapter 04 of module 16: The page's memory: leaks, workers, WASM">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The page's memory: leaks, workers, WASM — deep-roots">
+<meta property="og:description" content="Chapter 04 of module 16: The page's memory: leaks, workers, WASM">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The page's memory: leaks, workers, WASM — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of module 16: The page's memory: leaks, workers, WASM">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 16 &middot; an OS that renders</div>
+<h1 class="post-title">The page's memory: leaks, workers, WASM</h1>
+<div class="post-meta">chapter 04 &middot; ~15 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> "The page's memory" is not the JS heap. A loaded tab pays six storages at once: the V8 heap (floor 1-3 MB before your first object, V8 2024-era), the Oilpan DOM heap (ch02), the decoded image cache (a 4,000×3,000 JPEG: ~500 KB on disk, ~48 MB decoded — 12 M px × 4 B never compresses), fonts, compositor layers, and the disk cache's RAM index. Workers multiply the floors: each is its own V8 isolate, ~1-2 MB stack, script copies — parallelism is billed in MB. Then six canonical leaks, each one retainer edge you can name in a heap snapshot. The deep end is WASM: one linear memory per instance, where V8 reserves 10 GB of address space (4 GB + 6 GB guard) so out-of-bounds accesses become page faults in the guard — module 01 ch03's "page fault as a branch," promoted into a compiler optimization.</blockquote>
+<h2 id="the-inventory-six-heaps-pretending-to-be-one">The inventory: six heaps pretending to be one</h2>
+<p>Chapter 01 gave one renderer process per site-instance sharing one address space. DevTools' "JS Heap" is only the first line of the bill; every memory incident is a story about <em>which</em> tank overflowed:</p>
+<pre><code>one renderer process (Chrome, 2024-era; about:blank -&gt; heavy page)
++---------------------------------------------------------+
+| V8 JS heap        ~1-3 MB floor (module 01 ch15);       |
+|                   your objects + ch02's DOM wrappers    |
++---------------------------------------------------------+
+| Blink / Oilpan     DOM nodes, style, layout (ch02)      |
++---------------------------------------------------------+
+| Decoded images     4,000x3,000 px x 4 B = 48,000,000 B  |
+|                   (~45.8 MiB) each; LRU, discard on     |
+|                   pressure, re-decode on demand         |
++---------------------------------------------------------+
+| Fonts              shaped-glyph runs, glyph atlases     |
++---------------------------------------------------------+
+| Compositor layers  ch03's tile textures                 |
++---------------------------------------------------------+
+| Network cache      RAM index over the disk cache        |
++---------------------------------------------------------+
+| ArrayBuffers       backing stores OUTSIDE the V8 heap   |
+|                   ("external memory")                   |
++---------------------------------------------------------+</code></pre>
+<p>The decoded image row deserves its arithmetic — the number one hidden consumer on media-heavy pages: 4,000 × 3,000 = 12,000,000 px; RGBA is 4 B/px; 12,000,000 × 4 = 48,000,000 B = 45.8 MiB. A flat-surface JPEG can be ~500 KB on disk and 48 MB in RAM (~96:1); a photographic one is 2-5 MB for the <em>same</em> 48 MB decoded — compression shrinks the disk side only; pixels never. The policy: LRU with discard-on-pressure — drop decoded pixels, re-decode on next paint, trading CPU for RAM. The right trade, until a page decodes in a scroll handler and it becomes jank.</p>
+<p>The last row is the trapdoor: an <code>ArrayBuffer</code>'s backing store lives outside the V8 heap, tracked as <em>external memory</em> — a page holding 500 MB in TypedArrays shows a small "JS Heap" while the renderer's real footprint is enormous. When the numbers don't add up, this row is why.</p>
+<h2 id="the-worker-bill-parallelism-invoiced">The worker bill: parallelism, invoiced</h2>
+<p>Chapter 01 derived why 40 tabs are 40 processes. Workers invert it: they are <em>threads you chose to spawn</em>, each paying a fixed entry fee. A dedicated <code>Worker</code> is a thread (~1-2 MB stack) plus a full V8 isolate: its own heap with the same 1-3 MB floor, its own handles, its own copies of every script loaded into it — module 01 ch15's per-isolate heaps make worker code safe to run concurrently: no shared object graph, no locks, no data races. The bill is arithmetical: 5 workers for image processing cost ~10-15 MB before any pixel is touched (5 × (isolate floor + stack + script copy)); 10 cost ~20-30 MB. Cheap next to 10 <em>processes</em> (ch01's ~30-50 MB each); not free. Topology note: dedicated workers are threads <em>inside the renderer process</em> — the process list doesn't grow, the renderer's footprint does.</p>
+<p>The exception proving the isolation rule is <code>SharedArrayBuffer</code>: one backing store shared across isolates — module 09's shared memory, now inside the sandbox. The price is the thread-safety contract (<code>Atomics</code> for anything that must not tear) plus Chrome's cross-origin isolation gate: SAB is exposed only to pages opting into COOP/COEP, because high-resolution timers plus a shared cache were Spectre's fuel (ch05 closes that loop).</p>
+<p>The service worker is the same isolate math with opposite lifetime politics. You may write it as a daemon; Chrome treats it as a pager. It dies after ~30 s idle (Chrome 2024-era; the spec lets the browser terminate it at any time) and restarts on the next <code>fetch</code>/<code>push</code> event. Every start re-fetches the script and byte-compares it with the cached copy; one differing byte installs a new version that <em>waits</em>, and <code>skipWaiting()</code>/<code>clients.claim()</code> is how it takes over open pages. Its <code>CacheStorage</code> is disk-backed, per-origin (partitioned by top-site for third-party contexts — ch05), bounded by the quota <code>navigator.storage.estimate()</code> reports — roughly up to ~60% of disk per origin, best-effort eviction. Design lesson: state that must survive the kill lives in CacheStorage/IndexedDB, never in JS variables — forfeit every ~30 s.</p>
+<h2 id="the-leak-taxonomy-six-ways-a-page-forgets">The leak taxonomy: six ways a page forgets</h2>
+<p>GC frees what is unreachable; every leak below is one extra reference edge quietly keeping a graph reachable. Reproducer, symptom, fix:</p>
+<p><strong>(1) The detached subtree.</strong> Chapter 02 derived it fully — a removed DOM subtree stays alive via the listener closure ↔ wrapper → node → children chain (10,000 nodes × ~80 B ≈ 0.8 MB per instance, per navigation):</p>
+<pre><code class="language-js">const detached = [];
+function leak() {
+  const root = document.createElement("div");
+  for (let i = 0; i &lt; 10000; i++) root.appendChild(document.createElement("span"));
+  root.firstElementChild.addEventListener("click", () =&gt; count(root));
+  document.body.appendChild(root);
+  setTimeout(() =&gt; { document.body.removeChild(root); detached.push("gone"); }, 0);
+} // removed from the DOM — retained by the closure. Fix: removeEventListener, or null the capture.</code></pre>
+<p><strong>(2) The closure-capture leak.</strong> A long-lived callback captures a whole scope to use one field:</p>
+<pre><code class="language-js">function onReport(report) {        // report: ~200 MB of parsed rows
+  setInterval(() =&gt; paint(report.summary), 250); // captures ALL of report
+}
+// fix: const summary = report.summary; then capture `summary` (12 B), not the scope</code></pre>
+<p>Symptom: retained size concentrated in one closure; the retainer view names the scope chain. The rule: <em>a closure captures variables, not expressions</em> — <code>report.summary</code> in the body keeps <code>report</code> alive: the variable is what the scope holds.</p>
+<p><strong>(3) The expanding collection.</strong> State that grows with navigation and never shrinks — the listener-registry anti-pattern:</p>
+<pre><code class="language-js">const handlers = new Map();               // strong key, strong value
+function onNavigate(page) {               // every SPA route change:
+  handlers.set(page, makeHandler(page));  // the whole page graph enters the Map
+}
+// fix: if the key OBJECT should decide the entry's lifetime, use a WeakMap —
+// the weak key makes the entry collectable when the key dies.</code></pre>
+<p><strong>(4) The un-cancelled timer/rAF.</strong> A <code>setInterval</code> nobody clears is a 4 Hz CPU leak draining the battery. Browsers fight back: hidden tabs get timers clamped to once per second; after 5 minutes hidden, chained timers drop to about one wake per minute (Chrome's "intensive throttling," Chrome 88+); <code>requestAnimationFrame</code> stops entirely in hidden tabs — but the <em>retention</em> half (the callback's closure) survives. Fix: <code>clearInterval</code>/<code>cancelAnimationFrame</code> on teardown, pause on <code>visibilitychange</code>.</p>
+<p><strong>(5) The console.log retainer.</strong> Ch02's folklore as hygiene: an object logged to the console is retained <em>while DevTools is open</em>. Log a 200 MB object once, snapshot, and you "find" a leak that is your own instrumentation. Close DevTools before measuring.</p>
+<p><strong>(6) The observer-less leak.</strong> A <code>ResizeObserver</code> keeps strong references to every observed element, and its callback often captures them too:</p>
+<pre><code class="language-js">const ro = new ResizeObserver(entries =&gt; relayout(entries[0].target));
+document.querySelectorAll(".widget").forEach(el =&gt; ro.observe(el));
+// teardown never calls ro.disconnect(): every .widget (and its subtree) lives forever</code></pre>
+<p>(The <code>MutationObserver</code> target link is weak by spec — but its queued records and callback still capture nodes. <code>disconnect()</code> fixes both.)</p>
+<h2 id="the-formal-method-three-snapshots-and-a-retainer-walk">The formal method: three snapshots and a retainer walk</h2>
+<p>The taxonomy is recall; the method is procedure — the three-snapshot technique as a repeatable workflow:</p>
+<ol>
+<li>Memory panel → <em>Take heap snapshot</em> → Snapshot 1 (baseline).</li>
+<li>Perform the suspected leaky action once.</li>
+<li>Click the trash icon (force GC — you want <em>unreachable-but-retained</em> objects, not pending garbage).</li>
+<li>Take Snapshot 2. Select it, switch the view from "Summary" to <strong>Comparison</strong>, baseline Snapshot 1, sort by <em>Size Delta</em>.</li>
+<li>Walk the top grower's <strong>Retainers</strong> panel chain until it terminates in a scope, a listener, a Map, or a console log — that terminal is the diagnosis; each of the six leaks has a characteristic one.</li>
+<li>Fix, re-run, confirm the delta collapses to ~0.</li>
+</ol>
+<p>Ch02 defined the numbers: shallow size, retained size (what dies if it dies — the dominator edge), distance. Sort by <em>retained size</em> — leaks are dominators.</p>
+<h2 id="wasm-s-linear-memory-10-gb-of-address-space-to-kill-one-branch">WASM's linear memory: 10 GB of address space to kill one branch</h2>
+<p>From the JS side, a <code>WebAssembly.Memory</code> is one contiguous <code>ArrayBuffer</code> — the <em>linear memory</em>. From the engine side, the browser's sneakiest memory-model decision. Wasm32 rules: memory is 64 KiB pages; <code>memory.grow</code> adds pages; the cap is 65,536 pages = 4 GiB, because every address comes from a <strong>32-bit index</strong> that cannot name anything past 4 GiB.</p>
+<p>The classic cost: a bounds check — <code>index + offset + size &lt;= current_length</code> — a compare and branch per access. Module 01 ch03's insight: the MMU already bounds-checks every access via the page fault. V8's reservation trick makes that the design: on 64-bit with the trap handler enabled (V8 2024-era), the engine reserves <strong>10 GB of address space per wasm memory up front</strong> — the 4 GB linear region plus a 6 GB guard, <code>PROT_NONE</code> beyond current length:</p>
+<pre><code>V8's reservation for ONE wasm32 memory (64-bit, trap handler on)
+        10 GiB reserved virtual address space (commit only as it grows)
+
+base (mem.buffer)                                     reserved end
+|&lt;------------- up to 4 GiB linear memory ------------&gt;|&lt;-- 6 GiB guard --&gt;|
++------------------------------------------------------+-------------------+
+| 64 KiB pages, mprotect'd writable on memory.grow     | everything else   |
+|  TypedArray views start here                         | PROT_NONE         |
++------------------------------------------------------+-------------------+
+        any access that computes an address HERE faults: SIGSEGV,
+        which V8's trap handler converts to "memory access out of bounds"
+
+worst-case effective address = base + index + offset + access
+                              &lt;= 0xFFFFFFFF + 0xFFFFFFFF + 16 B  (~8 GiB 8 B)
+                              -&gt; always inside the 10 GiB reservation</code></pre>
+<p>The guard size is <em>derived</em>, not chosen: the effective address is <code>(u32)index + (u32)offset + access size</code>, and two u32s plus 16 B cannot exceed ~8 GiB 8 B past base — so 4 GiB memory + 6 GiB guard covers every address any wasm32 access can compute. Result: <strong>zero bounds-check branches</strong> in generated code. An access lands in committed memory or faults in the guard; the SIGSEGV (Windows: VEH exception) is intercepted by V8's handler, which verifies the faulting PC is registered wasm code and the address is inside a wasm memory reservation, then converts it to a trap and resumes at the landing pad. A wild crash in Blink's C++ fails those checks and is forwarded. Hence wasm array-heavy code at native speed with no per-access checks, and a reservation that is purely virtual: RSS counts only touched pages.</p>
+<p>The second truth: <strong>wasm has no GC</strong> (over linear memory) — it is unmanaged bytes, and whatever C or Rust you compiled brings its own allocator and lifetimes, verbatim from module 01 chapters 08-10: a C-to-wasm leak is a malloc without a free; a Rust one is <code>unsafe</code> or <code>mem::forget</code>. The change in flight is wasm-gc (struct/array reference types collected by the host GC; Chrome 119 and Firefox 120, late 2023) — the Kotlin/Java-to-wasm path that replaces shipping your own GC in linear memory.</p>
+<h2 id="the-boundary-where-numbers-become-expensive">The boundary: where numbers become expensive</h2>
+<p>JS numbers are f64; wasm params are i32/f64/f32. Every crossing converts (i32 via ToInt32 truncation), and multi-value returns get boxed into fresh JS objects. The folklore is exact: the boundary is where numbers become expensive — hot loops live on the wasm side, and the workaround for "return a struct" is to <em>write results into linear memory</em> and read them through one TypedArray view: one crossing instead of eight.</p>
+<p>The chapter's tying pattern — worker + SAB + wasm = the DSP pipeline: the main thread creates a <code>SharedArrayBuffer</code> and <code>postMessage</code>s it to workers (zero-copy — the handle travels, the bytes never duplicate); each worker instantiates the same module <em>importing the shared memory</em>; synchronization is <code>Atomics.wait/notify</code> (module 09's futex shape). One shared linear memory, N isolates, no marshalling: the guard region keeps it safe, cross-origin isolation (ch05) keeps it gated.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li>V8 reserves 10 GB of <em>virtual</em> address space per wasm memory (4 GB linear + 6 GB guard, V8 2024-era, 64-bit, trap handler on): <code>top</code> shows a terrifying VIRT; RSS counts touched pages. Without the trap handler, V8 emits explicit bounds-check branches — the slow path nobody benchmarks.</li>
+<li><code>memory.grow</code> <strong>detaches the old <code>ArrayBuffer</code></strong> even though the reservation means the base address never moved — detachment is a spec decision (stale views with wrong lengths), not an address-space necessity. Classic bug: the module grows once and every pre-existing TypedArray silently becomes <code>.byteLength === 0</code>.</li>
+<li>Big <code>ArrayBuffer</code>s live outside the V8 heap and count as <em>external memory</em>; V8 watches that counter when scheduling GCs — a page can trigger collections with zero JS-heap growth.</li>
+<li>Decoded images are the stealth budget: each visible 4,000×3,000 image is ~45.8 MiB; under pressure the cache discards and re-decodes on demand — decode in a scroll handler and that policy becomes main-thread jank.</li>
+<li>Service worker lifetimes: ~30 s idle kill (Chrome, 2024-era), restart per event, script byte-compare on every start for updates. "Your SW is not a daemon, it's a pager."</li>
+<li>Timer throttling has exemptions: pages playing audio keep full-rate background timers — the hidden podcast tab keeps your 4 Hz poll alive. Intensive throttling (1 wake/min after 5 min hidden, Chrome 88+) applies only to chained timers (5+ nesting levels).</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Everything runs in any Chrome/Chromium with DevTools; <code>Shift+Esc</code> opens the task manager for process-level numbers.</p>
+<p><strong>Lab 1 — the 48 MB image, measured.</strong> Generate 12 MP locally, force the decode, watch the footprint:</p>
+<pre><code class="language-js">// DevTools console, any page
+const c = document.createElement("canvas");
+c.width = 4000; c.height = 3000;
+const blob = await new Promise(r =&gt; c.toBlob(r, "image/jpeg", 0.8)); // flat content: ~50-100 KB on disk
+const img = new Image();
+img.src = URL.createObjectURL(blob);
+await img.decode();   // the 12,000,000 px x 4 B decode happens NOW</code></pre>
+<p>Shift+Esc before and after: the tab's <em>Memory footprint</em> steps up roughly 45-48 MB at <code>decode()</code> (±a few MB — the cache may discard opportunistically). Disk size and RAM size are unrelated.</p>
+<p><strong>Lab 2 — the worker floor, measured.</strong> Ten isolates, no work:</p>
+<pre><code class="language-js">for (let i = 0; i &lt; 10; i++)
+  new Worker(URL.createObjectURL(new Blob(["self.onmessage = () =&gt; {};"],
+                                          { type: "text/javascript" })));</code></pre>
+<p>Watch the <em>same</em> renderer row: expect ~+20-30 MB (10 × (isolate floor + stack + script)). The process count in <code>chrome://process-internals</code> does not change — workers are threads, not processes.</p>
+<p><strong>Lab 3 — grow, read, and trap.</strong> The <code>WebAssembly.Memory</code> API directly:</p>
+<pre><code class="language-js">const m = new WebAssembly.Memory({ initial: 1, maximum: 2 }); // 64 KiB pages
+new Uint8Array(m.buffer).length;  // 65536
+m.grow(1);                        // 1  (returns the OLD page count; old buffer detaches)
+m.buffer.byteLength;              // 131072
+m.grow(1);                        // Uncaught RangeError: 2 + 1 &gt; maximum 2</code></pre>
+<p>The trap message, via a 12-line module typed by hand (no toolchain):</p>
+<pre><code class="language-js">const bytes = new Uint8Array([0,97,115,109,1,0,0,0, 1,6,1,96,1,127,1,127,
+  3,2,1,0, 5,3,1,0,1, 7,13,2, 3,111,111,98,0,0, 3,109,101,109,2,0,
+  10,9,1, 7,0, 32,0, 40,2,0, 11]);
+// module: (memory 1) (func (export "oob") (param i32) (result i32) (i32.load (local.get 0)))
+const { instance } = await WebAssembly.instantiate(bytes);
+instance.exports.oob(64);     // 0  — in bounds, memory is zeroed
+instance.exports.oob(70000);  // Uncaught RuntimeError: memory access out of bounds</code></pre>
+<p>That <code>RuntimeError</code> is the guard region's SIGSEGV, caught and re-labeled — 70,000 &gt; 65,536, with no branch executed to check it.</p>
+<p><strong>Lab 4 — the three-snapshot hunt.</strong> Run leak (2) (the 200 MB <code>setInterval</code> variant) through the six-step procedure from "The formal method": the retainer walk ends at the interval callback's scope; apply the fix, re-run, watch the delta collapse.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Memory incidents become graph problems.</strong> "Chrome eats RAM" decomposes into the inventory: images (48 MB each — cap sizes, lazy-decode below the fold), workers (per-isolate floor — pool instead of spawn), or a retainer (snapshot, compare, walk).</li>
+<li><strong>API design:</strong> registries keyed by objects that come and go are <code>WeakMap</code>s; observer-bearing components get teardown that actually calls <code>disconnect()</code>; long-lived callbacks get destructured scopes — code-review rules you can now <em>derive</em>, not memorize.</li>
+<li><strong>Wasm performance:</strong> batch work on the wasm side, return results through linear memory, design growth up front — <code>maximum</code> in the constructor is what lets the engine keep the reservation.</li>
+<li><strong>Interview-grade answers:</strong> derive the 6 GB guard from the two-u32 arithmetic; explain why <code>memory.grow</code> detaches buffers though the base doesn't move; state the worker bill with numbers.</li>
+<li><strong>Battery/CPU triage:</strong> a hidden tab burning CPU is an un-cancelled timer that plays audio or hasn't hit the 5-minute throttling threshold yet.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 16 ch01</strong> — the renderer process hosting this inventory; workers as threads vs. sites as processes.</li>
+<li><strong>Module 16 ch02</strong> — Oilpan, the wrapper mechanism behind leak (1), the heap-snapshot numbers.</li>
+<li><strong>Module 16 ch03</strong> — the compositor layers row, the rAF clock behind leak (4), where decoded images become textures.</li>
+<li><strong>Module 16 ch05</strong> — the COOP/COEP gate SAB waits at; storage partitioning for Cache Storage.</li>
+<li><strong>Module 01 ch03</strong> — the page fault as a branch, promoted here into the guard-region optimization.</li>
+<li><strong>Module 01 ch08-10</strong> — C's malloc and Rust's ownership, verbatim inside wasm linear memory.</li>
+<li><strong>Module 01 ch15</strong> — the V8 heap's floor and generations.</li>
+<li><strong>Module 09</strong> — shared memory and <code>Atomics.wait/notify</code>, the SAB contract in the DSP pipeline.</li>
+<li><strong>Module 13 ch04</strong> — zero-copy buffer transfer across a boundary; SAB <code>postMessage</code> is the same idea.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>(Concept) Derive the minimum guard-region size that lets wasm32 code skip per-access bounds checks. Which two wasm-level facts bound the worst-case effective address, and what must the runtime verify before converting a SIGSEGV into a trap, not a crash?</li>
+</ol>
+<ol>
+<li>(Predict the number) A gallery page shows 8 images, each 4,000×3,000, all decoded simultaneously in RGBA. How many bytes of decoded-image memory, exactly? What does the cache do under memory pressure, and at what cost?</li>
+</ol>
+<ol>
+<li>(Predict the output) Exactly what does this print, and what is thrown (if anything)?</li>
+</ol>
+<pre><code class="language-js">const m = new WebAssembly.Memory({ initial: 2, maximum: 4 });
+const view = new Uint8Array(m.buffer);
+console.log(m.grow(1));
+console.log(view.byteLength, m.buffer.byteLength);
+try { m.grow(2); } catch (e) { console.log(e.constructor.name); }</code></pre>
+<ol>
+<li>(Predict the output) Using the hand-written module from the lab (<code>oob</code> is <code>(param i32) (result i32)</code> doing <code>i32.load</code> at the parameter, 1 page of memory): what do <code>oob(64)</code> and <code>oob(70000)</code> each produce, and what mechanism produced the second?</li>
+</ol>
+<ol>
+<li>(Diagnose) This page's renderer grows ~200 MB per received message and never shrinks, even after the forced-GC trash click:</li>
+</ol>
+<pre><code class="language-js">socket.addEventListener("message", async e =&gt; {
+  const report = JSON.parse(e.data);           // ~200 MB
+  chart.setData(report.rows);
+  setInterval(() =&gt; chart.tick(report.legend), 250);
+});</code></pre>
+<p>Name the leak (taxonomy number), the retainer-chain terminal the snapshot shows, and the two-part fix.</p>
+<ol>
+<li>(Diagnose) A team refactors the expanding <code>Map</code> listener registry into a <code>WeakMap</code> — and every navigation now throws <code>TypeError: Invalid value used as weak key</code>. What did they key it with, why is that illegal, and the two honest resolutions?</li>
+</ol>
+<ol>
+<li>(Diagnose) A user reports a tab spinning a laptop fan while <em>hidden</em>. The page runs an animation via <code>requestAnimationFrame</code> and a 250 ms <code>setInterval</code> poll. Which one burns the CPU in a hidden tab, what does Chrome's throttling do to it, and the fix?</li>
+</ol>
+<ol>
+<li>(Cross-chapter) Module 01 ch03 called the page fault "a branch the MMU executes for you." Explain how V8's wasm trap handler turns a fault into a <em>resumable</em> trap — the two checks before conversion — and why the same mechanism cannot save a use-after-free in Blink's C++ heap (module 03's taxonomy).</li>
+</ol>
+<details><summary>Answers</summary>
+<ol>
+<li><strong>...</strong> — Effective address = <code>base + (u32)index + (u32)offset + access size</code>. The two facts: wasm32 indices are 32-bit unsigned (max 0xFFFFFFFF) and static offsets are also u32 immediates, with accesses up to 16 B (SIMD). Worst case ≈ 0xFFFFFFFF + 0xFFFFFFFF + 16 ≈ 8 GiB 8 B past base, so 4 GiB usable + 6 GiB guard (10 GiB reserved) covers every computable address — no bounds-check branch is emitted. Before converting the SIGSEGV, the handler verifies the faulting PC is in registered wasm code (landing-pad registry) and the fault address is inside a wasm memory reservation; otherwise it forwards the signal as a real crash.</li>
+</ol>
+<ol>
+<li><strong>...</strong> — 8 × 4,000 × 3,000 × 4 B = 384,000,000 B ≈ 366 MiB. Under pressure the LRU discards decoded pixels (the JPEGs stay on disk); the cost is re-decode — CPU on the paint path, jank if it lands in a scroll handler.</li>
+</ol>
+<ol>
+<li><strong>...</strong> — Line 1 prints <code>2</code> (<code>grow</code> returns the OLD page count). Line 2 prints <code>0 196608</code>: the first <code>grow</code> detached the old buffer per spec (the base doesn't move; detachment is a spec decision), so <code>view.byteLength</code> is 0 while the fresh <code>m.buffer</code> is 3 × 65,536 = 196,608 B. Line 3 prints <code>RangeError</code>: the JS API throws when 3 + 2 exceeds <code>maximum: 4</code>; the wasm <em>instruction</em> would return -1 there instead of throwing.</li>
+</ol>
+<ol>
+<li><strong>...</strong> — <code>oob(64)</code> returns <code>0</code>: address 64 is in bounds and wasm memory is zero-initialized, so the little-endian i32 reads 0. <code>oob(70000)</code> throws <code>RuntimeError: memory access out of bounds</code>: 70,000 ≥ 65,536, so the load computed an address in the PROT_NONE guard, faulted, and the trap handler (PC is registered wasm code; address inside the reservation) converted it. No bounds-check branch executed.</li>
+</ol>
+<ol>
+<li><strong>...</strong> — Taxonomy (2) stacked with (4): every message installs a <em>new</em> 250 ms interval whose callback captures <code>report</code> — the whole 200 MB scope, not <code>report.legend</code> — and each interval is permanent, so the count compounds. The retainer walk terminates at the interval callback's scope, one closure per message. Fix: (a) <code>clearInterval</code> the previous poll (or create it once outside the handler), (b) destructure — <code>const legend = report.legend;</code> — so the closure captures 12 bytes. The delta then collapses to ~0.</li>
+</ol>
+<ol>
+<li><strong>...</strong> — They keyed the WeakMap with the page/route <em>string</em> (or an id). Weak keys must be objects — collectable identities; a string has no lifetime to be weak over — so <code>set</code> throws <code>TypeError: Invalid value used as weak key</code>. Resolution 1: key by the page object itself, so entries die with the page. Resolution 2: for a primitive key, keep a Map and delete explicitly on teardown; "entry dies with key" requires an object whose reachability can end.</li>
+</ol>
+<ol>
+<li><strong>...</strong> — The <code>setInterval</code>. <code>requestAnimationFrame</code> never fires in a hidden tab — the compositor stops producing frames, so the callback stops being called (its closure is retained but costs no CPU). The 250 ms poll is clamped to once per second when hidden; after 5 minutes hidden, intensive throttling (Chrome 88+) limits chained timers to about one wake per minute — real but bounded, unless the page plays audio (exempt). Fix: <code>visibilitychange</code> → <code>clearInterval</code> when hidden, restart when visible; a poll nobody reads is leak (4).</li>
+</ol>
+<ol>
+<li><strong>...</strong> — The handler looks up the faulting PC in V8's registry of trap-handler-protected wasm code (the fault is a <em>wasm-issued load/store</em>, not arbitrary native code) and checks the fault address against the wasm memory reservations (inside the guard = the computed OOB case). If both pass, it resumes at the landing pad for that load, raising the trap into managed code. A C++ use-after-free fails the first check by construction — the faulting instruction is Blink's compiled C++, not registered wasm code — so the handler forwards the signal and the renderer crashes (ch01's sad tab). Only wasm's controlled address arithmetic makes the outcome a catchable trap rather than memory corruption (module 03: the fault is the symptom, the bug is the lifetime).</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 16 — Browser engine internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>From transistors to gates — deep-roots</title>
+<meta name="description" content="Chapter 01 of module 17: From transistors to gates">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="From transistors to gates — deep-roots">
+<meta property="og:description" content="Chapter 01 of module 17: From transistors to gates">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="From transistors to gates — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of module 17: From transistors to gates">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 17 &middot; the root under the root</div>
+<h1 class="post-title">From transistors to gates</h1>
+<div class="post-meta">chapter 01 &middot; ~19 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A MOSFET is a voltage-controlled switch: the gate is a capacitor over the channel, and voltage above a threshold creates a conductive path from source to drain. NMOS conducts when its gate is high, PMOS when low — the complementarity of the dopings. One of each in series between VDD and GND, gates tied: the CMOS inverter, in which either steady state leaves one switch open — no DC path, static power is leakage only, a guarantee that died at 90 nm. Stack the switches as networks — 2 PMOS in parallel over 2 NMOS in series — and you get the NAND, 4 transistors, the cheapest 2-input gate, because CMOS is naturally inverting. Delay is RC: the 50% crossing sits at 0.69·RC, FO4 (~10-20 ps at 5-7 nm-class nodes) is the industry's unit of work, and a 3 GHz cycle is 15-20 FO4. Power is one equation, P = α·C·V²·f + V·I_leak: the V² term built DVFS, leakage ended the free gigahertz, both forced the multicore pivot of 2004. The clock is chapter 02's "data structure for time", bought with skew and a metastability MTBF cliff.</blockquote>
+<h2 id="a-voltage-opens-a-channel-the-mosfet-and-exactly-where-we-stop">A voltage opens a channel: the MOSFET, and exactly where we stop</h2>
+<p>Module 01 chapter 01 gave you doped silicon and DRAM's capacitor-stored bits. One floor down: what is a transistor, at the minimum depth that still explains logic? The answer this module keeps: <strong>a voltage-controlled switch.</strong> The gate terminal is a metal plate on a thin oxide — a capacitor, the channel beneath as its other plate. Voltage on the gate pushes a field through the oxide; past a threshold <strong>Vt</strong> (roughly 0.2-0.4 V on modern logic processes, node-dependent) a conductive channel bridges source and drain. Below Vt the bridge is gone and only a nA-scale leak seeps. Above Vt the switch closes; below, it opens.</p>
+<pre><code class="language-text">            gate terminal
+                 |
+           =============     gate plate  &lt;- the capacitor's "top plate"
+           -------------     thin oxide  &lt;- the dielectric (nm-scale)
+        +---------------------+
+        |                     |
+      source                drain
+       (n+)                  (n+)        &lt;- doped wells in a p-type body
+        \____   channel   ____/
+              (exists only when
+               V_gate &gt; Vt)</code></pre>
+<p>The two dopings give the two species: n-type wells in a p-type body (NMOS) form a channel when the gate is <strong>high</strong> — on at 1; p-type wells in an n-type body (PMOS) form one when the gate is <strong>low</strong> — on at 0. One is the photographic negative of the other, and that complementarity is the most load-bearing fact in this chapter.</p>
+<p>Honesty checkpoint: below this — depletion regions, velocity saturation, why FinFETs exist — this module deliberately does not go. Chapters 02-05 derive correctly at the switch abstraction; deeper physics explains why Vt is what it is and changes none of the arithmetic. Process-dependent numbers get marked (5 nm-era-style), not derived.</p>
+<h2 id="the-complementary-pair-cmos-buys-zero-standing-current">The complementary pair: CMOS buys zero standing current</h2>
+<p>One PMOS from VDD, one NMOS to GND, gates tied, output at the middle: the inverter, the smallest complete thought in logic.</p>
+<pre><code class="language-text">   in = 0                               in = 1
+  ----------                            ----------
+     VDD                                   VDD
+      |                                     |
+   [ PMOS ] closed                       [ PMOS ] open
+      |                                     |
+  out o------&gt; out = 1                out o------&gt; out = 0
+      |                                     |
+   [ NMOS ] open                        [ NMOS ] closed
+      |                                     |
+     GND                                   GND</code></pre>
+<p>Input high: NMOS conducts, PMOS off, output pulled to 0. Input low: PMOS conducts, NMOS off, output pulled to 1. The key property: <strong>in either steady state exactly one transistor is on — no DC path from VDD to GND.</strong> Current flows only while the output capacitance swings; static power is the off-transistor's leakage alone.</p>
+<p>That leakage is the number that came back to collect. An off gate leaks nA-scale current (1-20 nA at 90 nm-class processes; Vt- and temperature-dependent): 10 nA × 10⁹ gates × 1.2 V ≈ 12 W of doing nothing, and 20 nA buys tens of watts. Before ~2000 leakage was under 1% of chip power; by 90 nm (2004-2006) it was 25-40% on hot designs (design-dependent, worse hot). The answers, readable in any datasheet: <strong>clock gating</strong> — stop toggling the clock to idle blocks, zeroing the dynamic term α·C·V²·f — and <strong>power gating</strong> — cut VDD with a sleep transistor, killing V·I_leak. The endpoint is <strong>dark silicon</strong>: Esmaeilzadeh et al. (ISCA 2011) projected 8 nm-era designs could afford to power under half the area they can print: transistors you cannot afford to turn on.</p>
+<h2 id="switch-networks-and-the-price-list-why-nand-costs-4-and-and-costs-6">Switch networks and the price list: why NAND costs 4 and AND costs 6</h2>
+<p>A CMOS gate is two switch networks: a pull-up (PMOS) to VDD, a pull-down (NMOS) to GND. Complementarity makes the networks duals — PMOS in parallel wherever NMOS are in series — guaranteeing exactly one network closed for every input combination. The function falls out of the wiring. The NAND:</p>
+<pre><code class="language-text">                VDD
+                 |
+        +--------+--------+
+        |                 |
+    a --o--[P1]       b --o--[P2]     PMOS pair in PARALLEL:
+        |                 |               any 0 input closes one,
+        +--------+--------+               pulls OUT high
+                 |
+               OUT -----------------&gt;   out = 0  only when a=1 AND b=1
+                 |
+             [ N2 ] &lt;-- gate = b
+                 |
+             [ N1 ] &lt;-- gate = a        NMOS pair in SERIES:
+                 |                       both 1 to pull OUT low
+                GND</code></pre>
+<p>Read it as switches: a=0, b=1 closes P1 — output pulled to VDD, the NMOS chain broken at N1 regardless; a=1, b=1 opens both PMOS, closes both NMOS — output pulled to GND. NOT(a AND b), in <strong>4 transistors</strong>. The NOR mirrors it (2 PMOS in series, 2 NMOS in parallel; also 4). The price list:</p>
+<div class="table-wrap"><table><thead><tr><th>gate</th><th>transistors</th><th>why</th></tr></thead><tbody><tr><td>NOT</td><td>2</td><td>one pair</td></tr><tr><td>NAND2, NOR2</td><td>4</td><td>the natural switch networks</td></tr><tr><td>AND2, OR2</td><td>6</td><td>NAND/NOR + inverter</td></tr><tr><td>XOR2</td><td>12 static, 6 with transmission gates</td><td>the parity tax</td></tr></tbody></table></div>
+<p><strong>CMOS is naturally inverting</strong> — NAND, NOR, NOT are the cheap shapes; AND/OR pay 2 transistors and one extra 0.69·RC for the trailing inverter. Now kill the folklore: "NAND flash is dense because NAND gates are cheap." NAND flash is named for its array topology — cells strung in series, the same series-switch shape as the NAND's NMOS stack — and is dense because the string shares contacts (versus one per cell in the parallel NOR array). Two facts share a name for the same geometric reason; "NAND is denser" about gates conflates a flash story with a transistor count.</p>
+<p>One more shape: an NMOS alone passes a strong 0 but a weak 1 (topping out near VDD − Vt); a PMOS passes a strong 1 and a weak 0. In parallel, driven by complementary signals, each covers the other's weak level: the <strong>transmission gate</strong>, a switch passing both logic levels — the trick behind pass-transistor logic's cheaper muxes and XOR (a 2:1 mux: 6 with transmission gates, ~12 static), and behind chapter 04's SRAM write path.</p>
+<h2 id="delay-is-rc-0-69-fo4-and-the-end-of-free-gigahertz">Delay is RC: 0.69, FO4, and the end of free gigahertz</h2>
+<p>Gate delay is not the transistor "being slow" — it is the transistor charging a capacitor through a resistance. The output drives every fanout gate's input pin (~0.1-0.3 fF each at 7 nm-class nodes) plus the wire — ~0.15-0.25 fF/µm on intermediate metal, so a 200 µm route adds ~40 fF, more than the pins it connects. The conducting transistor is a kΩ-scale resistor. RC into a capacitor gives the exponential curve:</p>
+<pre><code class="language-text"> VDD |                        .-----------------   V(t) = VDD(1 - e^(-t/RC))
+     |                  , ' - '
+     |              , '
+ VDD/2 - - - - x- - - - - - - - - - - - - - - -     x: V crosses 50%
+     |        ,'    :                             at t = RC·ln(2) = 0.69RC
+     |     ,'      :
+   0 +--'---------:--------------------------&gt; t
+     0            tau = RC   (63% at one tau)</code></pre>
+<p>Derive the 50% crossing once and own it: VDD(1 − e^(−t/RC)) = VDD/2, so e^(−t/RC) = 1/2, so t = RC·ln 2 = 0.693·RC. Every timing analyzer and PVT corner below is this equation dressed up.</p>
+<p>Drive strength is where design lives. A transistor 2× wider has ~½ the on-resistance — it drives the same load ~2× faster — but its own gate pin is ~2× the capacitance, so <em>whoever drives it pays 2×</em>. The logical-effort calculus (Sutherland, Sproull, Harris, 1999) puts the optimum at each stage driving <strong>2.7-4× its own input capacitance</strong>: 2.7 = e^1 is the zero-parasitic result, real parasitics push toward 4. That fixes the industry's unit of work: the <strong>FO4 delay</strong> — one inverter driving 4 identical ones — ~10-20 ps at 5-7 nm-class nodes (foundry-dependent). Insiders say "this adder is 15 FO4", not "3 ns": FO4 ports across nodes because it is normalized to the silicon's own speed.</p>
+<p>Cycle-time arithmetic explains a decade of history. A 3 GHz clock is a 333 ps period: at ~20 ps per FO4, <strong>~17 FO4 per cycle</strong> — budgets are quoted as 15-20 FO4, covering logic, wires, skew, and margin. More GHz means fewer FO4 per stage, less logic per stage, a <em>deeper pipeline</em>: the Pentium 4 — Willamette's 20 stages, Prescott's 31, clocks to 3.8 GHz — until the power equation below killed the successor (Tejas, cancelled 2004), while a branch mispredict flushed ~20-39 mostly-empty stages. Chapter 02 formalizes that trade; here the lesson is that GHz stopped climbing because 15-20 FO4 is what a <em>coolable</em> cycle buys, not because transistors stopped switching.</p>
+<h2 id="the-two-term-bill-cv-f-v-i-leak-and-why-multicore-happened">The two-term bill: αCV²f + V·I_leak, and why multicore happened</h2>
+<p>Derive the dynamic term like the 0.69. Charge output capacitance C from 0 to VDD through the pull-up resistance: the supply moves Q = C·VDD, so it delivers energy <strong>C·VDD²</strong>; the capacitor stores ½·C·VDD²; the other ½·C·VDD² burns in the resistance — <em>independent of the resistance value</em> (the physics of the loss). Discharge dumps the stored half as heat too. So every 0→1 transition costs the supply CV². With the fraction of cycles in which a node makes a 0→1 transition — the <strong>activity factor α</strong>, 0.01-0.2 in real logic — the chip's bill is the equation that ran the 2000s:</p>
+<pre><code class="language-text">P  =  α·C·V²·f  +  V·I_leak
+     ^^^^^^^^^^     ^^^^^^^^
+     dynamic:       static:
+     transitions    the off-switch leak
+     per second     (nA-scale × 10⁹, section 2)</code></pre>
+<p>The dynamic term's <strong>V² is the lever</strong>: 1.2 V → 0.9 V drops dynamic power to (0.9/1.2)² = 0.5625 of its old self — a 44% cut for the same clock and logic, from one exponent. That fact is the entire <strong>DVFS</strong> industry (dynamic voltage and frequency scaling): your laptop's governor drops V and f together, because lower V means slower gates — the triangle below — so frequency must follow voltage down.</p>
+<p>The bill is also why your CPU has cores. The 2004 plan was a 4 GHz+ single core, and planar physics said no: the required voltage and leakage could not be cooled at sane cost — the <strong>power wall</strong>. The levers: V² says lower voltage (f follows); α says gate the idle; leakage says a multibillion-transistor single core pays nA-scale rent on everything. The industry took the intersection: two slower cores at lower V beat one fast core <em>within the same watts</em>, with software supplying the parallelism — module 09's reason for existing, and module 12's GPU bet (throughput per watt, thousands of simpler cores), played out.</p>
+<p>Voltage, temperature, frequency are a triangle. Lower V → lower drive current → each 0.69·RC stretches → margin shrinks; heat makes both worse. Foundries force it with <strong>PVT corners</strong>: signoff at the <em>worst</em> combinations — "slow transistors, 0.72 V, 125 °C junction"-style, values node- and foundry-dependent — not the typical one. Ships have margin, and <strong>binning</strong> is that margin's business model: one design, corner-sorted, sold as 3.5/4.0/4.5 GHz SKUs. The enthusiast's undervolt is the consumer-side arbitrage of the same margin — harvesting slack the foundry made the vendor leave — and it works until a 0.72 V-class, 110 °C-class day finds you, which is why undervolting folklore and warranties disagree.</p>
+<h2 id="the-clock-discrete-time-skew-and-the-metastability-cliff">The clock: discrete time, skew, and the metastability cliff</h2>
+<p>Combinational logic just maps inputs to outputs; state needs time chopped into steps, and hardware's answer is the clock. The alternative exists — asynchronous, self-timed logic with completion handshakes (the AMULET asynchronous ARM research chips) — and can be energy-efficient. It lost anyway, for a precise reason: <strong>verifiability</strong>. One global tick turns a continuum of analog waveforms into discrete cycle numbers — every flip-flop samples at edge N, results are consumed at edge N+1, and "when did this wire settle?" becomes "by which edge?" The phrasing chapter 02 reuses: <em>a clock is a data structure for time.</em> It costs two diseases.</p>
+<p>Disease one: <strong>skew</strong>. The tick must reach every flip-flop through repeater buffers — the <strong>clock tree</strong>, drawn as an H so every leaf sees equal wire length — and still arrives with 10s of ps of spread across a die, each ps stolen from chapter 02's cycle budget. The <strong>PLL</strong> multiplies a quartz reference up (crystals are stable but 10s of MHz; 100 MHz × 40 = 4 GHz). Multiple domains — CPU, memory controller, each with its own PLL — create the boundary where disease two lives.</p>
+<pre><code class="language-text">        quartz 100 MHz --&gt; [PLL x40] --&gt; 4 GHz tick
+                                |
+                            [buffer]
+                          /          \
+                     [buffer]      [buffer]        the H-tree: equal
+                    /       \      /       \       wire lengths, so the
+                  ...       ...  ...       ...    tick arrives together
+                (10^5 - 10^7 flip-flop clock pins; the tree burns
+                 20-40% of dynamic power on large designs)</code></pre>
+<p>Disease two: <strong>metastability</strong>. A signal crossing clock domains is sampled at arbitrary phase; sample it in the window where it crosses 50% of VDD — the setup/hold window, chapter 02's topic — and the flip-flop's internal cross-coupled pair can balance at half-voltage for an <em>indeterminate</em> time before resolving. Nothing is broken: a bistable element was asked to arbitrate an analog race, and resolution time is exponential, not bounded. The fix is the <strong>two-flop synchronizer</strong>: the first flop may go metastable, but gets a full period to resolve before the second samples. The arithmetic (Wakerly's form) is the design rule:</p>
+<pre><code class="language-text">MTBF = e^(tr/tau) / (f_clk · f_data)
+
+tr  = resolution time offered (period - setup; ~1.8 ns on a 2 ns clock)
+tau = the flop's metastability time constant (process-dependent:
+      ~10-20 ps on modern nodes, ~50 ps on a 2000s-era node)</code></pre>
+<p>Run real numbers and watch the cliff. f_clk = 500 MHz, f_data = 10 MHz, tr = 1.8 ns. With τ = 50 ps: tr/τ = 36, e³⁶ ≈ 4×10¹⁵, MTBF ≈ 4×10¹⁵/(5×10⁸ · 10⁷) ≈ <strong>0.86 s</strong> — fails about every second. With τ = 20 ps: tr/τ = 90, e⁹⁰ ≈ 1.2×10³⁹, MTBF ≈ 2.4×10²³ s ≈ <strong>7.7×10¹⁵ years</strong> — 500,000× the age of the universe. Same circuit, τ halved, MTBF multiplied by e^54: that exponent is why the rule is <em>two</em> flops, never one, and why folklore says "add a flop if the MTBF is within a few orders of magnitude of comfortable."</p>
+<p><strong>Multi-bit buses</strong> break the two-flop fix: each bit resolves independently, so a sampled word can tear — half old, half new. The rule: cross <strong>one bit at a time</strong> (a handshake flag, itself two-flop synchronized), and move multi-bit counters in <strong>Gray code</strong>, where one bit changes per increment: 7→8 is 0b0111→0b1000 in binary (four bits) but 0b0100→0b1100 in Gray (one bit) — a torn sample is old or new, never a third value. That trick is the async FIFO pointer discipline chapter 03 implements in Verilog.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li>Transistor counts are the interview party trick: inverter 2, NAND2/NOR2 4, AND2/OR2 6, XOR2 12 static or 6 with transmission gates — and the <em>reason</em> (parallel vs series networks, naturally inverting) is what interviewers probe.</li>
+<li>Budgets are quoted in FO4, never ns: "this pipeline stage is 15 FO4"; ~10-20 ps per FO4 at 5-7 nm-class nodes, 333 ps per 3 GHz cycle = 15-20 FO4, and any block above ~20 FO4 is shipping a clock compromise.</li>
+<li>Leakage was a rounding error until 90 nm, then 25-40% of power (hot, design-dependent); clock gating kills α·CV²f, power gating kills V·I_leak, dark silicon (&gt;50% unaffordable area at 8 nm-class, ISCA 2011) is the endpoint.</li>
+<li>"NAND is denser" folklore conflates flash array topology (series string, shared contacts) with the logic price list (4 transistors). Two true facts, one shared name, zero causal link.</li>
+<li>Signoff happens at PVT corners like slow/0.72 V/125 °C, not nominal; binning (3.5/4.0/4.5 GHz from one design) sells the margin back by speed grade, and undervolting harvests it personally — until the corner finds you.</li>
+<li>Metastability MTBF moves by e^(tr/τ): 500 MHz/10 MHz/1.8 ns swings from 0.86 s (τ = 50 ps) to 7.7×10¹⁵ years (τ = 20 ps). Never cross a domain with one flop; never cross a bus without Gray code or a handshake.</li>
+<li>kΩ·fF = ps exactly (10³ Ω × 10⁻¹⁵ F = 10⁻¹² s): the head-check for any RC delay, and the calibration of this chapter's simulator.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>Paper lab:</strong> derive t = RC·ln 2 from the 50% condition; compute (0.9/1.2)² = 0.5625 (the 44% DVFS cut); divide 333 ps by 20 ps (~17 FO4 per 3 GHz cycle).</p>
+<p><strong>The simulator.</strong> An event-driven gate simulator: gates are functions with delays, time is a priority queue, delay is 0.69·R·C in code — and a pulse narrower than a gate's delay is swallowed (the inertial rule), the software image of "never crossed the 50% threshold". Units: kΩ·fF = ps; a unit pin is 1 fF, a unit pull 7.2 kΩ, so one FO4 = 0.69·7.2·4 ≈ 20 ps (5 nm-era-style; real 5-7 nm FO4 spans 10-20 ps).</p>
+<pre><code class="language-python"># gatesim.py -- an event-driven gate simulator with RC delays.
+# Units: resistance kOhm, capacitance fF, time ps. kOhm*fF = ps, exactly.
+# A gate's delay = 0.69 * R * C_load. Pulses shorter than a gate's delay
+# are swallowed (inertial delay): "never crossed the 50% threshold".
+import heapq
+
+class Sim:
+    def __init__(self):
+        self.q, self.seq, self.gen = [], 0, {}
+        self.net, self.fan, self.log = {}, {}, []
+
+    def gate(self, out, fn, r, *ins):
+        """One gate: output net `out`, logic fn over inputs `ins`,
+        pull resistance r in kOhm (smaller r = stronger gate)."""
+        for n in ins:
+            self.fan.setdefault(n, []).append((out, fn, r, ins))
+
+    def cap(self, net):                       # load on a net: 1 fF per pin
+        return float(len(self.fan.get(net, [])))
+
+    def set(self, net, v, t=0.0):             # drive an input net at time t
+        self.seq += 1
+        heapq.heappush(self.q, (t, self.seq, net, v, None))
+
+    def _fire(self, g, t):                    # g's inputs just changed at t
+        out, fn, r, ins = g
+        v = fn(*[self.net.get(i, 0) for i in ins])
+        self.gen[out] = self.gen.get(out, 0) + 1     # cancel pending output
+        if v != self.net.get(out):
+            self.seq += 1
+            heapq.heappush(self.q, (t + 0.69 * r * self.cap(out),
+                                    self.seq, out, v, self.gen[out]))
+
+    def run(self, until=1e9):
+        while self.q and self.q[0][0] &lt;= until:
+            t, _, net, v, gen = heapq.heappop(self.q)
+            if gen is not None and gen != self.gen.get(net):   # cancelled
+                continue
+            if v == self.net.get(net):
+                continue
+            self.net[net] = v
+            self.log.append((round(t, 2), net, v))
+            for g in self.fan.get(net, []):
+                self._fire(g, t)
+
+INV  = lambda a: 1 - a
+NAND = lambda a, b: 0 if (a and b) else 1</code></pre>
+<p><strong>Exercise 1 — the chain of 4, and where it stops.</strong> Each stage delays 0.69·7.2·1 = 4.97 ps. Sweep the input period:</p>
+<pre><code class="language-python">from gatesim import Sim, INV
+
+def chain4(period_ps, until=300.0):
+    s = Sim()
+    for out, i in [("w1","in"),("w2","w1"),("w3","w2"),("w4","w3")]:
+        s.gate(out, INV, 7.2, i)
+    t = 0.0
+    while t &lt;= until:                    # square wave of given period
+        s.set("in", 1, t); s.set("in", 0, t + period_ps/2)
+        t += period_ps
+    s.run(until)
+    return sum(1 for tt, n, v in s.log if n == "w4")
+
+for T in (40, 20, 12, 10, 8):
+    print(f"period {T:3d} ps (half {T//2:2d}): w4 edges {chain4(T):3d}")</code></pre>
+<pre><code class="language-text">period  40 ps (half 20): w4 edges  15
+period  20 ps (half 10): w4 edges  29
+period  12 ps (half  6): w4 edges  48
+period  10 ps (half  5): w4 edges  58
+period   8 ps (half  4): w4 edges   0</code></pre>
+<p>Propagation dies between half-period 5 and 4 ps — within 1 ps of the 4.97 ps stage delay: a pulse narrower than 0.69·RC never crosses the 50% threshold. The RC limit, observed in software; your CPU's maximum clock is this experiment scaled up.</p>
+<p><strong>Exercise 2 — measure an FO4 like silicon does</strong> (real chips use ring oscillators): 5 inverters in a ring, each node loaded with 4 unit pins.</p>
+<pre><code class="language-python">s = Sim()
+names = [f"w{i}" for i in range(5)]
+for i in range(5):
+    s.gate(names[i], INV, 7.2, names[i-1])       # the ring wiring
+    for k in range(3):                           # 3 dummy pins: 4 per node
+        s.gate(f"pad{i}_{k}", lambda a: 0, 7.2, names[i])
+s.net["w1"] = 1; s.net["w3"] = 1                 # mid-flight snapshot
+s.set("w0", 1, 0.0)                              # the kick that starts it
+s.run(until=900.0)
+ts = [t for t, n, v in s.log if n == "w0"]
+period = ts[-1] - ts[-3]
+print("period =", round(period,1), "ps; FO4 = period/(2*5) =",
+      round(period/10, 2), "ps")</code></pre>
+<pre><code class="language-text">period = 198.7 ps; FO4 = period/(2*5) = 19.87 ps</code></pre>
+<p>The edge must lap the 5-stage ring twice to restore polarity, so period = 2·N·t_pd and FO4 = period/10 ≈ 19.9 ps — a 3 GHz cycle is 333/19.9 ≈ 17 of them.</p>
+<p><strong>Exercise 3 — the thermal wall on paper.</strong> One gate, C = 10 fF (a moderately loaded output), V = 1.0 V, f = 1 GHz, α = 0.1:</p>
+<pre><code class="language-python">C, V, f, alpha = 10e-15, 1.0, 1e9, 0.1
+P = alpha * C * V**2 * f
+print(P*1e6, "uW/gate;", P*1e3*1e3, "mW per 1,000-gate block;",
+      P*1e9, "W per billion gates")</code></pre>
+<pre><code class="language-text">1.0 uW/gate; 1.0 mW per 1,000-gate block; 1000.0 W per billion gates</code></pre>
+<p>1 µW per gate is nothing; a billion gates at those parameters is 1,000 W — the wall on paper, before leakage and the clock tree. Every "why is my CPU capped at 5 GHz" reduces to this arithmetic plus section 5's second term.</p>
+<p><strong>Exercise 4 — the metastability cliff.</strong> Evaluate <code>math.exp(1.8e-9/tau)/(5e8*1e7)</code> for τ = 50e-12 and 20e-12: 0.86 s and 7.7×10¹⁵ years — same circuit, two processes, a factor of e^54. Repeat with tr = 0.2 ns and watch the good τ collapse too.</p>
+<p><strong>On your own machine</strong> (Linux laptop): <code>grep MHz /proc/cpuinfo</code> idle and under load — the DVFS governor trading V² for speed; if RAPL is exposed, read <code>/sys/class/powercap/intel-rapl:0/energy_uj</code> twice one second apart and subtract — your CPU's watts, measured by the chip.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Performance claims decode into FO4.</strong> "3 GHz" is 333 ps = 15-20 FO4 per cycle; "mispredict costs ~20 cycles" is 20 × 17 FO4 flushed. A GPU vendor quoting half a CPU's clocks is pricing thermal headroom.</li>
+<li><strong>The hierarchy gets units.</strong> A DRAM access is ~100 ns ≈ 5,000 FO4 ≈ 300 cycles — one division that explains why module 01 ch02's cache line dominates software performance.</li>
+<li><strong>Benchmark variance stops being mysterious.</strong> Thermal throttling at a ~100 °C-class junction, governor voltage steps, and corner-margin binning are section 5's equation running on your desk; two "identical" SKUs are two draws from one corner distribution.</li>
+<li><strong>Whiteboard screens.</strong> Derive 0.69·RC, derive αCV²f from the ½CV²-vs-CV² bookkeeping, name why NAND is 4 transistors and AND is 6 — each a 90-second derivation and a standard interview question.</li>
+<li><strong>Datacenter power debugging.</strong> A server drawing real watts at 0% load is not broken: leakage plus a clock tree burning 20-40% of dynamic (large-design range) are toggling whether or not anyone is home. The fix is architectural, so capacity planning owns it.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch01 (silicon, DRAM):</strong> this chapter is the floor under it — "a capacitor stores a bit" meets "a gate is a capacitor"; ch04 fuses them into the 6T SRAM cell.</li>
+<li><strong>Module 01 ch02 (the hierarchy):</strong> the ~100 ns DRAM trip priced here at ~5,000 FO4 is why that chapter's cache line "explains everything".</li>
+<li><strong>Module 17 ch02:</strong> setup/hold, the skew budget's slot in the timing equation, and the P4 mispredict penalty promised in section 4.</li>
+<li><strong>Module 17 ch03:</strong> the Gray-code async FIFO pointers derived here become ~40 lines of Verilog.</li>
+<li><strong>Module 17 ch04:</strong> cross-coupled inverters (ch02) plus this chapter's transmission gates build the 6T cell; DRAM timing inherits these units.</li>
+<li><strong>Module 17 ch05:</strong> binning, corners, and margin become business models — yield arithmetic decides which corners exist.</li>
+<li><strong>Module 09 and module 12:</strong> the power wall that forced multicore, and the GPU as the throughput-per-watt endpoint, are this chapter's two-term equation playing out.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>In a static CMOS gate at a steady input, what current flows from VDD to GND, and why? What changed at 90 nm to make "static power is free" false — and what are the two architectural responses?</li>
+</ol>
+<ol>
+<li>A library quotes a 2-input AND at 6 transistors and a 2-input NAND at 4. Explain the difference from the switch networks (not just the counts), and state the general bias of CMOS it reveals.</li>
+</ol>
+<ol>
+<li>A 2-input NAND has a = 0, b = 1. Name exactly which transistors conduct, which switch network is closed, and the output value.</li>
+</ol>
+<ol>
+<li>A governor drops a core from 1.2 V to 0.9 V at constant frequency and workload. By what factor does dynamic power fall, and what percentage cut is that? Which single symbol in which equation produced it?</li>
+</ol>
+<ol>
+<li>In exercise 1, the 4-inverter chain propagates 58 output edges at input period 10 ps and zero at period 8 ps; the stage delay is 4.97 ps. Explain the boundary precisely — what does the simulator's inertial rule model about real silicon?</li>
+</ol>
+<ol>
+<li>A chip passes every test at nominal voltage and 25 °C, but field returns cluster in hot rooms at low supply. Give the PVT explanation, the signoff practice it violates, and the business practice that turns the same silicon's corner spread into a product lineup.</li>
+</ol>
+<ol>
+<li>An asynchronous FIFO uses plain binary read/write pointers crossing domains through a two-flop synchronizer per bit. It works for days, then overflows once. Diagnose the multi-bit tear with the 7→8 binary transition, and name the two-part fix this chapter prescribes for bus crossings.</li>
+</ol>
+<ol>
+<li>Module 01 chapter 02 put a DRAM access at ~100 ns and ~300 cycles. Using this chapter's FO4 arithmetic (~20 ps per FO4, ~17 FO4 per 3 GHz cycle), convert 100 ns to FO4, and explain in one sentence why that number forces the hierarchy module 01 built.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Zero DC current — one transistor of each type is off.</strong> The pull-up and pull-down are complementary duals, so exactly one network conducts per steady input: no VDD-to-GND path, only the off-transistors' nA leakage. At 90 nm, 1-20 nA per gate × 10⁹ gates × ~1.2 V reaches tens of watts (25-40% of power on hot designs). The responses: <strong>clock gating</strong> (zero the α·C·V²·f term for idle blocks) and <strong>power gating</strong> (cut VDD to kill V·I_leak); dark silicon is the endpoint.</li>
+</ol>
+<ol>
+<li><strong>The NAND is the natural switch network; the AND buys an inverter.</strong> NAND: 2 PMOS in parallel (any 0 input closes one, pulling the output high) over 2 NMOS in series (both 1 to pull low) — duality guarantees one closed network per input, 4 transistors. AND = NAND + inverter = 6 transistors and one extra 0.69·RC. The bias: <strong>CMOS is naturally inverting</strong> — NOT/NAND/NOR are minimal; AND/OR pay for the trailing inversion.</li>
+</ol>
+<ol>
+<li><strong>The pull-up is closed through P1; the output is 1.</strong> a = 0 turns P1 on (PMOS conducts when its gate is low), connecting the output to VDD; the parallel PMOS pair makes P2 irrelevant, and the NMOS chain is broken at N1 (an NMOS needs its gate high). Output = 1 = NAND(0,1), with no DC current drawn.</li>
+</ol>
+<ol>
+<li><strong>Factor 0.5625 — a 44% cut (43.75%).</strong> Dynamic power is α·C·V²·f, so at fixed f and workload the ratio is (0.9/1.2)² = 0.5625. The symbol is the squared <strong>V</strong> — the exponent behind the DVFS industry.</li>
+</ol>
+<ol>
+<li><strong>A pulse must outlive one stage delay.</strong> The input half-period is the pulse width at stage 1. At 5 ps it just exceeds the 4.97 ps delay, so the pending output event fires before the return edge cancels it and walks the chain; at 4 ps the next input edge arrives first, the simulator cancels the pending transition (the <code>gen</code> bump), and the pulse dies. The inertial rule models RC reality: VDD(1 − e^(−t/RC)) never reaches the 50% threshold if the input reverses first — scaled up, a cycle shorter than the path's RC is a clock the logic cannot answer.</li>
+</ol>
+<ol>
+<li><strong>A PVT corner escape.</strong> Low supply cuts drive current, stretching every 0.69·RC; heat slows transistors further and inflates leakage. Nominal-condition tests (1.0 V-class, 25 °C) validate a corner the field never visits; signoff requires closure at the worst corner — slow transistors, ~0.72 V, 125 °C-style (values vary by node and foundry). The business practice is <strong>binning</strong>: one design, corner-sorted, sold as 3.5/4.0/4.5 GHz SKUs, so the spread becomes a lineup instead of a recall. Undervolting is the private version of the same arbitrage; the hot-room failure is its failure mode.</li>
+</ol>
+<ol>
+<li><strong>The bus tore.</strong> Two-flop synchronizers fix per-bit metastability, but pointer bits resolve independently. On 7→8, binary 0b0111→0b1000 changes four bits at once; mid-flight sampling can deliver 0b1111 or 0b0000 — values the counter never held — so the FIFO computes a bogus full/empty decision and over/underflows later (rarely enough to pass testing, MTBF-style). The fix: cross <strong>one bit at a time</strong> via a handshake flag (itself two-flop synchronized), and carry the pointer in <strong>Gray code</strong> — 7→8 is a single-bit change, 0b0100→0b1100 — so a torn sample is old or new, never a third value.</li>
+</ol>
+<ol>
+<li><strong>~5,000 FO4.</strong> 100 ns / 20 ps = 5,000; at ~17 FO4 per 3 GHz cycle that is ~300 cycles, matching module 01 ch02. A single DRAM access costs thousands of FO4 against a 15-20 FO4 per-cycle budget, so the hierarchy exists to keep most accesses on chip — module 01's cycle counts, now priced in the physics that produces them.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 17 — Digital hardware: from transistors to silicon</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

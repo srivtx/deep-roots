@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The kernel packet path — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 13: The kernel packet path">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The kernel packet path — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 13: The kernel packet path">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The kernel packet path — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 13: The kernel packet path">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 13 &middot; buffers all the way down the wire</div>
+<h1 class="post-title">The kernel packet path</h1>
+<div class="post-meta">chapter 02 &middot; ~19 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Chapter 01 ended with the frame landed in RAM by DMA and NAPI deciding to poll instead of interrupting. This chapter follows the bytes the rest of the way: the kernel wraps them in a single allocation — the <code>sk_buff</code> — shaped so headers are <em>pushed</em> and payloads appended by moving pointers, never by copying the payload; netfilter looks at packets through refcounted <em>clones</em>, tracks every flow in a hash table sized from RAM, and drops <em>new</em> connections when that table fills; the socket lookup is another hash; the socket's receive queue is an skb list charged by <em>truesize</em> — the bytes the kernel actually allocated, not the bytes you sent; and on the way out, the qdisc and BQL decide how much memory is allowed to stand in front of the wire. One shape (the ring) and two ideas (pointer arithmetic, refcounting) explain the whole path — and XDP exists precisely to skip all of it.</blockquote>
+<h2 id="one-allocation-four-pointers-deriving-the-packet-buffer">One allocation, four pointers: deriving the packet buffer</h2>
+<p>A packet is the worst-shaped object a memory system can be handed. On the transmit side it <em>grows downward</em>: the socket writes payload, then TCP prepends 20 B, IP prepends 20 B, Ethernet prepends 14 B — and a tunnel adds another 20-70 B on top of that. On the receive side it <em>shrinks</em>: each layer strips its header as the packet climbs. The naive design — allocate exactly what each layer needs — reallocates and copies the payload 2-3 times per direction. The Linux design is one allocation with slack on both ends and four pointers into it:</p>
+<pre><code class="language-text">    struct sk_buff  (~232 B, Linux 6.x x86-64; lives in skbuff_head_cache)
+    holds the pointers and metadata — never the packet bytes:
+
+        head ──┐
+       data ──┼──┐         ┌── tail        ┌── end
+             │   │         │               │
+             ▼   ▼         ▼               ▼
+   ┌────────────┬─────────────────┬─────────┬───────────────────────────┐
+   │  headroom  │   linear data   │ tailroom│   skb_shared_info          │
+   │  64-512 B  │  headers+payload│  0-...  │   ~320 B + frags[17]       │
+   │            │  so far         │         │   (scatter-gather parts)   │
+   └────────────┴─────────────────┴─────────┴───────────────────────────┘
+      ▲data        ▲data      ▲tail           end marks the allocation's
+      skb_push(h): skb_pull(h): skb_put(a):    last byte: shared_info is
+      data -= h    data += h    tail += a      BUILT INTO the allocation
+
+     truesize (what memory accounting charges) =
+          the whole block above + the 232-B struct</code></pre>
+<p>The headroom is reserved on purpose. On RX the driver reserves <code>NET_IP_ALIGN</code> (2 B) + <code>NET_SKB_PAD</code> (max(32, L1_CACHE_BYTES) = 64 B on x86-64), GRO adds 256 B more (<code>GRO_HEADROOM</code>); stacked encapsulation pushes TX reservations toward 512 B. <code>skb_push(14)</code> prepends an Ethernet header by <em>decrementing</em> <code>data</code> by 14 and writing 14 fresh bytes into space already paid for — O(header), never O(payload). <code>skb_pull(20)</code> strips the IP header on receive by <em>incrementing</em> <code>data</code>: the header is abandoned in headroom, not freed. "Allocate exact" loses because it would copy the payload 2-3 times per direction to save 64-512 B of slack per packet.</p>
+<p>Two struct fields do the accounting:</p>
+<pre><code class="language-c">struct sk_buff {              /* trimmed to what this chapter needs */
+    unsigned int len, data_len;   /* len = linear + frags; data_len = frags only */
+    unsigned char *head, *data,   /* the four pointers into ONE allocation   */
+                  *tail, *end;
+    struct sock  *sk;             /* NULL until the socket lookup fills it in */
+    void (*destructor)(struct sk_buff *);  /* e.g. sock_wfree: returns wmem credit */
+    /* ... ~232 B total, Linux 6.x x86-64; drifts a few B per release */
+};</code></pre>
+<p><code>len</code> counts the packet's bytes; <code>data_len</code> counts how many of those live <em>outside</em> the linear area, in <code>skb_shared_info</code> — a struct built into the tail of the same block, past <code>end</code>:</p>
+<pre><code class="language-c">struct skb_shared_info {   /* at the very end of the head allocation, past `end` */
+    __u8   nr_frags;                    /* frags[] entries in use (max 17) */
+    __u16  gso_size;                    /* MSS a TSO "super-packet" is sliced into */
+    struct sk_buff *frag_list;          /* GRO can chain whole skbs here */
+    skb_frag_t     frags[17];           /* 17 max with 4-KiB pages; each 16 B: */
+};                                      /* { page ptr, offset, length } */</code></pre>
+<p>This is scatter-gather, derived: a 64-KiB GRO-merged packet is one skb with 16 page fragments (16 x 4,096 B = 65,536 B of payload in pages, headers in the small linear area), not a 64-KiB contiguous block. The kernel never copies the payload to make it contiguous — it carries pointers.</p>
+<p>Now the number insiders argue about: <strong><code>truesize</code> vs <code>len</code></strong>. When a packet is queued on a socket, the kernel charges the socket's memory counter by <code>skb-&gt;truesize</code>, and <code>truesize</code> is defined (Linux 6.x, 64-B cache lines) as roughly:</p>
+<pre><code class="language-text">truesize = SKB_DATA_ALIGN(linear bytes incl. headroom)   /* rounds to 64 */
+         + SKB_DATA_ALIGN(sizeof(struct sk_buff) ≈ 232)  /* → 256 */
+         + SKB_DATA_ALIGN(sizeof(struct skb_shared_info) ≈ 320)</code></pre>
+<p>A 182-B frame (14+20+20+128), fully linear and reserved with 66 B of RX headroom, charges 256 + 256 + 320 = <strong>832 B — 6.5x the payload it carries</strong>. The same GRO'd 64-KiB packet charges ~66 KiB — about 1.01x, because full pages waste nothing. Socket memory accounting is honest about <em>allocations</em>, not payloads, and every buffer-sizing argument about <code>sk_rcvbuf</code> is secretly an argument about this multiplier.</p>
+<h2 id="look-don-t-own-cloning-a-packet-you-must-not-copy">Look, don't own: cloning a packet you must not copy</h2>
+<p>Two subsystems need to <em>look</em> at packets without becoming their owners: <code>tcpdump</code> (every AF_PACKET socket gets every frame) and netfilter hooks. Copying the payload for each would be O(packets x bytes) — fatal. The solution is module 01 chapter 14's PyObject pattern applied to a buffer:</p>
+<ul>
+<li><strong><code>skb_clone()</code></strong> allocates only a new ~232-B struct from <code>skbuff_head_cache</code> and shares the data: the refcount in <code>skb_shared_info</code> (the <code>dataref</code>) is incremented, the payload is touched zero times. The clone's <code>data</code> pointer can be pushed and pulled freely — pointer moves don't write shared bytes.</li>
+<li><strong><code>pskb_copy()</code></strong> copies the head allocation <em>and</em> the linear data (so a writer can modify headers or pull bytes down), but still shares the page fragments — the cheap 80% stays shared.</li>
+<li><strong><code>skb_copy()</code></strong> copies everything, frags included.</li>
+</ul>
+<p>The rule falls out of the shapes: everyone who merely <em>reads</em> takes a clone; the first one who <em>writes</em> to the shared region pays for the copy. So <code>tcpdump</code> on a busy link costs roughly one 232-B struct allocation per packet (per-CPU slab-cached — module 07 ch05's skbuff_head_cache) plus the copy into the AF_PACKET mmap ring (TPACKET_V3 — yes, another ring), not a payload copy per listener.</p>
+<h2 id="the-receive-path-a-pipeline-of-hash-lookups-and-drop-points">The receive path: a pipeline of hash lookups and drop points</h2>
+<p>Walk one packet from the wire to the socket. Chapter 01's part: the NIC DMAs the frame into a page, posts the descriptor, NAPI's poll loop (budget 64 packets per poll) harvests it. Then:</p>
+<pre><code class="language-text">   RX wire (ch01: DMA ring → NAPI poll)
+     │
+     ▼
+   XDP hook (driver-level, BEFORE any skb exists — section 5)
+     │
+     ▼
+   netif_receive_skb  ← first function that owns a real sk_buff
+     │
+     ▼
+   PREROUTING hook ──► conntrack: hash the 5-tuple
+     │                  {proto, src ip, src port, dst ip, dst port} (+ zone)
+     │                  nf_conntrack_max entries; FULL ⇒ drop new flows
+     ▼
+   ROUTING ── for this host? ── no ──► FORWARD ──► POSTROUTING ──► wire
+     │ yes
+     ▼
+   INPUT hook
+     │
+     ▼
+   SOCKET LOOKUP: established hash on the 4-tuple → struct sock
+     │   (miss + SYN ⇒ the listener's SYN queue, not a child socket)
+     ▼
+   sk's receive queue: a LIST of skbs
+     │   sk_rmem_alloc += skb-&gt;truesize;  over sk_rcvbuf ⇒ drop, sk_drops++
+     ▼
+   sk_data_ready() → wake the waiter (ch04's epoll fires HERE)</code></pre>
+<p>Every box after NAPI is a memory structure, and every one has a bound with a drop counter behind it. The two that fill production boxes:</p>
+<p><strong>Conntrack is a hash table with a RAM-sized ceiling.</strong> Each flow is one entry (~300 B) keyed by the 5-tuple — or 5-tuple plus zone when <code>nf_conntrack</code> zones are in use, which is how identical-looking tenants coexist (VRFs, overlapping address space). <code>net.netfilter.nf_conntrack_max</code> defaults to 4 x the bucket count, and the bucket count scales with RAM (powers of two; expect roughly 262,144-524,288 max on an 8-16 GB host, Linux 6.x with 4-KiB pages — the formula has drifted across releases, so read the value, not a blog post). When it fills, the kernel logs — rate-limited, so grep the whole dmesg — <code>nf_conntrack: table full, dropping packet</code>, and the blast radius is surgical: <em>established</em> flows match an existing entry and keep working; anything needing a <em>new</em> entry dies. That asymmetry is the classic production incident: the monitoring agent loses connectivity while existing SSH sessions look healthy. Entries are garbage-collected by timeout — 432,000 s (five days) for an established TCP flow, 120 s for TIME_WAIT — which is why a table can stay full overnight after one busy hour.</p>
+<p><strong>The socket lookup is a second hash.</strong> Established connections hash the 4-tuple (local ip/port, remote ip/port) into the established hash; a miss with a SYN targets a listening socket, whose SYN queue is bounded by <code>tcp_max_syn_backlog</code> (mainline default 1024) and whose completed-connection accept queue is bounded by the smaller of the <code>listen()</code> backlog argument and <code>somaxconn</code> (4,096 since Linux 5.4; 128 before). Full SYN/accept queues count in <code>TcpExt:ListenDrops</code> / <code>ListenOverflows</code>. Chapter 04 tells that story fully.</p>
+<p><strong>The receive queue is where truesize bites.</strong> The queue is a linked list of skbs (<code>next</code>/<code>prev</code> — the struct's first two fields exist for exactly this). Each queued skb charges <code>sk_rmem_alloc</code> by its truesize; if the sum would exceed <code>sk_rcvbuf</code> (TCP default 128 KiB, autotuned up to 6 MB on Linux), the packet is dropped and <code>sk_drops</code> — the <code>d</code> field of <code>ss -m</code> — counts it. TCP tries to stop traffic <em>before</em> this point by shrinking the advertised window (chapter 03's job); the drop is what happens when data arrives anyway, past a receiver that stopped reading.</p>
+<h2 id="the-transmit-path-the-queue-is-a-policy-not-a-bucket">The transmit path: the queue is a policy, not a bucket</h2>
+<p>Transmit is the receive story with the arrows reversed: the mirror netfilter hooks fire here — OUTPUT after routing, POSTROUTING on the way to the device — completing the 5-hook set (PREROUTING, INPUT, FORWARD, OUTPUT, POSTROUTING) — plus one structure the receive path doesn't have, a <em>policy</em> between the stack and the hardware:</p>
+<pre><code class="language-text">   app write() → TCP send buffer (ch03: retransmission safety copy)
+        │   segments built as skbs (GSO: one 64-KiB skb, 16 frags)
+        ▼
+   qdisc  (pfifo_fast: 3 bands; fq: ~1024 per-flow FIFOs + pacing)
+        │   BQL pauses the qdisc at ~1-2 ms of line-rate bytes in the device
+        ▼
+   driver TX ring (ch01)  ← dma_map_page(frag) → iova → descriptor → doorbell</code></pre>
+<p>The qdisc queues packets <em>before</em> the driver sees them. <code>pfifo_fast</code>, the compiled-in default on Linux 6.x (<code>net.core.default_qdisc</code>; multiqueue NICs get <code>mq</code>, one child per TX queue), is 3 priority bands selected from the packet's TOS bits. <code>fq</code> instead keeps ~1024 per-flow FIFOs and <em>paces</em> each flow at the socket's <code>pacing_rate</code> — which is why early BBR documentation said "BBR requires fq": a controller that computes a sending rate needs a smooth clock into the hardware, not a burst. (<code>fq_codel</code>, OpenWrt's default since 15.05, is the same queueing with CoDel's latency-signaling drop — chapter 03.)</p>
+<p>Below the qdisc sits the driver's TX ring from chapter 01 — and the bufferbloat lesson at its smallest scale. A 4,096-entry TX ring whose descriptors point at ~1,500-B buffers can hold ~6 MB of standing bytes. At 10 Mbps that is 4.9 <em>seconds</em> of queue delay; at 1 Gbps, 49 ms. BQL (byte queue limits, the <code>dql</code> library, integrated since ~3.5-3.6 in most drivers) fixes this: it tracks how many bytes the driver has handed the hardware without a completion, and pauses the qdisc once that exceeds roughly 1-2 ms of line-rate bytes — a few KB on a slow link, a few hundred KB on a 10-Gbps one. The ring becomes a <em>memory pool</em> of posted buffers, not a queue; the queue lives in the qdisc where policy can see it.</p>
+<p>The last step is the DMA map: each frag's <code>page</code> is translated to a device address — an <em>iova</em> — through the IOMMU (module 01 ch03's translation story running in the other direction). With an Intel VT-d IOMMU active, a <code>dma_map_page</code> costs hundreds of nanoseconds (Linux 6.x amortizes it through per-queue IOVA caches; the swiotlb <em>bounce copy</em> people dread only happens for buffers the device cannot address directly). On TX completion the driver's interrupt frees the skb — the destructor returns the wmem credit, the frags' pages go back to the page pool — and posts the descriptor for reuse.</p>
+<h2 id="xdp-deleting-the-skb-to-save-the-packet">XDP: deleting the skb to save the packet</h2>
+<p>Look at the receive-path diagram and count what a packet costs before anyone looks at its payload: the head allocation, the 232-B struct, the shared-info init, the conntrack hash walk, the route lookup, the socket hash walk, the refcounts. With 64-B packets that per-packet tax dominates: the full path tops out around 1-2 Mpps per core (commodity x86, one ~3-4 GHz core) — chapter 01's 14.88-Mpps worst case never had a chance.</p>
+<p>XDP's answer is structural: eBPF programs attached at the <em>driver's</em> RX point, running on the raw page before an skb is allocated at all. The verifier is the enabling technology — it statically proves, before the program ever runs, that every memory access is in-bounds, that loops are bounded, that execution terminates (up to 1 M verified instructions since Linux 5.2) — so the kernel can run unprivileged-looking code on raw packet data at interrupt-adjacent priority. An <code>XDP_DROP</code> is just "put the page back in the pool": no skb was ever built. Measured drop rates run about 5 Mpps per core even on unremarkable drivers and ~20 Mpps on tuned ones (Linux 5.x/6.x, x86), versus the 1-2 Mpps the full stack manages — the gap <em>is</em> the skb tax. <code>XDP_TX</code> reflects the page back out; <code>XDP_REDIRECT</code> to <code>AF_XDP</code> hands the frame to userspace through — inevitably — a pair of descriptor rings plus a shared memory region (the <code>umem</code>) that kernel and user both map. Chapter 01's DMA ring, chapter 04's io_uring, AF_XDP: one shape, three appearances.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>ss -m</code>'s <code>r</code> field counts truesize, not payload bytes.</strong> A socket that received 128 KiB of payload shows an <code>r</code> inflated 1.01-6.5x depending on packet size and GRO; drivers that wrap a whole 4-KiB page via <code>build_skb</code> charge the full page. Every "rcvbuf looks full but the app only read X" confusion is this multiplier.</li>
+<li><strong>The conntrack-full playbook</strong>: established flows survive, new flows drop, the dmesg line is rate-limited (grep it), <code>nf_conntrack_max</code> is runtime-writable but buckets are best sized at boot (the <code>nf_conntrack.hashsize</code> module parameter) — raising max without buckets trades drops for hash-chain CPU. Entries cost ~300 B each: 1M flows ≈ 300 MB. Escape hatch for chatty UDP: <code>nft</code>'s <code>notrack</code> statement in prerouting.</li>
+<li><strong>Drop triage is a ladder, and each rung has one counter</strong>: NIC ring (<code>ethtool -S</code>, <code>rx_missed</code>/<code>rx_no_buffer</code>) → per-CPU backlog (<code>/proc/net/softnet_stat</code> column 2; <code>netdev_max_backlog</code> default 1000) → IP input (<code>IpInDiscards</code>, nstat) → socket (<code>ss -m</code>'s <code>d</code>, <code>ListenDrops</code>). <code>netstat -s | grep -i drop</code> is the aggregate triage; <code>dropwatch -l kas</code> or a <code>bpftrace</code> on <code>tracepoint:skb:kfree_skb</code> names the exact code site — and since Linux 5.17 that tracepoint carries a <code>reason</code> enum.</li>
+<li><strong>BQL made "shrink the TX ring" folklore obsolete.</strong> On any driver with byte queue limits (most since ~3.6), the ring is a buffer pool and BQL caps standing bytes at ~1-2 ms of line rate; tuning <code>ethtool -G tx</code> mostly changes the pool's refill cadence, not latency.</li>
+<li><strong><code>pskb_may_pull()</code> before reading past the linear area</strong> is the decade-old driver and netfilter-module bug: GRO'd packets keep only the headers linear; <code>data + offset</code> past <code>tail</code>-minus-frags is garbage or a panic. If your hook reads payload, pull first.</li>
+<li><strong>pfifo_fast is still the compiled default</strong> (<code>net.core.default_qdisc</code>), which means a stock server kernel has 3 dumb TOS bands in front of its 10-Gbps NIC until someone sets <code>fq</code> or <code>fq_codel</code> — one sysctl, and BBR deployments that skip it send in bursts on older kernels.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>All of this is readable on any Linux box. Ten minutes, no hardware needed.</p>
+<p><strong>1. Socket memory, the truesize way.</strong> Start any transfer (an <code>iperf3 -s</code> on another host, or just stream something), then:</p>
+<pre><code class="language-console">$ ss -tm state established | head -6
+...
+skmem:(r128512,rb131072,t0,tb46080,f2560,w0,o0,bl0,d3)</code></pre>
+<p>Decode: <code>r</code> = bytes charged to the receive queue (truesize units), <code>rb</code> = <code>sk_rcvbuf</code>, <code>t</code>/<code>tb</code> = the send side, <code>f</code> = headroom before the bound, <code>bl</code> = backlog (accept) queue length, <code>d</code> = <code>sk_drops</code>. Notice <code>r</code> sits well above the app's "unread" payload — the truesize multiplier, visible.</p>
+<p><strong>2. System-wide socket memory.</strong></p>
+<pre><code class="language-console">$ cat /proc/net/sockstat
+sockets: used 248
+TCP: inuse 42 orphan 0 tw 12 alloc 45 mem 3
+UDP: inuse 13 mem 0</code></pre>
+<p><code>mem 3</code> is <em>pages</em> — 3 x 4 KiB = 12 KiB across all TCP sockets; this is where <code>tcp_mem</code>-family global pressure (the third accounting layer, in pages scaled from RAM at boot) reads from.</p>
+<p><strong>3. The TcpExt counters that should be zero.</strong></p>
+<pre><code class="language-console">$ awk '/^TcpExt:/ { if (!h) { for (i=2;i&lt;=NF;i++) n[i]=$i; h=1 }
+      else { for (i=2;i&lt;=NF;i++) if (n[i] ~ /ListenDrops|ListenOverflows|
+      TCPRcvCollapsed|PruneCalled/) print n[i] "=" $i } }' /proc/net/netstat</code></pre>
+<p>(One line, unwrapped; or <code>nstat -az | grep -E 'ListenDrop|RcvCollapsed|Prune'</code>.) <code>ListenDrops</code>/<code>ListenOverflows</code> = SYN/accept queues full; <code>PruneCalled</code> and <code>TCPRcvCollapsed</code> = TCP had to <em>drop already-received data</em> from the receive queue under memory pressure — the truesize chapter's failure mode. All four at 0 on a healthy box is the baseline; nonzero values are incidents.</p>
+<p><strong>4. Conntrack occupancy vs ceiling.</strong></p>
+<pre><code class="language-console">$ cat /proc/sys/net/netfilter/nf_conntrack_count /proc/sys/net/netfilter/nf_conntrack_max
+1834
+262144</code></pre>
+<p>(Root, and <code>conntrack-tools</code> installed: <code>conntrack -L | wc -l</code> is the equivalent.) On a NAT box or container host this ratio is a capacity number: past ~70% you are one busy hour from the table-full incident.</p>
+<p><strong>5. Drops mapped to code.</strong> If <code>dropwatch</code> is packaged (Debian/Ubuntu: <code>apt install dropwatch</code>):</p>
+<pre><code class="language-console">$ sudo dropwatch -l kas
+dropwatch&gt; start
+...
+619 drops at tcp_v4_rcv+0x...</code></pre>
+<p>If not, <code>sudo bpftrace -e 'tracepoint:skb:kfree_skb { @[args-&gt;reason] = count(); }'</code> (Linux 5.17+) aggregates by drop reason instead of site.</p>
+<p><strong>6. Before/after on a real transfer.</strong></p>
+<pre><code class="language-console">$ nstat -az &gt; /tmp/net.before
+$ iperf3 -c &lt;server&gt; -t 1 &gt; /dev/null; sleep 2
+$ nstat -az &gt; /tmp/net.after
+$ diff /tmp/net.before /tmp/net.after | grep -E '^[&lt;&gt;]' | grep -iE 'Segs|Drop' | head
+&lt; Tcp: OutSegs 1234567
+&gt; Tcp: OutSegs 1236192</code></pre>
+<p>What to notice: the segment counters jump by tens of thousands (a 1-s gigabit transfer is ~78,000 max-size segments) while the drop-family counters move by zero — and now you know which boxes of the receive-path diagram each zero corresponds to.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>"We're losing packets" now has a search order</strong>: ring → backlog → conntrack → socket, one counter each, five minutes from symptom to culprit. The <code>d</code> field of <code>ss -m</code> and column 2 of <code>softnet_stat</code> are the two that separate "the kernel dropped it" from "the app was too slow".</li>
+<li><strong>Sizing a NAT/firewall box</strong> is arithmetic, not folklore: peak new flows per second x average entry lifetime (120 s for TIME_WAIT churn, 5 days for established idle) x ~300 B per entry, checked against <code>nf_conntrack_max</code> — and raise the buckets at boot, not just the max.</li>
+<li><strong>Latency work at the egress</strong> is the BQL + qdisc pair: the standing queue is bounded in <em>time</em> (~1-2 ms) by BQL and in <em>fairness</em> by fq/fq_codel; "reduce latency" on a modern driver means checking the qdisc, not shrinking rings.</li>
+<li><strong>Small-packet servers</strong> (DNS at 100k qps, game servers) live on the bad side of the truesize multiplier: 128-B payloads charge ~6x, so rcvbuf pressure arrives ~6x sooner than payload math suggests — and the escape hatches are GRO (merge before accounting hurts) and, at the extreme, XDP/AF_XDP, which is precisely why public resolvers run them.</li>
+<li><strong>Reading any kernel networking code</strong> — a driver, an nftables module, a TCP patch — starts from this chapter's vocabulary: four pointers, one allocation, truesize, clones, hash lookups. Everything else is detail.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 01</strong> (same module): the DMA ring and NAPI's 64-poll budget are the producer half of this chapter's consumer; XDP's "before the skb" position is measured against chapter 01's ring, and AF_XDP's descriptor rings are that ring moved to the socket boundary.</li>
+<li><strong>Chapter 03</strong>: <code>sk_rcvbuf</code> becomes the advertised window, the receive queue becomes the OOO reassembly queue, and <code>PruneCalled</code> / <code>TCPRcvCollapsed</code> get their full story — windows are buffers.</li>
+<li><strong>Chapter 04</strong>: <code>sk_data_ready</code> at the bottom of the receive path is the callback that links a socket onto epoll's ready list; the accept queue is <code>listen()</code>'s side of the SYN story; io_uring's shared rings are AF_XDP's rings with syscalls instead of DMA.</li>
+<li><strong>Chapter 05</strong>: QUIC owns none of these structures — userspace reimplements the queue and the lookup as ordinary heap objects, which is both its cost and its freedom.</li>
+<li><strong>Module 01 ch03</strong> (virtual memory): the IOMMU/iova translation on the TX path is the DMA mapping story's other direction.</li>
+<li><strong>Module 01 ch14</strong> (Python): <code>skb_clone</code>'s <code>dataref</code> is PyObject refcounting — shared payload, copied header-of-object.</li>
+<li><strong>Module 07 ch05</strong> (Linux memory machinery): <code>skbuff_head_cache</code> and the page-fragment allocator are slab-cache citizens you can watch in <code>/proc/slabinfo</code>.</li>
+<li><strong>Module 15 ch03</strong> (virtio): the vring is this chapter's descriptor ring under a hypervisor — the guest's "NIC" is the same producer-consumer contract.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Transmitting a TCP segment prepends a 20-B IP header and a 14-B Ethernet header to payload the socket already wrote. Explain why, with a headroom-reserving <code>sk_buff</code>, the cost is O(header) instead of O(payload) — and state exactly what <code>skb_push()</code> changes in memory.</li>
+</ol>
+<ol>
+<li>A TCP packet carrying 128 B of payload arrives as a fully linear 182-B frame (14+20+20+128), reserved with 66 B of RX headroom by the <code>napi_alloc_skb</code> path. How many bytes does the socket's <code>sk_rmem_alloc</code> grow when this packet is queued — and what is the ratio to the payload? Work the three-term formula (Linux 6.x, x86-64, 64-B cache lines).</li>
+</ol>
+<ol>
+<li>A scanner opens 100 new TCP connections per second against a host and closes each immediately; every other workload is idle. With default conntrack timeouts (Linux 6.x), roughly how does <code>/proc/sys/net/netfilter/nf_conntrack_count</code> evolve over the first 10 minutes, and what number does it settle at?</li>
+</ol>
+<ol>
+<li>At 02:14 a load balancer starts failing health checks to one backend while the established SSH session to that same box keeps responding. <code>dmesg</code> contains <code>nf_conntrack: table full, dropping packet</code> (once). Explain the asymmetry, give the immediate mitigation and the durable fix, and state what the durable fix costs in RAM at 1M entries.</li>
+</ol>
+<ol>
+<li>A file transfer is slow. On the receiver, <code>ss -tm</code> shows <code>skmem:(r131072,rb131072,...,d1987)</code> with <code>d</code> still growing; on the sender, <code>ss -ti</code> (chapter 03's command) shows a window collapsed toward 0 with climbing retransmit counts. The kernel's aggregate drop counters are zero. Diagnose: where are the drops happening, and what is the application-level cause?</li>
+</ol>
+<ol>
+<li>A kernel module hooks netfilter INPUT and reads bytes 54 through 118 (the first 64 B of payload) directly from <code>skb-&gt;data</code> on every TCP packet. It works perfectly on interactive traffic; during large downloads it reads garbage and occasionally oopses. Why — and what one call fixes it?</li>
+</ol>
+<ol>
+<li>Trace one TCP SYN from wire to accept queue, naming: the structure it sits in at the moment the NIC finishes (chapter 01), the two hash lookups and one policy hook it passes (this chapter), the queue it lands in before the third ACK arrives, and the queue it lands in after — with the sysctl that bounds each queue.</li>
+</ol>
+<ol>
+<li>On identical hardware (one ~3.5 GHz x86 core), an <code>XDP_DROP</code> program discards roughly 5 Mpps while the full receive path manages roughly 1-2 Mpps. Name at least three specific things the XDP path <em>never does</em> that account for the gap, and explain what property of the verifier makes running raw packet code at this point acceptable.</li>
+</ol>
+<details><summary>Answers</summary>
+<ol>
+<li><strong>A pointer decrement, then 34 B of fresh header bytes.</strong> The headroom (64-512 B) was reserved at allocation time precisely so that <code>skb_push(h)</code> only does <code>data -= h</code> (and <code>len += h</code>): the 14-B and 20-B headers are <em>written into already-owned memory</em> in front of the payload. The payload is never touched — no realloc, no copy. Allocate-exact would grow the block downward per layer, copying the payload 2-3 times per direction to save 64-512 B of slack; packets vastly outnumber layers touched, so slack wins.</li>
+</ol>
+<ol>
+<li><strong>~832 B, a ~6.5x multiplier.</strong> truesize = SKB_DATA_ALIGN(182 + 66) + SKB_DATA_ALIGN(232) + SKB_DATA_ALIGN(320) = 256 + 256 + 320 = 832. (Formula for the <code>napi_alloc_skb</code> path, Linux 6.x, x86-64; the struct and shared-info sizes drift a few bytes per release, and a driver that wraps a whole 4-KiB page via <code>build_skb</code> charges the full page — the <em>lesson</em> is the multiplier: socket memory accounting charges allocations, and small packets carry a ~4-6.5x tax. GRO'd traffic is the mirror image: 64 KiB in 16 full page-frags charges ~1.01x.)</li>
+</ol>
+<ol>
+<li><strong>Climbs roughly linearly for ~2 minutes, then plateaus near 12,000.</strong> Each closed connection leaves a conntrack entry in TIME_WAIT state, whose default timeout is 120 s (nf_conntrack_tcp_timeout_time_wait). Steady state = arrival rate x lifetime = 100 x 120 = 12,000 entries (plus a handful of transients in other states). The same arithmetic at 10,000 conn/s gives 1.2M entries — past default max on most hosts, which is exactly how scanners trip the table-full incident.</li>
+</ol>
+<ol>
+<li><strong>The asymmetry is lookup-vs-insert.</strong> Established flows hit an existing conntrack entry (a hash lookup, no allocation) and pass; only packets that would create a <em>new</em> entry hit the full table and are dropped — health checks open new connections constantly, an SSH session established at 01:00 does not. The log line is rate-limited, hence appearing once. Immediate mitigation: <code>sysctl -w net.netfilter.nf_conntrack_max=1048576</code> (runtime-writable; hash chains lengthen since buckets were not raised). Durable fix: size <code>nf_conntrack.hashsize</code> at boot (buckets) plus max, or remove the noisy flows from tracking with an <code>nft</code> <code>notrack</code> rule. Cost at 1M entries: ~300 B each ≈ 300 MB of RAM plus the bucket array.</li>
+</ol>
+<ol>
+<li><strong>The drop is at the socket's receive queue; the cause is a receiver that stopped draining it.</strong> The aggregate counters are zero because <code>sk_drops</code> is per-socket — the <code>d</code> field in <code>ss -m</code> — and 1,987 and climbing means skbs arrived past a full <code>sk_rcvbuf</code> and were dropped there. The sender's evidence corroborates: the collapsed window means the receiver's TCP advertises no room (chapter 03's flow control doing its job), and retransmits re-send data whose ACKs never came. Application level: the reader loop (single-threaded epoll, a blocked upstream write) is slower than the arrival rate; or the path BDP exceeds autotuning's 6-MB ceiling. Fixes: drain faster / parallelize the reader, or raise <code>tcp_rmem</code> max for long-fat paths — chapter 03's BDP arithmetic decides.</li>
+</ol>
+<ol>
+<li><strong>Nonlinear data: after GRO, the payload is not behind <code>data</code>.</strong> Large downloads arrive as GRO-merged skbs with only the headers (~tens of bytes) in the linear area and the payload in page frags beyond <code>tail</code>. <code>skb-&gt;data + 54</code>..<code>data + 118</code> reads whatever follows the linear area — shared-info/padding garbage — or walks off the allocation and oopses. Interactive traffic (small, fully linear frames) happens to work, which is why the bug ships. The fix is <code>pskb_may_pull(skb, 118)</code> (which copies frag bytes into the linear area on demand) before any payload read — or <code>skb_linearize()</code> if the whole packet is needed.</li>
+</ol>
+<ol>
+<li><strong>Ring → hash → hash → SYN queue → accept queue.</strong> (1) The frame DMAs into a page posted on the NIC's RX descriptor ring (chapter 01); NAPI's poll (budget 64) builds the skb. (2) PREROUTING: the conntrack hash on the 5-tuple inserts a NEW entry (bounded by <code>nf_conntrack_max</code>). (3) Routing decides "local", INPUT passes, and the <em>established-hash</em> lookup on the 4-tuple misses — landing on the listener, so the SYN sits on the SYN queue (bounded by <code>tcp_max_syn_backlog</code>, mainline default 1024). After the handshake, the child socket enters the established hash and the completed connection sits on the accept queue (bounded by min(backlog argument, <code>somaxconn</code> = 4,096 since 5.4)), where <code>accept()</code> — or chapter 04's epoll loop — picks it up.</li>
+</ol>
+<ol>
+<li><strong>XDP never allocates the skb, never consults the tables, never refcounts.</strong> Concretely: (a) no head allocation, no ~232-B struct from skbuff_head_cache, no skb_shared_info init — the program runs on the raw DMA'd page, and a drop is just "return the page to the pool"; (b) no conntrack hash walk, no routing lookup, no established-hash socket lookup — the program's own code replaces all three; (c) no clone/refcount traffic and no queueing (XDP_DROP bypasses even the qdisc story). The verifier makes this acceptable by proving, before the program runs, that every access is bounds-checked against the packet's real extent, that loops terminate (bounded iterations, up to 1 M verified instructions since 5.2), and that no arbitrary pointer is dereferenced — so untrusted-adjacent code executes at driver RX priority without endangering the kernel. Hence ~5 Mpps/core (up to ~20 on tuned drivers) versus ~1-2 Mpps for the full path.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 13 — Networking internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

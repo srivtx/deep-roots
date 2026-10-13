@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 13 final exam — deep-roots</title>
+<meta name="description" content="Final exam for module 13 (buffers all the way down the wire), with worked answers.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 13 final exam — deep-roots">
+<meta property="og:description" content="Final exam for module 13 (buffers all the way down the wire), with worked answers.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 13 final exam — deep-roots">
+<meta name="twitter:description" content="Final exam for module 13 (buffers all the way down the wire), with worked answers.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 13 &middot; buffers all the way down the wire &middot; final exam</div>
+<h1 class="post-title">Module 13 final exam</h1>
+<div class="post-meta">every chapter &middot; worked answers behind the fold</div>
+<p>Twelve questions across the module's five chapters. Closed book; every answer is worked, not stated — the derivations are the point. Scoring: 11+ = you own this module; 8-10 = solid, revisit the flagged chapters; &lt;8 = the chapter quizzes are the study path.</p>
+<p><strong>Part I — wire, frame, and the DMA ring (chapter 01)</strong></p>
+<ol>
+<li><strong>Predict.</strong> A 40 Gbps monitoring port absorbs a 2 ms microburst of minimum-size frames. Derive the line rate in packets per second, the bytes the burst offers, the bytes a stock 256-entry RX ring of 2 KiB buffers absorbs, and the shortfall ratio. Where do the missing frames go, which single counter moves, why does <code>netstat -s</code> stay clean — and which two commands do you run first?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A SerDes team proposes deleting the line code on a new 100 Gbps-per-lane link: "raw bits, NRZ — the receiver is clean, and we save the 3%." Name the two failure modes of raw NRZ, derive from a 100 ppm oscillator error how few uninterrupted same-value bits it takes to break sampling, and explain what guarantee Manchester buys at 50% overhead that 64b/66b deliberately weakens to 3.03% — then derive the baud rate the lane actually runs, and what Manchester would have demanded at the same data rate.</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> An intrusion-detection appliance on the <em>sending</em> host of a busy HTTPS server raises an alert: TCP segments of 65,540 B ("someone configured a 64 KiB MTU — possible covert channel") with invalid checksums. A capture taken on the receiver shows only 1,514 B frames with valid checksums. Explain all three observations, derive how many wire frames one such segment becomes at MSS 1,460, and state what the CPU paid versus what the NIC fabricated. What do you run before attaching a pcap to a bug report?</li>
+</ol>
+<p><strong>Part II — the kernel packet path (chapter 02)</strong></p>
+<ol>
+<li><strong>Predict.</strong> A game server receives TCP packets carrying 200 B of payload each — 254-B frames, fully linear, reserved with 66 B of RX headroom by the <code>napi_alloc_skb</code> path. Work the three-term truesize formula (Linux 6.x, x86-64, 64-B cache lines), give the ratio to payload, and compare with the GRO-merged 64-KiB packet's ~1.01x. What does the multiplier do to <code>sk_rcvbuf</code> pressure, and which two escape hatches exist?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> At 09:02 a NAT box stops accepting new SSH and health-check connections; sessions established before 09:00 keep working. <code>dmesg</code> contains one line: <code>nf_conntrack: table full, dropping packet</code>. The box churns 5,000 short-lived TCP connections per second. Explain the asymmetry, derive the steady-state table entries with the default timeouts and the RAM they cost, and give the immediate mitigation and the durable fix — including what raising only <code>nf_conntrack_max</code> costs you.</li>
+</ol>
+<p><strong>Part III — TCP: the buffer machine (chapter 03)</strong></p>
+<ol>
+<li><strong>Diagnose.</strong> A replication link runs 25 Gbps over a 40 ms RTT path and measures ~800 Mbps. An admin "fixes" it by setting <code>SO_SNDBUF</code> = 8 MB on the sender — and throughput falls to ~43 Mbps. Derive all three numbers (the BDP, the autotuned ceiling, the post-"fix" ceiling), explain the two mechanisms the admin triggered, and give the correct fix.</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> A transatlantic path: RTT 80 ms, MSS 1,500 B, random loss p = 10⁻⁴, line rate 10 Gbps. Derive the Mathis ceiling and the undershoot factor vs. line rate. A colleague proposes a route with half the RTT; another proposes improving loss 4x. Which buys more, and why is the answer the whole lesson of the equation?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A branch office uplink is 35 Mbps; the router's FIFO holds 5 MB. During backups the video call freezes and ping RTT climbs to ~1.1 s. Derive the standing latency (Little's law), name whose memory is full, explain why loss-based TCP <em>fills</em> it, why buying 2x bandwidth does not fix the call — and the class of fix that does, including the quantity it measures instead of queue-fullness.</li>
+</ol>
+<p><strong>Part IV — userspace I/O (chapter 04)</strong></p>
+<ol>
+<li><strong>Predict.</strong> An echo server (blocking <code>read</code> + <code>write</code>, one already-open connection) serves 10,000 pipelined 200-B requests; ignore <code>accept</code>. Count the syscalls and the data-path copies the kernel performs. Then the same bytes served from a file with <code>sendfile</code>: which numbers change, which two transfers never change — and what does switching the event loop to epoll change about any of it?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A proxy migrated to edge-triggered epoll handles each EPOLLIN event with a single <code>read(fd, buf, 16384)</code>. Small-request clients work; a client that sends a 64 KB burst hangs after the first response, and a capture shows ~48 KB sitting in the server's kernel receive queue forever. Explain the mechanism, why removing <code>EPOLLET</code> would have masked it, and the contract the correct handler follows.</li>
+</ol>
+<p><strong>Part V — QUIC, RDMA, and the network as memory (chapter 05)</strong></p>
+<ol>
+<li><strong>Predict.</strong> An HTTP/2 page load over a 40 ms path multiplexes 100 streams on one TCP connection; one 1,400-B segment of the 64-KB in-flight window is lost. How many streams stall, and for how long? The same loss under HTTP/3, where the lost packet carried frames for 3 streams: how many stall, and what do the other 97 do? Then the design question: why did the fix have to ride a UDP payload rather than a new TCP option or a new IP protocol number — cite the record.</li>
+</ol>
+<ol>
+<li><strong>Concept (cross-chapter).</strong> The module's two closing artifacts. (a) Sort with numbers: L1 hit, DRAM access, same-host socketpair round trip, in-rack RDMA READ round trip, local NVMe read (queue depth 1), same-DC TCP RTT, New York-London RTT — then state the two inversions and what each implies for systems design. (b) Name the one structure that appears as the NIC descriptor ring (ch01), io_uring's SQ/CQ (ch04), the RDMA queue pair (ch05), and the virtio vring (module 15 ch03): give its shape, and what plays the doorbell's role in each of the four.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<p><strong>Part I</strong></p>
+<ol>
+<li>Minimum frame = 64 B, so one frame costs 8 B preamble + 64 B frame + 12 B gap = <strong>84 wire bytes = 672 bits</strong>: 4 × 10¹⁰ / 672 = <strong>59.5 Mpps</strong>. The burst offers 40 Gbps × 2 ms = <strong>10 MB</strong>; the ring absorbs 256 × 2 KiB = <strong>512 KiB</strong> — <strong>~19x short</strong> (119,000 frames offered, at most 256 posted buffers can catch them). Frames arriving with no posted descriptor are dropped <em>in the NIC, silently</em>: no error, no log, no UDP retransmit — and the kernel never saw them, which is exactly why <code>netstat -s</code> is clean. Only <code>ethtool -S</code>'s <code>rx_missed</code> counts them (names vary by driver). Run <code>ethtool -S eth0 | grep -i miss</code> and <code>ethtool -g eth0</code> first. Note that even <code>ethtool -G rx 4096</code> (8 MiB) is still short of 10 MB — the fix is the dial <em>plus</em> queues (RSS) or shaping, because one queue means one CPU's NAPI budget is the ceiling. The 64-B minimum itself is collision arithmetic: slot time 512 bit-times, so a 2,500 m round trip plus jam returns while the sender is still keying (ch01).</li>
+</ol>
+<ol>
+<li>Raw NRZ fails twice: a long run of one value is a flat line with zero edges, and the recovered clock freewheels — 100 ppm = 10⁻⁴ relative error, so <strong>one full bit-time of drift in 1/10⁻⁴ = 10,000 uninterrupted bits</strong>, exactly what a flat run supplies; and a DC-unbalanced stream shifts the baseline through the transformer's AC coupling until 0 and 1 blur together. Manchester buys a <strong>guaranteed edge inside every bit cell</strong> — drift cannot accumulate — at 2 level periods per bit (50%). 64b/66b weakens the guarantee <em>on purpose</em>: 2 sync bits per 64-bit block, then scrambling (self-synchronous, 1 + x³⁹ + x⁵⁸) supplies transition density <em>statistically</em> — redundancy moved from every bit to a block header, which is what lets overhead fall from 50% through 4B/5B's 25% to <strong>3.03%</strong>. The lane runs 100 × 66/64 = <strong>103.125 Gbaud</strong> to carry 100 Gbps; Manchester at the same rate would demand <strong>200 Gbaud</strong> — the 10BASE-T tax scaled up. Every speed step in Ethernet's history was bought by weakening the per-bit guarantee, never by deleting it (ch01).</li>
+</ol>
+<ol>
+<li>The sender's capture sits <em>before</em> the driver, and records the API's lie, not the wire's truth. TSO handed the NIC one ~64-KiB skb (<code>GSO_MAX_SIZE</code> 65,536 = 54 B of headers + 65,482 B of payload) — the capture shows it as <strong>65,535-65,542 B across drivers</strong> (65,540 is the classic figure), with <code>CHECKSUM_PARTIAL</code> stubs the NIC had not yet filled: "invalid" checksums that existed only on the host. At MSS 1,460, the NIC slices that skb into 44 full segments plus a 1,242-B tail = <strong>45 wire frames</strong>, fabricating each segment's IP id, TCP sequence numbers, and checksums in hardware — which is why the receiver's after-the-wire capture shows 1,514 B frames (14 + 1,500) with valid checksums. The CPU did <strong>one</strong> header and one stack traversal for 45 wire packets — the whole point of the offload. Before attaching a pcap to a bug report: <code>ethtool -K eth0 tso off gro off tx-checksumming off</code> — and expect throughput to drop when the CPU inherits the work (ch01).</li>
+</ol>
+<p><strong>Part II</strong></p>
+<ol>
+<li>truesize = SKB_DATA_ALIGN(254 + 66) + SKB_DATA_ALIGN(232) + SKB_DATA_ALIGN(320) = 320 + 256 + 320 = <strong>896 B for 200 B of payload — 4.5x</strong> (<code>napi_alloc_skb</code> path, Linux 6.x, x86-64; the struct and shared-info sizes drift a few bytes per release, and a driver that wraps a whole page via <code>build_skb</code> charges the full page — the lesson is the multiplier). The GRO-merged 64-KiB packet is the mirror image: its payload lives in 16 full 4-KiB page frags, full pages waste nothing, so ~66 KiB is charged ≈ <strong>1.01x</strong>. <code>sk_rmem_alloc</code> charges <em>allocations</em>, not payloads, so a small-packet server hits <code>sk_rcvbuf</code> pressure <strong>~4-6.5x sooner than payload math predicts</strong> — visible as <code>ss -m</code>'s <code>r</code> sitting far above the app's unread bytes, and <code>d</code> climbing once it tips. Escape hatches: GRO (merge before accounting hurts) and, at the extreme, XDP/AF_XDP, which never builds the skb at all — which is why public resolvers run them (ch02).</li>
+</ol>
+<ol>
+<li><strong>The asymmetry is lookup vs. insert.</strong> Established flows match an existing conntrack entry — a hash lookup, no allocation — and pass; only packets that would create a <em>new</em> entry hit the full table and are dropped. Sessions opened before 09:00 are lookups; new SSH attempts and health checks are inserts. The log line is rate-limited, hence exactly one — grep the whole dmesg. Arithmetic: steady state = arrival rate × lifetime = 5,000 × 120 s (the TIME_WAIT default, <code>nf_conntrack_tcp_timeout_time_wait</code>) = <strong>600,000 entries</strong> — past the 262,144-524,288 default <code>nf_conntrack_max</code> on an 8-16 GB host — at ~300 B each ≈ <strong>180 MB of RAM</strong>. Immediate mitigation: <code>sysctl -w net.netfilter.nf_conntrack_max=...</code> (runtime-writable). Durable fix: size <code>nf_conntrack.hashsize</code> (buckets) at boot <em>plus</em> the max, or <code>nft</code>'s <code>notrack</code> for the chatty flows. Raising only the max lengthens the hash chains against unchanged buckets — you trade drops for hash-chain CPU (ch02).</li>
+</ol>
+<p><strong>Part III</strong></p>
+<ol>
+<li>BDP = 25 Gbps × 40 ms = <strong>125 MB</strong> of in-flight bytes needed. The stock <code>tcp_wmem</code> ceiling is 4,194,304 B, and in-flight = rate × RTT, so the autotuned cap is 4,194,304 / 0.04 ≈ <strong>800 Mbps</strong> (~30x under line rate; <code>ss -ti</code> shows <code>sndbuf_limited</code> pegged, Send-Q pinned at 4 MB). The admin triggered two mechanisms at once: setting <code>SO_SNDBUF</code> <strong>disables autotuning</strong> for that socket, and the kernel <strong>doubles</strong> the request (headroom for per-skb overhead — the truesize idea, ch02) but clamps at <code>net.core.wmem_max</code> = <strong>212,992 B</strong>. The socket now owns 212,992 / 0.04 ≈ 5.3 MB/s ≈ <strong>43 Mbps</strong> — ~19x <em>worse</em> than doing nothing. Correct fix: raise <code>net.ipv4.tcp_wmem</code>'s third value toward the BDP (and <code>tcp_rmem</code> on the receiver — the ceiling migrates through the four buffers), and never hand-set per-socket buffers on long-fat paths. The chapter's lab moves exactly this dial: 4 MB → 64 MB lifts the transfer 1.4-2.5x (ch03).</li>
+</ol>
+<ol>
+<li>rate ≤ 1.22 × MSS / (RTT × √p) = 1.22 × 1500 / (0.08 × 10⁻²) = 1,830 / 8×10⁻⁴ = <strong>2.29 MB/s ≈ 18.3 Mbps</strong>. The pipe carries 1,250 MB/s, so the undershoot is ≈ <strong>546x</strong> — losing one packet in 10,000 caps a 10 Gbps link at 0.2% of itself. Halving the RTT: ×2 → 36.6 Mbps. Improving loss 4x: √4 = 2 → 36.6 Mbps. <strong>Identical</strong> — √p and RTT multiply against you, so the two knobs trade one-for-one at 4:1. That exchange rate is the equation's whole lesson: on a long lossy path the ceiling is the path, not the hosts, and <code>ss -ti</code>'s signature (retrans climbing, cwnd pinned small) tells you to look at the path (ch03).</li>
+</ol>
+<ol>
+<li>W = L/λ: 5,000,000 × 8 / 35,000,000 = <strong>~1.14 s of standing latency</strong> — the ping climb, exactly. Whose memory is full: the <em>router's queue</em>. DRAM got cheap (2003-2008), vendors shipped huge FIFOs to avoid drops, and loss-based TCP reacts only when the queue <em>overflows</em> — so the equilibrium is a full queue: maximum utilization at maximum standing latency, with the backup's packets FIFO-ordering ahead of the call's (bufferbloat, Gettys &amp; Nichols 2011). Buying 2x bandwidth halves it to ~0.57 s — still a dead call: <strong>bandwidth buys rate, queue management buys latency</strong>. The fix class is AQM that measures <em>time-in-queue</em>, not queue-fullness: CoDel drops or ECN-marks a packet whose sojourn exceeded a 5 ms target persistently across a ~100 ms interval; <code>fq_codel</code>/CAKE ("SQM" on home routers) returns ping to single-digit milliseconds at nearly zero throughput cost. BQL is the same law one level down — the driver ring capped at ~1-2 ms of line-rate bytes (ch03; ch02).</li>
+</ol>
+<p><strong>Part IV</strong></p>
+<ol>
+<li>Per request: <code>read</code> = 1 syscall + 2 copies (the NIC DMA into the skb, the CPU copy skb→user); <code>write</code> = 1 syscall + 2 copies (CPU user→skb, DMA skb→NIC). Totals: <strong>20,000 syscalls and 40,000 data-path copies</strong>; at ~100-500 ns per transition the syscalls alone are milliseconds per 10,000 requests — and at ~10⁶ ops/s they eat a third of the CPU budget for zero bytes moved. With <code>sendfile</code>, the CPU copies drop to <strong>zero</strong> on the fast path (page-cache pages attach to the socket's send queue as skb fragments) and the syscall count falls to one per chunk. Never changed: the <strong>two DMAs per round trip</strong> — the wire must still be fed — and the per-packet skb work. Zero-copy deletes CPU copies, never DMAs. Epoll changes <em>neither</em> number: it fixes the wait (register once; a kernel callback splices ready fds onto the ready list — O(1) to wait, O(ready) to report), while sendfile/MSG_ZEROCOPY fix the copies — two orthogonal axes, and a proxy moved to epoll that still does <code>read</code>+<code>write</code> still pays 4 copies per request (ch04).</li>
+</ol>
+<ol>
+<li><strong>The leftover 48 KB generates no new edge.</strong> The 64 KB burst was one arrival — one transition, one wakeup. The handler read 16,384 B and returned; 49,152 B remain in the kernel receive queue, and because no <em>new</em> data arrives, no transition ever fires and the fd never returns to the ready list — the capture's unread bytes, stalled forever. Removing <code>EPOLLET</code> masks it: level-triggered re-asks "is it ready <em>now?</em>" on every <code>epoll_wait</code>, so the still-readable socket is re-reported and even the single-read handler drains eventually (at the price of re-report churn and busy-fd starvation). The ET contract: a nonblocking fd plus <strong>drain to <code>EAGAIN</code></strong> — loop <code>read</code> until it returns EAGAIN, then wait for the <em>next</em> edge. This is the top-three epoll bug, and nginx's pattern (ET + nonblocking + drain + move on) is what keeps one loop fair across 100k fds (ch04).</li>
+</ol>
+<p><strong>Part V</strong></p>
+<ol>
+<li>Over TCP, the lost segment opens a gap in the <em>single ordered byte stream</em>: every stream's frames above the gap are undeliverable until the retransmission lands, so <strong>all 100 streams stall for ~1-2 RTT = 40-80 ms</strong> — the multiplexer knows which bytes belong to which request; the transport enforcing order does not, and that information asymmetry is head-of-line blocking. Under HTTP/3, the lost packet carried frames for <strong>3 streams: those stall ~1 RTT, and the other 97 reassemble by their own per-stream offsets and deliver</strong> — the retransmission rides a <em>new</em> packet with a new, higher packet number, so reordering can never masquerade as loss (no dupack counting exists to fool). Why a UDP payload: the record says new IP protocol numbers die at the NAT (SCTP, protocol 132, never crossed the public Internet — WebRTC had to smuggle it inside DTLS-in-UDP) and new TCP options die in the field (Honda et al., IMC 2011, measured middleboxes mangling unknown options; TCP Fast Open and MPTCP both shipped fallback paths for exactly this). The <strong>ossification forcing function</strong>: middleboxes optimize for the protocols that already exist, so only traffic they pass <em>opaquely</em> can still evolve. The rent: userspace, no kernel offloads — ~2x the CPU per byte of kernel TCP in 2019-era deployments, tamed to ~1.2-1.5x by UDP GSO batching (ch05).</li>
+</ol>
+<ol>
+<li>(a) <strong>L1 ~1 ns &lt; DRAM ~80-100 ns &lt; in-rack RDMA RTT ~2-6 µs &lt; same-host socketpair RTT ~10 µs &lt; same-DC TCP RTT ~50 µs &lt; local NVMe (queue depth 1) ~80 µs &lt; New York-London ~80 ms.</strong> Inversion one: cross-host RDMA beats a <em>local</em> NVMe read — someone else's DRAM over the network is faster than your own disk, the economic base of NVMe-oF and disaggregated storage. Inversion two: cross-host RDMA beats the same-host socket round trip — two syscall crossings cost more than leaving the machine, so kernel bypass pays even before bandwidth does. Memory stops being a property of <em>this</em> box and becomes an address reachable at DRAM-plus-epsilon prices. (b) The structure: a <strong>fixed, power-of-two array of descriptors in memory shared by a single producer and a single consumer, two cursors, and a doorbell</strong>. Instances and doorbells: the NIC's RX/TX descriptor ring — a strongly ordered MMIO store of the new tail index (hundreds of ns, so drivers batch refills and ring once); io_uring's SQ/CQ — the <code>io_uring_enter</code> syscall, which SQPOLL's kernel polling thread deletes exactly as NAPI deleted the interrupt; the RDMA queue pair — an MMIO write into the NIC's BAR-mapped doorbell register, completions polled as CQEs; virtio's vring — the virtqueue kick. Four appearances of one idea: memory as the interface between producer and consumer, with the doorbell optimized away — the module's through-line, and the sense in which the whole stack is a memory machine (ch01, ch04, ch05; module 15 ch03).</li>
+</ol>
+</details>
+<div class="post-footer"><p>Chapter list: <a href="index.html">Module 13</a>. Module 01 also has the <a href="../quiz.html">interactive quiz</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

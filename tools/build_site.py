@@ -62,9 +62,14 @@ ROADMAP_MODULES = [
     ('M10', 'Compilers &amp; runtime internals', 'LIVE', 'Where memory models are manufactured: register allocation, escape analysis, barrier insertion, layout choices.'),
     ('M11', 'Database storage engines', 'LIVE', 'The disk is the new heap: B-trees, LSM, buffer pools as hierarchy, MVCC as copy-on-write.'),
     ('M12', 'GPU &amp; AI accelerator memory', 'LIVE', 'HBM, the CUDA hierarchy, coalescing as cache lines, allocator arenas in training — a new level of the tower.'),
+    ('M13', 'Networking internals', 'LIVE', 'The stack as a memory machine: DMA rings, sk_buff, TCP windows, epoll, io_uring, QUIC, RDMA — buffers all the way down.'),
+    ('M14', 'File systems &amp; storage', 'LIVE', 'The disk is the heap that outlives the process: FTL garbage collection, the page cache, journals, CoW lineages, overlayfs.'),
+    ('M15', 'Virtualization, containers &amp; the cloud', 'LIVE', 'VT-x, EPT, virtio rings, namespaces and cgroups, Firecracker — who owns the bytes at every layer.'),
+    ('M16', 'Browser engine internals', 'LIVE', 'An OS that renders: process-per-site, Oilpan, the 16.6 ms budget, layout thrashing, site isolation.'),
+    ('M17', 'Digital hardware: from transistors to silicon', 'LIVE', 'The root under the root: CMOS, pipelines, the FIFO ring in RTL, the cache born, yield arithmetic.'),
 ]
 
-# modules 02-12: (id, dir-suffix, display title, short card line, section tag)
+# modules 02-17: (id, dir-suffix, display title, short card line, section tag)
 MODULES_META = [
     ('02', 'memory-security', 'Memory security &amp; exploitation', 'the dark mirror of module 01'),
     ('03', 'software-bugs', 'Software bugs: the taxonomy of failure', 'the four families and the machinery that finds them'),
@@ -77,6 +82,11 @@ MODULES_META = [
     ('10', 'compilers-runtimes', 'Compilers &amp; runtime internals', 'where memory models are manufactured'),
     ('11', 'db-storage-engines', 'Database storage engines', 'the disk is the new heap'),
     ('12', 'gpu-memory', 'GPU &amp; AI accelerator memory', 'the tower gets a new wing'),
+    ('13', 'networking-internals', 'Networking internals', 'buffers all the way down the wire'),
+    ('14', 'filesystems-storage', 'File systems &amp; storage', 'the heap that outlives the process'),
+    ('15', 'virtualization-cloud', 'Virtualization, containers &amp; the cloud', 'one machine, many owners'),
+    ('16', 'browser-internals', 'Browser engine internals', 'an OS that renders'),
+    ('17', 'hardware-design', 'Digital hardware: from transistors to silicon', 'the root under the root'),
 ]
 
 ROW_RE = re.compile(r'^\|\s*(\d+)\s*\|\s*\[([^\]]+)\]\(chapters/([^)]+?)\.md\)\s*\|\s*(.+?)\s*\|\s*$')
@@ -128,8 +138,8 @@ def module_chapter_page(mid, title_disp, tag, num, body, words, prev_item, next_
 
 
 def build_modules():
-    """Render modules 02-12: per-module chapter pages, module index, final exam.
-    Output: m02/ ... m12/ (module 01 keeps its legacy chapters/ URLs)."""
+    """Render modules 02-17: per-module chapter pages, module index, final exam.
+    Output: m02/ ... m17/ (module 01 keeps its legacy chapters/ URLs)."""
     manifests = {}
     for (mid, msuf, mtitle, tag) in MODULES_META:
         mod_dir = '%s-%s' % (mid, msuf)
@@ -558,8 +568,8 @@ def build_index(manifest, mod_manifests):
     total_words = sum(w for _, _, _, _, w in manifest) + sum(
         w for m in mod_manifests.values() for (_, _, _, _, w) in m)
     facts = [
-        ('%d' % total_chapters, 'chapters'), ('12', 'modules'), ('~%dk' % (total_words // 1000), 'words'),
-        ('12', 'final exams'),
+        ('%d' % total_chapters, 'chapters'), ('17', 'modules'), ('~%dk' % (total_words // 1000), 'words'),
+        ('17', 'final exams'),
     ]
     facts_html = ''.join('<div class="fact"><div class="n">%s</div><div class="l">%s</div></div>' % f for f in facts)
 
@@ -615,9 +625,10 @@ def build_index(manifest, mod_manifests):
     Every technical field has a root layer its practitioners know and everyone else waves away.
     deep-roots goes down and stays there: each module rebuilds one field from the physics up,
     so that what others memorize, we <strong>derive</strong>. Module 01 — the memory models of
-    programming languages — is the root of them all, and eleven more modules are now live:
+    programming languages — is the root of them all, and sixteen more modules are now live:
     security, bugs, decompilation, Android, iOS, desktop kernels, COBOL, concurrency,
-    compilers, databases, GPUs. <strong>What insiders know, written down.</strong>
+    compilers, databases, GPUs, networking, file systems, virtualization, browsers,
+    hardware. <strong>What insiders know, written down.</strong>
   </p>
   <div class="hero-facts">__FACTS__</div>
 </section>
@@ -634,13 +645,15 @@ def build_index(manifest, mod_manifests):
 </section>
 
 <section class="section" id="roadmap">
-  <div class="section-head"><h2>The other eleven fields — all live</h2><div class="rule"></div></div>
+  <div class="section-head"><h2>The other sixteen fields — all live</h2><div class="rule"></div></div>
   <p class="section-intro">
     Memory first because everything else is a consequence: security bugs are memory bugs,
     decompilation reads stack frames and vtables, mobile OSes are memory-driven schedulers,
     COBOL is a memory model, distributed consistency is the memory model at scale, and
     compilers, databases, and GPUs are the factory, the disk-scale, and the new wing of the
-    same tower. Every module below is fully written, quizzed, and final-examined.
+    same tower. The second round went further: networking, file systems, virtualization,
+    browsers, and hardware — the stack is now complete from transistors to distributed
+    systems. Every module below is fully written, quizzed, and final-examined.
   </p>
   <div class="module-grid">
 __ROADMAP__
@@ -660,7 +673,7 @@ __ROADMAP__
     <p><strong>Quizzes with teeth, connections or it didn't happen.</strong> Questions predict
     output, diagnose bugs, and attack false intuitions — with worked answers. Every chapter
     ends by naming exactly what transfers to the other chapters and to the queued modules:
-    one root, twelve trees.</p>
+    one root, seventeen trees.</p>
   </div>
 </section>
 
@@ -707,7 +720,7 @@ def build_roadmap():
                 + body + '\n</main>')
     with open(os.path.join(BASE, 'roadmap.html'), 'w', encoding='utf-8') as f:
         f.write(page('The roadmap — deep-roots',
-                     'Twelve modules from memory models to GPU memory: the build order and why each module is a consequence of the one before it.',
+                     'Seventeen modules from memory models to silicon: the build order and why each module is a consequence of the one before it.',
                      pagebody))
     print('  roadmap.html')
 

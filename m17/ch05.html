@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>From RTL to silicon: the economics of hardware — deep-roots</title>
+<meta name="description" content="Chapter 05 of module 17: From RTL to silicon: the economics of hardware">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="From RTL to silicon: the economics of hardware — deep-roots">
+<meta property="og:description" content="Chapter 05 of module 17: From RTL to silicon: the economics of hardware">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="From RTL to silicon: the economics of hardware — deep-roots">
+<meta name="twitter:description" content="Chapter 05 of module 17: From RTL to silicon: the economics of hardware">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 17 &middot; the root under the root</div>
+<h1 class="post-title">From RTL to silicon: the economics of hardware</h1>
+<div class="post-meta">chapter 05 &middot; ~21 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Chapters 03 and 04 left you with verified RTL. This chapter is what happens next: you rent a compiler (Synopsys/Cadence tools), rent a fabricator (TSMC: an N5-class wafer runs $13,000-17,000 by public estimates), and the fabricator rents the one machine that can print it (ASML: the sole EUV supplier, at $150-200 M per machine). The node name is a density class, not a size — and the density stopped helping your caches, because the 6T cell from chapter 04 shrinks 5% per node while logic gains 1.6×. Between your netlist and GDS sit place-and-route, 20-30 ECO iterations, and a test discipline software never meets: scan chains that turn the chip into one shiftable register, and memory BIST your CPU runs on every boot — the ~100 ms cold-start pause. Then the one equation that prices everything: <strong>Y = e^(−D₀·A)</strong> — defects are a spatial Poisson process, so at early-ramp defect density (1.0/cm²) a 100 mm² die yields 37% ($46/good die) and a 500 mm² die yields 0.67% ($12,577/good die). The industry's answers — chiplets (AMD's "yield hack that became an architecture"), CoWoS packaging, binning (the SKU list is the yield curve's product) — are this arithmetic wearing an architecture costume. Hardware is a compiler for money: the RTL is a program whose output is a cost structure.</blockquote>
+<h2 id="the-machine-that-builds-the-machine">The machine that builds the machine</h2>
+<p>You have RTL. You do not have a fab, and you never will: a leading-edge fab costs $15-20 B each (TSMC's Arizona complex: $65 B committed across 3 fabs by its 2024 expansion). The industry solved this by splitting into four layers, and the money flows one way while silicon flows the other:</p>
+<pre><code class="language-text">+--------------------------------------------------------------+
+|  FABLESS DESIGNERS                                           |
+|  Apple, AMD, NVIDIA, Qualcomm, MediaTek: they own the RTL    |
+|  pay: design NRE (hundreds of $M for a flagship-class part)  |
+|       + IP licenses (Arm cores, interface PHYs, $0.5-5 M/blk)|
++----------------------+---------------------------------------+
+|  EDA                  |  the tool rents: Synopsys + Cadence  |
+|  (the compilers)      |  ~$10 B/yr combined (FY2023: ~$6+4B) |
++----------------------+---------------------------------------+
+|  FOUNDRIES            |  the wafer rents: TSMC, Samsung,     |
+|                       |  Intel; N5-class wafer $13-17 k,     |
+|                       |  N3-class near $20 k (public est.)   |
++----------------------+---------------------------------------+
+|  EQUIPMENT            |  ASML: the sole EUV supplier;        |
+|                       |  $150-200 M/machine (High-NA ~$380 M)|
+|                       |  Applied Materials, Lam, KLA, TEL    |
+|                       |  around it                           |
++----------------------+---------------------------------------+
+   money flows up, masks flow down (an N5-class full set:
+   on the order of $10-15 M, estimates vary), and the bottom
+   layer is a single-source chokepoint.</code></pre>
+<p>The chokepoint deserves plain words. EUV lithography prints the finest layers with 13.5 nm light, made by firing a tin droplet <em>twice</em> with a CO₂ laser — a pre-pulse flattens the droplet, the main pulse (~25 kW-class) turns it into plasma — 50,000 times per second. ASML (Veldhoven, with Zeiss optics and Trumpf lasers) is the only company on Earth that builds these machines, and the geopolitical era made the monopoly explicit: from 2019 onward the Dutch government never granted an EUV export license to China, and the 2022 US rules extended controls into advanced DUV — the 2019-2021 export-control era is the single-source chokepoint, stated plainly.</p>
+<p>The numbers that matter to you as a designer: the wafer is a fixed cost (~$10,000/wafer is the round number this chapter's table uses so the arithmetic stays in your head; treat real leading-node prices as $13,000-20,000), and the mask set + NRE are <em>sunk</em> before the first wafer runs. Everything from here is about how many good dies each wafer surrenders.</p>
+<h2 id="3-nanometers-of-what-exactly">"3 nanometers" of what, exactly?</h2>
+<p>Node names were once physical: until the mid-1990s a "250 nm" node meant the DRAM half-pitch was 250 nm. Then scaling decoupled from the label, and the names became marketing for a <em>density class</em>. A real TSMC N5 process: contacted gate pitch ~48 nm, tightest metal pitch ~30 nm. Nothing on the die is 5 nm — not the gate, not the metal, not the fin. The insider's rule: <strong>compare foundries by logic density (MTr/mm²) and by high-density SRAM cell size (µm²), never by node name.</strong> TSMC's own figures: N5 ≈ 137 MTr/mm²; N3 ≈ 215 MTr/mm² — roughly 1.57×, which is what "one node" now buys.</p>
+<p>The SRAM cell is where the story turns. TSMC's published HD 6T cells: N7 0.027 µm² → N5 0.021 µm² → N3 0.0199 µm². From N5 to N3, logic density improved ~1.57× and the SRAM cell shrank <strong>5%</strong>. The cell from chapter 04 — two cross-coupled inverters plus two pass gates — is an analog circuit in disguise: its read stability and write margin depend on transistor strength ratios, and the weak pull-up/pass-device sizes do not scale with the fin pitch. Past N5, "SRAM scaling is dead" is the insider's flat statement, with an architectural consequence: a big-core die spends 30-60% of its area in SRAM (L2, L3, tags, TLBs), so the node's density gain lands on the compute sliver. Run the arithmetic for a die that is 50% SRAM: the same design occupies 0.5/1.05 + 0.4/1.6 + 0.1/1.6 ≈ 0.79 of the area — a 1.27× shrink, not 1.57×. This is why each generation's cache grows a few percent where its ALU count doubles, and why accelerators (small control, huge regular math arrays) extract full node value.</p>
+<h2 id="the-back-half-of-the-flow-floorplan-route-eco-signoff">The back half of the flow: floorplan, route, ECO, signoff</h2>
+<p>Chapter 03's synthesis ended at a netlist of standard cells. The back half turns it into geometry, in five stages, each with a named failure mode:</p>
+<ol>
+<li><strong>Floorplan</strong> — fix the die outline, place the big macros (your SRAMs from chapter 04, PHYs, PLLs), assign pin locations, build the power grid. A macro in the wrong corner poisons every later stage.</li>
+<li><strong>Place and route</strong> — place ~10⁷-10⁸ standard cells, then wire them on a 14-16 layer metal stack (N5-class). The recurring villain is <strong>congestion</strong>: a region needs more wires than it has tracks, so routes detour around it and their RC delay (chapter 01's wire model) explodes.</li>
+<li><strong>The ECO loop</strong> — engineering change orders: edit-re-route-re-time, iterated. Folklore says 20-30 iterations for a big chip; a chip that closes in 10 is either small or lucky.</li>
+<li><strong>Clock tree synthesis</strong> — chapter 01's H-tree at die scale: buffer chains sized so every flip-flop's clock arrives within a few tens of picoseconds of skew. Skew eats the setup budget chapter 02 derived, one gate at a time.</li>
+<li><strong>Signoff</strong> — three gates against the foundry's rulebook. <strong>DRC</strong> (design rule check: thousands of geometric rules at N5-class). <strong>LVS</strong> (layout-vs-schematic: the netlist extracted from your drawn metal equals the netlist you synthesized). <strong>ERC</strong> (electrical rule check).</li>
+</ol>
+<p>DRC hides the rule that best shows this world's character: the <strong>antenna rule</strong>. During plasma etch, a long metal line connected only to a gate has no discharge path and collects charge — enough to punch through the gate oxide and kill the transistor. The fixes are antenna diodes (a diffusion tied to the net to bleed the charge) or jumpering (break the violating layer, hop up, come back down). A rule that sounds like superstition is etch physics. When signoff passes, out goes GDSII, and the foundry builds the masks — the $10-15 M check from the diagram.</p>
+<h2 id="design-for-test-the-discipline-software-never-meets">Design for test: the discipline software never meets</h2>
+<p>Software ships with a debugger; silicon ships blind — you cannot attach gdb to 3 billion transistors. <strong>DFT</strong> (design-for-test) is the industry's answer, and it is built into the RTL you wrote in chapter 03 whether you noticed or not.</p>
+<p><strong>Scan chains.</strong> Every functional flip-flop becomes a scan flip-flop: a mux in front of D that selects either the functional input or the output of the previous flop in a chain. In test mode the muxes flip, and the whole chip becomes one (or dozens of parallel) giant shift register:</p>
+<pre><code class="language-text">   scan_in ----+                                            +---- scan_out
+               |                                            |
+            +--[--]+   Q    +--[--]+   Q    +--[--]+   Q    |
+            |  mux |---+---&gt;|  mux |---+---&gt;|  mux |---+--&gt; ...
+   func D --+&gt;     |        |      |        |      |
+            +------+        +------+        +------+
+              ^                ^                ^
+        (each mux: functional D vs chain input, selected by scan_en)
+
+   test sequence:  N shift clocks (10-50 MHz) to load a state,
+                   ONE at-speed functional clock (capture),
+                   N shift clocks to unload and compare.</code></pre>
+<p>Shift in any state, pulse one clock, shift out the result: the chip is now a deterministic FSM tester, and every combinational cloud between flops is fully controllable and observable. The fault model is <strong>stuck-at</strong>: a wire welded to 0 or to 1. Fault coverage = fraction of stuck-at faults your patterns distinguish; <strong>ATPG</strong> (automatic test-pattern generation) tools grind out the patterns; the signoff bar is <strong>99%+ stuck-at coverage</strong> (of testable faults — redundant logic is waived). The price: scan costs ~5-15% area and a mux delay on every register.</p>
+<p><strong>Memory BIST.</strong> Your SRAM macros (chapter 04's 6T arrays) are too dense to observe through scan, so each macro gets a tiny built-in state machine that runs <strong>march tests</strong> — patterns applied to every cell in a fixed address order. The classic March C−, in the standard notation, is a sequence of march elements:</p>
+<pre><code class="language-c">/* March C- (one of the standard BIST march algorithms), C-style:
+   each element applies its ops to every cell, moving up (^) or
+   down (v) the address order; w0 = write 0, r1 = read expect 1. */
+march_C_minus() {
+    w0;                         /* U(up+down): write all zeros        */
+    for (a = min; a &lt;= max; a++) { r0; w1; }   /* ascending: read 0, write 1 */
+    for (a = min; a &lt;= max; a++) { r1; w0; }   /* ascending: read 1, write 0 */
+    for (a = max; a &gt;= min; a--) { r0; w1; }   /* descending                */
+    for (a = max; a &gt;= min; a--) { r1; w0; }   /* descending                */
+    r0;                                        /* up+down: read all zeros   */
+}</code></pre>
+<p>The alternating address directions are not decoration: an ascending write followed by an ascending read catches <strong>coupling faults</strong> (writing cell n flips neighbor n+1), the direction reversals catch <strong>address faults</strong> (the decoder maps two addresses to one cell — the second write corrupts the first read's expectation), and plain r/w catches <strong>stuck bits</strong>. Your CPU, your phone, your SSD controller run these marches at <em>every</em> power-on — plus DRAM training — and that is the 100 ms-class black-screen pause on a cold boot. It is the deep ancestor of the PC POST: the pause before the logo is DFT, not laziness. (DFT's payoff in the next section: <strong>known-good-die</strong> screening is what makes multi-die packages shippable.)</p>
+<h2 id="y-e-d-a-the-exponential-that-prices-every-die">Y = e^(−D₀·A): the exponential that prices every die</h2>
+<p>Here is the chapter's quantitative core, derived, not asserted. Model manufacturing defects as a <em>spatial Poisson process</em> with density D₀ per mm²: scattered independently. The number of defects landing inside a region of area A follows the Poisson distribution, so the probability of <em>zero</em> defects is</p>
+<p><strong>Y = e^(−D₀·A)</strong>  — the yield, because one defect kills a die.</p>
+<p>Units discipline first, because this is where every yield argument goes wrong: D₀ in defects/mm² means 1.0/cm² = 0.01/mm². A 500 mm² die at D₀ = 0.1/cm² has λ = D₀·A = 0.5 — not 5, not 50. Treat D₀ as a regime, not a constant (each foundry's real number is a trade secret): <strong>early ramp of a leading node ≈ 1.0/cm²; mature ≈ 0.1/cm²</strong> — public-order figures.</p>
+<p>Now the wafer. A 300 mm wafer's circle is π·150² = 70,686 mm²; the edge is junk (process control margin), so subtract a 3 mm exclusion ring → π·147² = 67,887 mm² usable; rectangle-in-circle packing for large dies costs ~13% → ~59,060 mm² effective. That is <strong>118 gross 500 mm² dies</strong>:</p>
+<pre><code class="language-text">                 .---.---.---.
+              .-[ X ]---[   ]-.                rim squares are partial
+           .-[   ]---[ X ]---[   ]-.            dies: the circle cuts
+         .-[   ]---[   ]---[   ]---[   ]        them -&gt; scrap
+        .-[   ]---[ X ]---[   ]---[   ]--.
+        .-[   ]---[   ]---[   ]---[ X ]--.      X = a defect lands here:
+         .-[   ]---[   ]---[   ]---[   ]        that whole die is dead,
+           .-[ X ]---[   ]---[   ]-.            its 499 clean mm² wasted
+              .-[   ]---[   ]-.
+                 '---'---'---'</code></pre>
+<p>The cost model is one line: <strong>cost per good die = wafer cost / (gross dies × Y)</strong>. Run it (this is the chapter's calculator, inline — the full lab is below):</p>
+<pre><code class="language-python">import math
+gross = lambda a: int(math.pi * 147**2 * 0.87 / a)   # 300 mm wafer, 3 mm edge
+Y     = lambda d0, a: math.exp(-d0 * a)             # d0 in defects/mm^2
+for a in (100, 200, 500):        # early ramp: d0 = 0.01/mm^2 (1.0/cm^2)
+    print(f"{a:3d} mm^2: gross {gross(a):4d}  Y {Y(0.01,a)*100:6.2f}%  "
+          f"${10000 / (gross(a) * Y(0.01, a)):8,.0f} per good die")</code></pre>
+<pre><code class="language-console">100 mm^2: gross  590  Y  36.79%  $      46 per good die
+200 mm^2: gross  295  Y  13.53%  $     250 per good die
+500 mm^2: gross  118  Y   0.67%  $  12,577 per good die</code></pre>
+<p>Five times the area bought 54.6 times fewer good dies — and that ratio is exact, not a coincidence: at fixed D₀, Y₁/Y₂ = e^(D₀·(A₂−A₁)) = e^(0.01×400) = e⁴ = 54.6. <strong>Area is superlinearly expensive; that is why big chips are exponentially expensive.</strong> The $12,577 is the early-ramp trough — the months when a flagship GPU is unobtainium. As the node matures, D₀ falls ~10× to 0.1/cm², and the same 500 mm² die yields e^(−0.5) = 60.7%, costing $140. One design, one fab, a 90× cost swing from defect density alone.</p>
+<p>Two honesty notes. Poisson assumes unclustered defects; real ones cluster (a scratch kills its neighbors together), so the negative-binomial Y = (1 + D₀A/α)^(−α) with clustering parameter α ≈ 2-4 fits ramp data better — at D₀ = 1/cm², A = 5 cm², α = 2 it gives 8.2% instead of 0.67%; Poisson is the pessimistic bound, and the lesson survives every model: area hurts superlinearly. And the "one defect kills the die" rule has exceptions — redundancy — which is the next section.</p>
+<h2 id="cut-the-die-chiplets-packaging-and-the-architecture-that-money-wrote">Cut the die: chiplets, packaging, and the architecture that money wrote</h2>
+<p><strong>The reticle limit.</strong> A lithography exposure field is 26 × 33 mm = 858 mm²; ~850 mm² is the practical maximum for one die. Monolithic designs are capped there. (The exception that proves the rule: Cerebras' WSE-3, 2024 — 46,225 mm², 4 trillion transistors, built by <em>stitching</em> exposures across an entire wafer.)</p>
+<p><strong>Chiplets as yield arithmetic.</strong> Take the 500 mm² flagship and cut it into 8 × 62.5 mm². First, the trap: Poisson is memoryless over area — if all 8 dielets must come from the same wafer neighborhood, the package's survival probability is e^(−D₀·8·62.5) = e^(−D₀A), <em>identical</em> to the monolithic die. The win is the pool: good dielets are fungible. A defect now kills 62.5 mm² of silicon instead of 500, and any 8 good dielets — from anywhere on any wafer — make a package. At early-ramp D₀ = 0.01/mm²: 944 gross dielets × 53.5% = 505 good ones = 63.2 packages per wafer → $158 of silicon + a $50-150 advanced package → <strong>~$258 per package vs $12,577 monolithic — a 49× swing</strong>. At mature D₀ = 0.001/mm² each dielet yields 93.9%, a same-neighborhood set survives 0.94⁸ = 60.7% — exactly the monolithic number, memoryless again — and the split <em>loses</em> ($190 vs $140): the package premium buys nothing when yields are high. Chiplets are not a religion; they are a D₀-and-area question. The lab below finds the break-even: at D₀ = 0.15/cm² and a $100 package, the 2-way split wins once the monolithic die passes <strong>~622 mm²</strong> — inside the reticle cap, in exactly the regime where flagship parts live. AMD's Zen 2 (2019) made this mainstream: an N7 CCD of ~74 mm² beside a 12LP-class I/O die of ~125 mm², scaling core count without scaling die area — <em>the chiplet is a yield hack that became an architecture.</em></p>
+<p><strong>Packaging as bandwidth.</strong> The dies sit on a <strong>CoWoS</strong>-style (chip-on-wafer-on-substrate) silicon interposer — ~65 nm-class passive wiring, with <strong>TSVs</strong> (through-silicon vias, ~10 µm through a die thinned to 50-100 µm) down to the substrate; <strong>hybrid bonding</strong> (Cu-Cu pads welded directly, ~6-9 µm pitch, no bumps) is the 3D path beyond it. Module 12's HBM returns here as a <em>packaging</em> story:</p>
+<pre><code class="language-text">      +--------+   +---------+   +---------+
+      |  GPU   |   |  HBM3   |   |  HBM3   |   dies, uBumps @ 40-55 um
+      |  die   |   |  stack  |   |  stack  |   pitch, 50-100 um thick
+      +--------+   +---------+   +---------+
+   =============================================  silicon interposer
+        |&lt;-- ~0.5-2 mm die-to-die wiring --&gt;|       (CoWoS); TSVs
+   =============================================       punch through it
+         |  BGA @ 0.4-0.8 mm pitch, PCB traces in the cm class
+   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~  package substrate</code></pre>
+<p>HBM3's 1024-bit bus runs at up to 819 GB/s per stack (6.4 Gb/s/pin) because the stacks sit <em>µm-to-mm</em> from the GPU on silicon, not cm away on fiberglass. The distance back-check is pure chapter-01 physics: per 12 mm of package edge, an interposer fits 267 bumps at 45 µm pitch vs 20 balls at 0.6 mm PCB pitch — <strong>13× the pins</strong>; and driving 50 mm of PCB (~9.5 pF total) at 1.35 V costs ~8.7 pJ/bit vs ~0.48 pJ/bit for 2 mm on interposer (~0.8 pF, 1.1 V) — <strong>~18× the energy</strong>. An H100's 5 stacks × 670 GB/s = 3.35 TB/s (B200: 8 TB/s) is a packaging achievement. The counter-example on the same shelf: GDDR6X drives 21 Gb/s/pin × 384 bits ≈ 1 TB/s (RTX 4090: 1008 GB/s) over PCB traces — fewer pins, pushed harder, at roughly 2× the energy per bit.</p>
+<p><strong>Binning: the yield curve becomes the SKU list.</strong> A GPU is an array of 100+ identical small cores because a dead core is binned out, while a dead big core is a dead die. Salvage is scheduled, not accidental: AD102 (608.5 mm², TSMC 4N) is designed with 144 SMs, and the RTX 4090 ships 128 — 11% harvested. The PS3's Cell processor carried 8 SPEs with 7 enabled per die. The lab computes the 4-core CPU version: at D₀ = 0.4/cm² with 20 mm² cores, 67% of dies ship as 4-core, 22% as 3-core, 3% as 2-core. <em>The SKU list is the yield curve's product.</em></p>
+<p>And the module's last table — the economics→architecture feedback loop, closed:</p>
+<div class="table-wrap"><table><thead><tr><th>The architecture you know</th><th>The money that wrote it</th></tr></thead><tbody><tr><td>GPU = hundreds of small identical cores</td><td>salvage/binning (AD102: 144→128 SM); regular floorplans route fast</td></tr><tr><td>Chiplets (Zen 2 onward)</td><td>Y = e^(−D₀·A) + the 850 mm² reticle cap</td></tr><tr><td>HBM beside the GPU (CoWoS)</td><td>13× pins/mm and ~18× less energy/bit than PCB</td></tr><tr><td>Accelerators at the ridge point</td><td>FLOP/$ and FLOP/W (module 12 ch02's ridge as a budget line)</td></tr><tr><td>CXL and pooled memory</td><td>SRAM's stall → disaggregate the part whose cost curve diverged from logic's</td></tr></tbody></table></div>
+<p>The endgame claim, now earned: <strong>hardware is a compiler for money.</strong> The RTL you learned to write in chapter 03 is a program whose output is not waveforms — it is a cost structure: die area that sets yield, core count that sets the SKU mix, memory placement that sets packaging. Module 01 ch01 said memory is shaped by physics; this chapter adds the second half — shaped by yield arithmetic and µm-vs-cm packaging. Every module of this program is a consequence of these five chapters' physics and economics.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>Never compare nodes by name.</strong> Compare logic density (TSMC: N5 ≈ 137 MTr/mm², N3 ≈ 215) and HD SRAM cell size (N7 0.027 → N5 0.021 → N3 0.0199 µm²). The "3 nm" is a marketing label; a "5 nm" node's gate pitch is ~48 nm and metal pitch ~30 nm.</li>
+<li><strong>The SRAM wall.</strong> Past N5 the 6T cell shrinks ~5% per node while logic gains ~1.6× — on a cache-heavy die that converts to a ~1.25× overall shrink. This is why L3 sizes crawl while compute doubles, and it is the real argument behind accelerators.</li>
+<li><strong>The yield-table unit trap.</strong> D₀ = 0.1/cm² is 0.001/mm²; a 500 mm² die then has λ = 0.5, not 5. Check any yield claim you meet against e^(−λ) before repeating it — mixing mm² and cm² inflates yield loss by 10× or 100×.</li>
+<li><strong>The DFT signoff bars.</strong> ≥99% stuck-at coverage from ATPG (of testable faults), every functional flop in a scan chain, per-macro march coverage for every SRAM; scan costs ~5-15% area. A chip without these numbers is a chip you cannot ship.</li>
+<li><strong>The cold boot pause is BIST.</strong> Memory BIST plus DRAM training is the 100 ms-class black screen on every power-on — every phone, every PC, every power cycle. POST is its descendant, not its ancestor.</li>
+<li><strong>The vocabulary that gates credibility:</strong> reticle ≈ 850 mm² (26 × 33 mm field), CoWoS, TSV (~10 µm through a thinned die), hybrid bonding (Cu-Cu, ~6-9 µm pitch), KGD (known-good die — the screen that makes chiplets shippable).</li>
+<li><strong>The ECO folklore.</strong> 20-30 place-route-timing iterations for a big chip is normal; congestion at 90%+ track utilization is where timing goes to die. A schedule that assumes the floorplan is right the first time has never met a router.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>The whole chapter is a paper lab — every claim above is reproducible with ~40 lines of Python on any laptop. Save this as <code>yield.py</code> and run it:</p>
+<pre><code class="language-python">import math
+R, EDGE, ETA, WAFER, PKG = 150.0, 3.0, 0.87, 10_000.0, 100.0
+USABLE = math.pi * (R - EDGE) ** 2          # 300 mm wafer, 3 mm edge exclusion
+gross = lambda a: int(USABLE * ETA / a)     # gross dies (approx, large dies)
+Y     = lambda d0, a: math.exp(-d0 * a)     # Poisson yield; d0 in defects/mm^2
+
+print(f"usable circle {USABLE:,.0f} mm^2; gross(500 mm^2) = {gross(500)}")
+print("\n[1] cost per good die, D0 = 0.01/mm^2 (1.0/cm^2, early ramp):")
+for a in (100, 200, 500):
+    g, y = gross(a), Y(0.01, a)
+    print(f"    {a:3d} mm^2: gross {g:4d}  Y {y*100:6.2f}%  "
+          f"${WAFER/(g*y):8,.0f}")
+print("\n[2] the 500 mm^2 GPU as 8 x 62.5 mm^2 chiplets, same D0:")
+g, y, chips = gross(62.5), Y(0.01, 62.5), gross(62.5) * Y(0.01, 62.5) / 8
+print(f"    each: gross {g}  Y {y*100:.1f}%   same-neighborhood all-8-clean: "
+      f"{y**8*100:.2f}%")
+print(f"    pool: {chips:.1f} packages/wafer  -&gt;  "
+      f"${WAFER/chips + PKG:,.0f}/package (incl ${PKG:.0f} pkg)")
+print("\n[3] same two designs at mature D0 = 0.001/mm^2 (0.1/cm^2):")
+print(f"    monolithic: Y {Y(0.001,500)*100:.1f}%  "
+      f"${WAFER/(gross(500)*Y(0.001,500)):,.0f}")
+ych, chips = Y(0.001, 62.5), gross(62.5) * Y(0.001, 62.5) / 8
+print(f"    chiplets:   each {ych*100:.1f}%  0.94^8 = {ych**8*100:.1f}%  "
+      f"${WAFER/chips + PKG:,.0f}  &lt;- package premium now loses")
+print("\n[4] 2-way split break-even, D0 = 0.0015/mm^2 (0.15/cm^2):")
+d0 = 0.0015
+mono  = lambda a: WAFER / (gross(a) * Y(d0, a))
+split = lambda a: 2 * WAFER / (gross(a/2) * Y(d0, a/2)) + PKG
+for a in (400, 500, 600, 700, 850):
+    print(f"    {a:3d} mm^2: mono ${mono(a):5,.0f}  split ${split(a):5,.0f}"
+          f"   {'SPLIT' if split(a) &lt; mono(a) else 'MONO'} wins")
+lo, hi = 100.0, 850.0
+for _ in range(50):
+    mid = (lo + hi) / 2
+    if split(mid) &lt; mono(mid): hi = mid
+    else: lo = mid
+print(f"    break-even: ~{(lo+hi)/2:.0f} mm^2")
+print("\n[5] SKU harvesting: 4-core die, cores 20 mm^2, D0 = 0.004/mm^2:")
+q = 1 - math.exp(-0.004 * 20)               # per-core kill probability
+ok = math.exp(-0.004 * 20)                  # uncore survives
+from math import comb
+tot = 0.0
+for dead in range(3):
+    p = comb(4, dead) * q**dead * (1-q)**(4-dead) * ok
+    tot += p
+    print(f"    {4-dead}-core SKU: {p*100:5.2f}% of all dies")
+print(f"    scrap tail (&lt;=1-core or dead uncore): {(1-tot)*100:.2f}%")
+print("\n[6] HBM distance back-check (per 12 mm package edge):")
+print(f"    interposer uBGA @ 45 um pitch: {12000/45:.0f} pins/edge")
+print(f"    PCB BGA       @ 0.6 mm pitch:  {12000/600:.0f} balls/edge")
+c_pcb, c_int = 50*0.14 + 2.5, 2*0.25 + 0.3  # pF: trace + pads/driver
+print(f"    E/bit: PCB 9.5 pF @1.35 V = {0.5*c_pcb*1.35**2:.1f} pJ; "
+      f"interposer 0.8 pF @1.1 V = {0.5*c_int*1.1**2:.2f} pJ")</code></pre>
+<pre><code class="language-console">$ python3 yield.py
+usable circle 67,887 mm^2; gross(500 mm^2) = 118
+
+[1] cost per good die, D0 = 0.01/mm^2 (1.0/cm^2, early ramp):
+    100 mm^2: gross  590  Y  36.79%  $      46
+    200 mm^2: gross  295  Y  13.53%  $     250
+    500 mm^2: gross  118  Y   0.67%  $  12,577
+
+[2] the 500 mm^2 GPU as 8 x 62.5 mm^2 chiplets, same D0:
+    each: gross 944  Y 53.5%   same-neighborhood all-8-clean: 0.67%
+    pool: 63.2 packages/wafer  -&gt;  $258/package (incl $100 pkg)
+
+[3] same two designs at mature D0 = 0.001/mm^2 (0.1/cm^2):
+    monolithic: Y 60.7%  $140
+    chiplets:   each 93.9%  0.94^8 = 60.7%  $190  &lt;- package premium now loses
+
+[4] 2-way split break-even, D0 = 0.0015/mm^2 (0.15/cm^2):
+    400 mm^2: mono $  124  split $  192   MONO wins
+    500 mm^2: mono $  179  split $  223   MONO wins
+    600 mm^2: mono $  251  split $  260   MONO wins
+    700 mm^2: mono $  340  split $  301   SPLIT wins
+    850 mm^2: mono $  519  split $  374   SPLIT wins
+    break-even: ~622 mm^2
+
+[5] SKU harvesting: 4-core die, cores 20 mm^2, D0 = 0.004/mm^2:
+    4-core SKU: 67.03% of all dies
+    3-core SKU: 22.33% of all dies
+    2-core SKU:  2.79% of all dies
+    scrap tail (&lt;=1-core or dead uncore): 7.85%
+
+[6] HBM distance back-check (per 12 mm package edge):
+    interposer uBGA @ 45 um pitch: 267 pins/edge
+    PCB BGA       @ 0.6 mm pitch:  20 balls/edge
+    E/bit: PCB 9.5 pF @1.35 V = 8.7 pJ; interposer 0.8 pF @1.1 V = 0.48 pJ</code></pre>
+<p>What to notice: [2] prints the memoryless trap (all-8-clean = 0.67%, the monolithic number) <em>and</em> the pool fix (63.2 packages/wafer) — that pair is the chiplet argument. [3] prints 60.7% twice, for monolithic and 0.94⁸ — the same property at mature D₀, where the split loses on the package premium. [4]'s break-even (~622 mm²) sits <em>below</em> the 850 mm² reticle cap: the split wins for merely huge dies, not just physically impossible ones. <code>ETA = 0.87</code> and <code>$10,000</code>/wafer are marked approximations — swap in your own and rerun; the exponentials dominate everything else. Extend it: add the negative-binomial yield from section 5 and watch the 49× chiplet win shrink to ~8× — clustering is why reality is kinder than Poisson.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Read a chip announcement critically.</strong> "Built on 3 nm, 20% more cache": look up the HD cell size (0.0199 µm², N3) and compute the real cache-area gain (5%). Density claims are for logic; your workload's cache didn't scale.</li>
+<li><strong>Settle the monolithic-vs-chiplet argument with arithmetic, not taste.</strong> The question reduces to three numbers — D₀, die area, package cost — and the script above. At 0.15/cm² and $100 packaging the answer is 622 mm²; recompute for your regime.</li>
+<li><strong>Debug the boot.</strong> A blank screen for ~100-150 ms on every cold power-on before the logo is not broken — it is memory BIST and DRAM training. A part that shifts scan patterns but fails functional tests points at a test-mode strap or a stuck scan bit; a part that passes at-speed BIST but fails function points at timing (congestion), not manufacturing.</li>
+<li><strong>Answer the interview trio.</strong> "Why are GPUs arrays of small cores?" — salvage and binning; a dead core is a binned SKU, a dead big core is a dead die. "Why chiplets?" — Y = e^(−D₀·A) against the 850 mm² reticle cap. "Why is HBM fast?" — 1024 pins at 45 µm pitch beat 20 balls at 0.6 mm; bandwidth is a packaging achievement.</li>
+<li><strong>Follow the industrial news with the physics in hand.</strong> EUV export controls (one supplier, 13.5 nm, $150-200 M/machine), the 2023 CoWoS capacity crunch (the interposer, not the GPU, throttled AI supply), wafer-price hikes: each story is one layer of the diagram at the top of this chapter.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 01</strong> — the H-tree you derived is clock tree synthesis at die scale; the RC wire-delay model is what congestion's detours multiply.</li>
+<li><strong>Chapter 02</strong> — the flip-flop becomes the scan flip-flop; the pipeline whose state you can now shift in, clock once, and shift out is the ATPG test vehicle.</li>
+<li><strong>Chapter 03</strong> — synthesis was the front half of the flow; this chapter is the back half, from floorplan to GDS. Your FIFO ring, as a macro, is exactly what memory BIST marches through.</li>
+<li><strong>Chapter 04</strong> — the 6T cell's 0.021 µm² is the number that stopped scaling and reshaped die maps; the cache you built in RTL is the SRAM-share of the die that the node myth obscures.</li>
+<li><strong>Module 01 ch01</strong> — "memory is shaped by physics" gains its economics half: yield arithmetic and packaging distance.</li>
+<li><strong>Module 01 ch02</strong> — the memory-hierarchy table now has a cost column: every level's size is a yield-and-area decision, not just a timing one.</li>
+<li><strong>Module 12 ch01</strong> — HBM's 3.35 TB/s returns here as the CoWoS/µbump story: the bandwidth is a packaging achievement.</li>
+<li><strong>Module 12 ch02</strong> — the roofline's ridge point reread as a budget line: accelerators win at the FLOP/$ and FLOP/W maximum.</li>
+<li><strong>Module 12 ch04</strong> — CXL and pooled memory as the system-bus future of the SRAM stall: disaggregate the expensive thing whose curve diverged.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Derive Y = e^(−D₀·A) from the spatial Poisson process. Then explain, with the exponent, why 5× the die area cost 54.6× the yield in this chapter's table — and why the ratio is exactly e⁴, not an accident of the numbers chosen.</li>
+<li>A 300 mm wafer costs $10,000. A die is 200 mm², and the fab is at early ramp with D₀ = 0.01 defects/mm². Compute the yield, the expected good dies per wafer (590 gross dies per wafer at 100 mm² — scale accordingly), and the cost per good die.</li>
+<li>A 4-core CPU die is in production; each core has an independent 10% probability of containing a defect that kills it (and the uncore always works). What fraction of dies ship as the 4-core SKU, and what fraction as the 3-core SKU?</li>
+<li>Signoff DRC reports ~4,000 antenna violations concentrated on long M5-M7 nets after the router's final pass. What physical mechanism produced them, and what are the two standard fixes?</li>
+<li>A 380 mm² SoC passed static timing analysis at 2.0 GHz. First silicon passes scan test but fails functional tests above 1.4 GHz, and every failing path crosses the northeast quadrant, where the congestion map shows 92% track utilization. Diagnose the failure and name two fixes at different stages of the flow.</li>
+<li>A phone's display shows nothing for ~150 ms after the power button on every cold boot, then boots normally. Nothing is wrong with the screen or the OS. What is running during that window, and what is its software-world descendant on a PC?</li>
+<li>A foundry announces a new node with "1.6× density." You look up the HD SRAM cell: 0.021 µm², unchanged from the previous node. What does the insider's rule tell you a cache-heavy design actually gains, and why did the cell stall while logic density moved?</li>
+<li>(Cross-chapter) Your next design is 60% L3 cache by area (chapter 04's 6T arrays). The new node offers 1.6× logic density and the HD SRAM cell shrinks 5%. What is the total die-area shrink for the same design — and using module 12 ch02's ridge-point argument, why does this push architects toward accelerators?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Derivation and the e⁴ ratio.</strong> Defects are a spatial Poisson process with density D₀ per mm²: the count in area A follows P(k) = (D₀A)^k · e^(−D₀·A) / k!, and a die survives only if k = 0, so Y = e^(−D₀·A). For the ratio: at fixed D₀, Y₁/Y₂ = e^(D₀·(A₂−A₁)) = e^(0.01·400) = e⁴ = 54.6 — exact, not an accident. The yield penalty for area is exponential in the area <em>difference</em> times D₀, which is why big (500 mm²-class) dies are exponentially expensive and why the industry's structural answers (chiplets, binning) are all ways of shrinking effective A.</li>
+</ol>
+<ol>
+<li><strong>Y = 13.5%, ~40 good dies, ~$250.</strong> λ = D₀·A = 0.01 × 200 = 2, so Y = e⁻² = 13.53%. Gross dies scale with usable area: 100 mm² gave 590, so 200 mm² gives 59,060/200 ≈ 295 gross. Good dies = 295 × 0.1353 ≈ 40, so each good die costs $10,000/40 = <strong>$250</strong>. The trap avoided: D₀ was given in defects/mm²; had it been quoted per cm² (0.01/mm² = 1.0/cm²), skipping the conversion gives λ = 0.02 or 200 instead of 2.</li>
+</ol>
+<ol>
+<li><strong>4-core: 65.6%; 3-core: 29.2%.</strong> Dead cores are Binomial(4, 0.1): P(all alive) = 0.9⁴ = 0.6561; P(exactly 1 dead) = 4 × 0.1 × 0.9³ = 0.2916. The 2-core SKU gets 4.86%; the tail is scrap or fused-off parts. This is the lab's binomial-with-independent-defects approximation — real defect <em>clustering</em> correlates dead cores, so measured 4-core fractions run higher.</li>
+</ol>
+<ol>
+<li><strong>Plasma-etch charging; fixes: antenna diodes and jumpering.</strong> During etch, a metal line whose only connection is a gate has no discharge path; it accumulates charge until the voltage can punch through the gate oxide — long upper-layer nets accumulate the most, hence the M5-M7 concentration. Fix one: insert an antenna diode (a diffusion tied to the net) to bleed charge to substrate. Fix two: jumper — hop the long span to a higher layer so no single layer accumulates a dangerous metal-area-to-gate-area ratio. The rule sounds like superstition; the mechanism is etch physics.</li>
+</ol>
+<ol>
+<li><strong>Congestion detours added real RC that pre-route timing models underestimated.</strong> Scan passes (no manufacturing defect), but at-speed paths through the 92%-utilized quadrant fail: routes that couldn't get tracks detoured, and their extra length is extra RC delay (chapter 01's wire model) the STA run never saw. Fixes at two stages: (a) floorplan/place — spread the macros, move the pin field, pull local utilization toward 70-80%; (b) post-route ECO — retime/repipeline the failing paths, buffer, or re-route. This is why the folklore says 20-30 ECO iterations on a big chip: the router is a physics engine the timing model only approximates.</li>
+</ol>
+<ol>
+<li><strong>Memory BIST and DRAM training; the descendant is POST.</strong> Every power-on, each SRAM macro's built-in self-test marches its patterns (stuck bits, coupling, address faults) and the DRAM interface trains its delays — the 100 ms-class cold-boot window. On a PC, the power-on self test is this hardware discipline's direct descendant: the black-screen pause is DFT doing its job, not the OS being slow.</li>
+</ol>
+<ol>
+<li><strong>~1.25× overall, not 1.6×.</strong> The insider's rule: compare HD SRAM cell µm² and MTr/mm², not node names. An unchanged 0.021 µm² cell means the cache — 30-60% of a big-core die — didn't shrink; the 1.6× lands on the logic sliver. The cell stalls because the 6T cell is an analog circuit: read stability and write margin depend on the strength ratios of its pull-up, pull-down, and pass transistors, and the weak devices don't scale with the fin pitch. "SRAM scaling is dead" past N5 is the consequence — which is why L3 sizes crawl while compute doubles.</li>
+</ol>
+<ol>
+<li><strong>Shrink factor ≈ 0.82 — only 1.22×.</strong> The cache's 60% shrinks by 1.05×: 0.6/1.05 = 0.571 of the die. The compute's 40% shrinks by 1.6×: 0.4/1.6 = 0.25. Total 0.821 — a 1.22× gain versus the 1.6× headline. The accelerator push is module 12 ch02's roofline as economics: a node's gift buys 1.6× on logic but 1.05× on cache, so FLOP/$ and FLOP/W at the ridge point improve by spending it on regular math arrays (fed by module 12 ch01's HBM — which this chapter showed is a packaging achievement). Economics picks the architecture — hardware is a compiler for money.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch04.html"><span class="cn-label">previous</span><span class="cn-title">Ch 04</span></a>
+<a class="next" href="index.html"><span class="cn-label">next</span><span class="cn-title">Module index</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 17 — Digital hardware: from transistors to silicon</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

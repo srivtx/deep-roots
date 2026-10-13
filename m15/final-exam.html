@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 15 final exam — deep-roots</title>
+<meta name="description" content="Final exam for module 15 (one machine, many owners), with worked answers.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 15 final exam — deep-roots">
+<meta property="og:description" content="Final exam for module 15 (one machine, many owners), with worked answers.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 15 final exam — deep-roots">
+<meta name="twitter:description" content="Final exam for module 15 (one machine, many owners), with worked answers.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 15 &middot; one machine, many owners &middot; final exam</div>
+<h1 class="post-title">Module 15 final exam</h1>
+<div class="post-meta">every chapter &middot; worked answers behind the fold</div>
+<p>Twelve questions across all five chapters. Closed book; every answer is worked, not stated — the derivations are the point. Scoring: 11+ = you own this module; 8-10 = solid, revisit the flagged chapters; &lt;8 = the chapter quizzes are the study path.</p>
+<p><strong>Part I — the trap boundary and the second page table (chapters 01-02)</strong></p>
+<ol>
+<li><strong>Diagnose.</strong> A 2003 design doc proposes running an unmodified Windows guest by parking its kernel at ring 1 on an unmodified Pentium III: "ring 0 for the VMM, ring 1 for the guest — the four rings exist for exactly this." The prototype boots, runs two hours, then corrupts a kernel data structure mid-critical-section. Name the instruction that almost certainly did it, state exactly what the metal did with it, and explain why no software anywhere was notified. Which 1974 theorem does the design violate, and what one mechanism does VT-x add that restores it?</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> x86-64, 4-level guest paging, 4-level EPT, no TLB hits, no paging-structure caches. (a) Derive, access by access, the memory references for one guest load of a 4 KB page — data access included. (b) The same load when the guest maps the region with a 2 MB huge page (3-entry guest walk) and the EPT covers the whole region with a 1 GB leaf (2-entry EPT walk). (c) Why does translating an EPT entry's own address need no third page table — and what happens to the walk count if it did?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A 96 GB host sells 16 guests at 8 GB each — 128 GB promised, 1.33x overcommit, inside the 1.05-1.5x band. At 02:00 each guest's working set settles at 6.5 GB. (a) Does the node survive unaided? (b) With KSM merging 15% of resident guest memory? (c) The security review vetoes KSM for this tier: which mechanism do they fear, what observation in the attack loop says "the victim touched this line," and which knob is <em>not</em> a defense? (d) KSM off, balloon inflated at 03:00: what does each guest kernel do to satisfy it, and what is the named disaster it risks?</li>
+</ol>
+<p><strong>Part II — devices: the ring contract and the ladder (chapter 03)</strong></p>
+<ol>
+<li><strong>Predict.</strong> A guest pushes 64-byte packets through QEMU's emulated e1000 on a 2.6 GHz vCPU: 12 register accesses per bidirectional packet (TX tail poke, RX buffer post, interrupt mask/unmask, status reads), each a VM exit of 1,200 cycles, plus 8,000 cycles of QEMU userspace decode and emulate (context switches on top). (a) Cycles per packet and the per-core packet ceiling. (b) How many times below a 10 GbE NIC's 64-byte line rate is that? (c) One sentence each: what property of the emulated contract causes the exit count, and what design change does virtio make to amortize the exit?</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> A split virtqueue has queue size 512. (a) The descriptor table's byte size. (b) The avail ring's size, <code>used_event</code> included. (c) The used ring's size, <code>avail_event</code> included. (d) The driver has posted 1,300 heads in total (<code>avail.idx = 1300</code>): which ring slot holds the latest head, and what does the homegrown-device bug look like? (e) The guest kicks, and the device later interrupts: which of the two doorbells costs a VM exit, and why can the other one not?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> Ops live-migrates a 32 GB guest; <code>calc-dirty-rate</code> reports 2.4 GB/s of dirtied memory, the link sustains 800 MB/s effective. (a) Derive why pre-copy never converges. (b) The guest's hot path is an SR-IOV VF — what does that add to the drain plan, and what is the standard escape? (c) Name the three escape valves for the convergence problem and price each in one sentence, including the failure mode of the most radical one.</li>
+</ol>
+<p><strong>Part III — containers: views, bills, and the shared kernel (chapter 04)</strong></p>
+<ol>
+<li><strong>Diagnose.</strong> A JVM service in a pod with <code>memory.max</code> = 2 GiB and <code>memory.swap.max</code> = 0 dies overnight: exit code 137, no stack trace, no <code>OutOfMemoryError</code>, logs stopping mid-line. (a) Derive the exit code. (b) Which kernel component produced it, how did it choose its victim, and which file proves the cause? (c) Why did the JVM never get the chance to throw? (d) <code>memory.events</code> shows the <code>high</code> counter climbing for hours before the kill — what was the app experiencing during those hours?</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> A cgroup has <code>cpu.max = 30000 100000</code> and runs a 6-thread busy loop on an otherwise idle 6-core host. (a) Describe one 100 ms period from the cgroup's point of view. (b) Which two <code>cpu.stat</code> counters record it, and at what rates? (c) <code>top</code> inside the container shows ~30% total CPU while the host is 90% idle — reconcile the two, and give the latency-histogram signature that confirms the diagnosis.</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A Dockerfile downloads a 900 MB model in one layer; a later layer deletes it after converting the model into a 4 GB tree of small files; at runtime the app appends one row to one of those 4 GB files. (a) "I deleted the 900 MB file — why is the image still over 900 MB?" (b) The first append takes minutes and the node's disk under <code>/var/lib/containers</code> grows by 4 GB — what happened? (c) State the fix as a rule.</li>
+</ol>
+<p><strong>Part IV — the cloud computer: oversubscription and the isolation poles (chapter 05)</strong></p>
+<ol>
+<li><strong>Predict.</strong> A 16-core SMT2 host — 32 hardware threads — runs 12 instances at 4 vCPUs each: 48 vCPUs, all CPU-saturated. (a) Derive the fair share per vCPU and the <code>st</code> the guests report. (b) One of your vCPUs lands beside a stranger's memory-bound vCPU on the same physical core; your thread there is compute-bound — what does it lose, and why is <code>st</code> silent about it? (c) What does a pair of vCPUs on one core actually deliver at full saturation, and why is that a discount the spec page never prints?</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> A 500 GiB gp2 volume (baseline 3 IOPS/GiB, burst cap 3,000 IOPS, full 5,400,000-credit bucket) serves an application averaging 2,000 IOPS. (a) What can it sustain forever? (b) How long until the clamp, from a full bucket? (c) What does the application experience at the clamp, and what will the monitoring ticket say? (d) State the law that generalizes to the t2.small's 12 CPU-credits/hour.</li>
+</ol>
+<ol>
+<li><strong>Concept (cross-module).</strong> A platform must run strangers' code. One engineer argues for plain containers: "a container exposes ~400 syscalls; a VM exposes ~50,000 instruction encodings — the smaller surface wins." Attack the argument with the counting refinement the chapter adds. Then match workload to pole, with numbers: a latency-critical web service in an <code>accept()</code> storm; a CPU-bound batch job with almost no syscalls. Last, give the two divisions behind Lambda's choice of Firecracker over both containers and QEMU.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<p><strong>Part I</strong></p>
+<ol>
+<li><strong><code>POPF</code> — the instruction that executes and lies.</strong> The guest kernel, believing itself at ring 0, enters its critical section by pushing a flags word with IF=0 and executing <code>popf</code> to disable interrupts. At CPL 1 the CPU executes the pop with <em>no fault</em> but silently drops the attempts to change IF and IOPL; the remaining bits pop normally. Interrupts were never off — a timer interrupt lands mid-section and shared state corrupts. No software was notified because <code>popf</code> is <strong>sensitive without being privileged</strong>: no trap fires, so the VMM never learns it should have emulated a disabled interrupt flag (its sibling <code>SGDT</code> fails the theorem the other way — unprivileged, untrapped, and truthful, the "red pill" detection). The design violates Popek and Goldberg (1974): an architecture is virtualizable iff every sensitive instruction is privileged. Ring 1 half-satisfies it — privileged instructions like <code>lgdt</code> <em>do</em> trap there — but the unprivileged-sensitive families slip through both directions. VT-x restores the theorem with one mechanism: VMX non-root, where the guest kernel runs at ring 0 but every sensitive event causes a <strong>VM exit</strong> with a reason code, and the hypervisor emulates the effect on virtual state (a virtual IF it actually honors) before VMRESUME.</li>
+</ol>
+<ol>
+<li>(a) The MMU reads the guest PML4E, PDPTE, PDE, PTE — 4 accesses — but each entry lives at a guest-physical address, untouchable without a 4-access EPT walk: 4 × 4 = 16. The PTE's payload — the data's GPA — needs its own 4-access walk: +4. <strong>24 translation accesses + 1 data access = 25 memory references for one guest load</strong>; native code needs 4. (b) The 2 MB guest page makes the guest walk 3 entries (PML4E, PDPTE, PDE-as-leaf); each is a GPA translated by an EPT whose leaf here is 1 GB — a 2-entry walk: 3 × (1 + 2) = 9. The data's GPA gets the same 2-entry walk: +2. The data access: +1. <strong>12</strong> — versus 25 at 4 KB/4 KB and 16 at 2 MB/2 MB; the gap, paid on every TLB miss, is why guest huge pages are really an EPT-large-pages feature. (c) The EPT pointer (EPTP) is a <strong>host-physical address</strong>, and hardware treats reads of EPT-internal entries as already-physical — the recursion is cut by fiat at one indirection per privilege boundary. If it weren't, each EPT-internal read would need a third-table walk, and that a fourth — 4 × (1 + 4 × (1 + 4 × ...)) — and no finite walk would terminate.</li>
+</ol>
+<ol>
+<li>(a) Touched: 16 × 6.5 = <strong>104 GB against 96 — 8 GB short</strong>: unaided, the node slides toward host swap — RAM's ~100 ns design point against tens of microseconds from NVMe (~100-300x) or milliseconds of disk (~10,000x), a step function, not a slope — or balloons guests that have nothing to give. (b) Footprint = 104 × 0.85 = <strong>88.4 GB — it fits</strong>, with 7.6 GB headroom; a fleet riding on a dedup ratio is why KSM is a policy debate, not a footnote. (c) KSM merges byte-identical pages across VMs into one write-protected shared page — two tenants on one physical cache line, the FLUSH+RELOAD precondition (module 02 ch07). Attack loop: <code>clflush</code> the line, let the victim run, reload and time — a <strong>fast</strong> reload means the victim touched the line between flush and reload; the touched-set across the page leaks the execution path (Yarom and Falkner, 2014, an RSA private key from a co-located Xen VM). <code>merge_across_nodes=0</code> only restricts merging to one NUMA node — a locality knob, not a defense; the honest mitigation is KSM off (<code>run=0</code>). (d) The balloon driver allocates guest kernel memory on command and hands the GPAs back; QEMU <code>madvise(MADV_DONTNEED)</code>s those pages and the host frames return to the free list for other guests. The guest did the hard part — it chose the victims, page cache first — and if it is truly tight it swaps <em>inside itself</em> to satisfy the balloon, each page hitting the virtual disk twice on the way back: the <strong>double paging disaster</strong>, why ballooning is a policy tool, not a free lunch.</li>
+</ol>
+<p><strong>Part II</strong></p>
+<ol>
+<li>(a) 12 × 1,200 = 14,400 exit cycles + 8,000 emulation = <strong>22,400 cycles per packet</strong>; 2.6 × 10^9 / 2.24 × 10^4 ≈ <strong>116,000 packets per second per core</strong> (the context switches push it lower). (b) 14.88 Mpps / 0.116 Mpps ≈ <strong>128x below 10 GbE line rate</strong> — about 1,300x below 100 GbE's 148.8 Mpps: the chapter's 150-1,500x band, derived. (c) The e1000 contract is register conversation: the driver pokes MMIO registers, and each poke is a store into an EPT-non-present region — an EPT violation, an exit, a detour into a QEMU userspace thread. virtio changes the contract, not the emulator: all data lives in shared guest RAM so payload bytes never trap, and the two doorbells amortize — one kick per <em>batch</em> of descriptors, one interrupt per batch of completions — so the 1,000-2,000-cycle exit is paid per batch, not per register.</li>
+</ol>
+<ol>
+<li>(a) 512 × 16 = <strong>8,192 B</strong>. (b) 2 + 2 + (2 × 512) + 2 = <strong>1,030 B</strong>. (c) 4 + 4 + (8 × 512) + 4 = <strong>4,108 B</strong> — used entries are 8 B (32-bit <code>id</code> and <code>len</code>) while the avail ring's words are 16-bit: the 2008 spec asymmetry. (d) 1,300 mod 512 = <strong>slot 276</strong>: the indices are free-running and position = <code>idx &amp; (qsz-1)</code>. The homegrown bug is subscripting the 512-entry table with <code>idx</code> directly — out of bounds within the first 512 operations; power-of-two queue sizes exist so wraparound is a mask, not a division. (e) The <strong>kick</strong> exits: it is a store the vCPU just executed to trapped memory (a PIO exit, or an EPT violation on an MMIO BAR — chapter 02's mechanism), and observing a store at the instruction that made it requires a trap; ioeventfd only changes <em>who handles it</em> (KVM in-kernel, guest re-entered, QEMU never runs). The <strong>interrupt</strong> cannot exit: the device writes the used ring (plain guest RAM) and raises the queue's MSI-X vector through an irqfd; KVM latches the vector in the virtual local APIC and delivers at the next vmentry. Guest-generated events must trap to be seen; host-generated events are state you push in — the asymmetry that is half of why virtio is cheap.</li>
+</ol>
+<ol>
+<li>(a) A pass copying set S over bandwidth B takes S/B seconds, during which the guest dirties at rate d; the next set is roughly S·(d/B). Here d/B = 2,400 / 800 = <strong>3</strong>. Pass 1 copies 32 GB / 0.8 GB/s = 40 s, in which the guest dirties up to 2.4 GB/s × 40 s = 96 GB — more than the whole RAM, so every page is dirty again: pass 2 is 32 GB again, forever. The insider's first triage question — <em>dirty rate versus link</em> — is answered before the 2 a.m. window: this guest needs d &lt; 800 MB/s. (b) The VF's queue state, DMA mappings, and interrupt config live in <em>silicon on the source host</em>; the target cannot conjure an identical function, so at cutover the datapath vanishes and every TCP connection resets — hence the rule: no SR-IOV for the migratable tier. The escape is the net_failover bond — pair the VF with a virtio standby NIC, flip the datapath to virtio before migration, flip onto the target's VF after: native speed when static, migratable when needed. (c) <strong>Auto-converge</strong>: throttle the vCPUs until d &lt; B — deliberately manufacturing chapter 01's steal time. <strong>XBZRLE</strong>: delta-compress the dirty pages — a guest rewriting the same pages is its best case. <strong>Post-copy</strong>: resume the guest on the target first and let untransferred pages fault across the network — no convergence problem and near-instant cutover, but the VM's memory <em>is</em> the network: if the link dies, the VM dies, because most of its memory exists only at the source.</li>
+</ol>
+<p><strong>Part III</strong></p>
+<ol>
+<li>(a) 137 = 128 + 9: the shell's encoding of death by <strong>SIGKILL</strong>. (b) The cgroup-scoped OOM killer — when page charges cross <code>memory.max</code>, the kernel picks the highest-badness task <em>inside this cgroup only</em> and SIGKILLs it. The proof is <code>memory.events</code>' <code>oom_kill</code> counter, not a traceback — and not <code>dmesg</code>, usually unavailable inside a container. (c) The process died mid-allocation: the charge crossed the limit at fault time and the kill arrived before the allocator could return failure — <code>OutOfMemoryError</code> requires surviving the allocation. With <code>swap.max</code> = 0 there is no pressure-release valve, so <code>memory.max</code> arrives that much sooner. (d) <code>memory.high</code> is the humane limit: hard reclaim, the <em>allocating</em> task made to evict pages itself — the app sees <strong>latency, not death</strong>: refaults in <code>memory.stat</code>, pressure in <code>memory.pressure</code>. The hours of <code>high</code> are the warning; the <code>oom_kill</code> at <code>max</code> is the wall the runbook says to read <code>memory.events</code> before blaming the code.</li>
+</ol>
+<ol>
+<li>(a) The 6 threads burn the 30 ms quota in <strong>5 ms of wall time</strong> (6 threads × 5 ms), then the kernel dequeues every runnable task in the cgroup for the remaining <strong>95 ms</strong> — run 5, frozen 95, every period; the quota is shared, so the threads freeze together. (b) <code>nr_throttled</code> increments once per period (~10/s — climbing at <code>nr_periods</code>' rate means fully walled); <code>throttled_usec</code> accumulates ~95,000 µs per period and <strong>never resets</strong>. (c) 30 ms of CPU per 100 ms = 0.3 cores average — exactly the ~30% in-container reading — while the host idles because the host's idleness and the cgroup's ceiling are independent variables: this wall belongs to the tenant's own config. The confirming signature is period-quantized: stalls land on the 100 ms grid, so the p99 histogram grows <strong>teeth at exact 100 ms multiples</strong>. Fix: raise the quota, shorten the period for latency-sensitive work, or switch to <code>cpu.weight</code> — proportional share, never a freeze.</li>
+</ol>
+<ol>
+<li>(a) Image layers are immutable diffs: <code>rm</code> of a lower-layer file writes a <strong>whiteout</strong> — a character device node, major/minor 0:0 — into a new layer that hides the entry. The 900 MB still ships in its layer; deletions never shrink an image. (b) <strong>Copy-up</strong>: the 4 GB file lives in a read-only lower layer, and the first write copies the <em>entire file</em> into the container's private upperdir before the edit starts — 4 GB of I/O and 4 GB of disk for one appended row: module 01 ch03's copy-on-write at file granularity, running on module 14 ch05's overlayfs. (c) Big mutable data belongs in volumes or bind mounts, never image layers — and build intermediates stay outside the layer stack (multi-stage builds) so the image carries the result, not the debris.</li>
+</ol>
+<p><strong>Part IV</strong></p>
+<ol>
+<li>(a) Fair share = 32 hardware threads / 48 vCPUs = <strong>2/3 of a thread each</strong>: a saturated vCPU is runnable-but-not-running the other 1/3 of wall time, so the guests report <strong>st ≈ 33%</strong> — the hypervisor's per-vCPU accounting (nanoseconds the vCPU was ready and unpaid-for), the noisy neighbor's fingerprint without identity. (b) <strong>20-40%</strong>: the stranger's memory-bound stream evicts the L1/L2 working set the two SMT siblings share (module 01 ch02 one level up), and <code>st</code> stays silent because steal measures only <em>scheduling</em> — your vCPU ran 100% of its entitled time; the contention happened inside the core. The SMT sibling is the noisy neighbor you cannot prove — no column in <code>top</code> shows it. (c) The pair delivers <strong>1.2-1.3x one thread's throughput, not 2x</strong> — the second SMT thread only fills bubbles in the shared execution ports. A 16-vCPU instance is 8 cores × SMT2 = 8 × 1.2-1.3 ≈ 9.6-10.4 core-equivalents, 60-65% of sixteen dedicated cores: a 35-40% discount the spec page never prints.</li>
+</ol>
+<ol>
+<li>(a) <strong>1,500 IOPS</strong> — 3 IOPS/GiB × 500 GiB: the refill rate is the only rate that lasts. (b) Net drain 2,000 − 1,500 = 500 credits/s; 5,400,000 / 500 = 10,800 s = <strong>3 hours</strong>. (c) Not an error — a cliff: the volume clamps to 1,500 while the application still demands 2,000, so ~500 IOPS of demand queues; queue depth grows, latency follows (the queue <em>is</em> the latency), and the ticket says "the disk got slow at hour 3" with healthy error rates throughout — burst clamps fail silent, their defining property. (d) <strong>Sustained = refill</strong>: the bucket is a battery, not a pipe. The t2.small's 12 CPU-credits/hour, at 1 credit = 1 vCPU-minute, is 12 vCPU-minutes per hour = <strong>20% of one core forever</strong>, the full core only while the battery lasts — the same law, a different token.</li>
+</ol>
+<ol>
+<li>Raw counting misleads because it counts the wrong thing: instructions execute <strong>in silicon</strong> and never touch host software — the host code a guest can reach is the handful of exit reasons handled by the VMM — while a container's ~400 syscalls <em>all</em> land in ~30 MLOC of kernel C the host itself depends on. Count the doors that reach host code and the "smaller" surface is the stronger wall: the VM's. That is why a kernel 0-day like Dirty Pipe escapes a container trivially (<code>pipe</code>/<code>splice</code>/<code>write</code> are all in the default seccomp allowlist — seccomp gates doors, not the code behind them) but breaks only a Firecracker guest's own sandbox: the guest's syscalls trap into <em>its own</em> untrusted kernel, never the host's. Matching: the <code>accept()</code> storm is <strong>syscall-frequency-bound</strong> — gVisor's intercept plus sentry work costs 2-10x per syscall, and frequency, not bytes, is the pain predictor — so it wants Firecracker (or a container, for trusted tenants); the CPU-bound batch fits gVisor comfortably — few syscalls, full speed. The two divisions behind Lambda: <strong>~1.5-2 MLOC / ~30-50 kLOC ≈ 40x less untrusted-input-parsing code than QEMU</strong> (containers already disqualified by the shared kernel), and <strong>2,000 × 150 MB = 300 GB vs 2,000 × 5 MB = 10 GB</strong> of per-VM overhead — plus the 125 ms boot — which is what lets thousands of strangers share one host. Firecracker and gVisor answer the same threat with opposite geometry: a small wall per untrusted kernel (a VM per workload), or the kernel's whole surface re-implemented in userspace Go.</li>
+</ol>
+</details>
+<div class="post-footer"><p>Chapter list: <a href="index.html">Module 15</a>. Module 01 also has the <a href="../quiz.html">interactive quiz</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

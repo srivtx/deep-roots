@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The DOM as a heap graph: Oilpan and two collectors — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 16: The DOM as a heap graph: Oilpan and two collectors">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The DOM as a heap graph: Oilpan and two collectors — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 16: The DOM as a heap graph: Oilpan and two collectors">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The DOM as a heap graph: Oilpan and two collectors — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 16: The DOM as a heap graph: Oilpan and two collectors">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 16 &middot; an OS that renders</div>
+<h1 class="post-title">The DOM as a heap graph: Oilpan and two collectors</h1>
+<div class="post-meta">chapter 02 &middot; ~19 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> The DOM is not a tree in a textbook sense; it is a graph of C++ objects on Blink's own heap — 40–100+ bytes of pointers per node (parent, children, siblings, document back-pointer, layout association) — and something must decide when those bytes die. Refcounting cannot: parent–child and listener–closure references form cycles, so counts never hit zero — the structural leak that made IE-era pages grow until the tab died. So Blink traces: Oilpan, mark-and-sweep over pages of fixed-size buckets, roots from <code>Persistent</code>, edges from <code>Member</code>, write barriers on every store, concurrent marking since 2018. But the page has a <em>second</em> collector — V8's — and the two share objects only through a wrapper: a JS object holding a pointer to the C++ node. Each collector traces its own heap; the wrapper is where they trade liveness evidence, via V8's embedder tracing. That bridge is also where the most famous leak on the web lives: the detached subtree kept alive by one closure.</blockquote>
+<h2 id="a-node-is-a-c-object-the-inheritance-tax-counted-in-bytes">A node is a C++ object: the inheritance tax, counted in bytes</h2>
+<p>Start at the bottom, because the whole chapter is about who owns these bytes. <code>document.createElement('div')</code> constructs a C++ object through five levels of inheritance (Blink, 2024-era): <code>Node</code> → <code>ContainerNode</code> → <code>Element</code> → <code>HTMLElement</code> → <code>HTMLDivElement</code>. Each level attaches one concept, and each concept costs fields:</p>
+<pre><code class="language-text">a bare HTMLDivElement, 64-bit, Blink 2024-era, order-of-magnitude (versions vary)
+
++0x00  vtable ptr          8 B   every level is polymorphic; one vptr, not five
++0x08  parent_             8 B   Member&lt;Node&gt;       (back-pointer up the tree)
++0x10  next_               8 B   Member&lt;Node&gt;       (sibling ring)
++0x18  previous_           8 B   Member&lt;Node&gt;
++0x20  first_child_        8 B   Member&lt;Node&gt;       (added by ContainerNode)
++0x28  last_child_         8 B   Member&lt;Node&gt;
++0x30  tree_scope_         8 B   which Document's world am I in
++0x38  layout_object_      8 B   raw ptr; non-null == "attached" (in the
+                                layout tree; null == detached)
++0x40  attribute_data_     8 B   Element's payload: pointer to the attribute
+                                storage (the "attribute map")
++0x48  node_flags_         4 B   type bits, attached bit, rare-data bit
++...   rare_data_          8 B   lazily allocated spillover (inline boxes,
+                                mutation records, ...)
+                         -----
+                       ~ 72-88 B for an empty div; ~40-56 B for a bare
+                       Node (text/comment); "100+ B" once attributes,
+                       inline style, and rare data attach</code></pre>
+<p>The numbers are ranges because the layout shifts between Chrome versions; the <em>structure</em> is the lesson. A node is mostly pointers to other nodes — the tree is literally the heap graph. <code>layout_object_</code> is the "attached" state: a node in the layout tree has a renderer; a detached node has <code>layout_object_ == nullptr</code> and no parent path to the document — but it still owns its children, <code>first_child_</code> survives detachment, which is why a detached subtree is a whole subgraph of live bytes, not one object.</p>
+<p>Two details that pay off later. <code>nodeType</code> (the 1/3/8/9/11 constants from the DOM spec: element, text, comment, document, fragment) is a switch over the type bits in <code>node_flags_</code> — the classic visitor pattern, executed by every consumer from the serializer to DevTools. And attributes are not a per-node hash: an element points to shared <code>AttributeData</code> storage, a compact vector of name–value pairs whose keys are interned in the global <code>AtomicString</code> hash table. Counts are small — pages typically carry 0–4 attributes per element — so lookup is a linear scan, with the hash doing its work at name-interning time.</p>
+<h2 id="who-deletes-a-node-manual-death-refcount-death-and-the-ring-that-ate-ie">Who deletes a node? Manual death, refcount death, and the ring that ate IE</h2>
+<p>The ownership problem, stated plainly: <code>removeChild</code> removes a node from a tree, but the node's bytes still exist and its children still reference it. Who calls the destructor, and when? C++'s two stock answers both fail alone.</p>
+<p><strong>Manual ownership</strong> (the owner deletes): works until any code path forgets — then a use-after-free, or a double delete. In a browser, where arbitrary web script mutates the graph from any callback, the number of code paths is unbounded. The 1990s browser crashes lived here.</p>
+<p><strong>Refcounting</strong> (delete when the count hits zero): every <code>parent_</code> increments the child's count, every listener increments the closure's count. Deterministic, incremental — but the DOM's own shape builds rings. Walk the counts in the IE-era model (COM objects on the DOM side, JScript objects on the script side, both refcounted):</p>
+<pre><code class="language-text">the structural leak, refcounted world (IE 6/7-era, mid-2000s)
+
+   HTMLDivElement (refcounted)         closure onClick (refcounted)
+   +---------------------------+  listener map: div owns closure (+1)
+   |  count = 2:               | -------------------------------&gt;  count = 2:
+   |    +1 from closure's      | &lt;--------------------------------
+   |    captured var `div`     |  environment record captures div (+1)
+   +---------------------------+
+        ^    | parent_ owns child (+1)         child's count = 2:
+        |    v                                 +1 parent, +1 own listener
+      HTMLSpanElement ...</code></pre>
+<p><code>removeChild</code> runs: the document decrements the div from 2 to 1. Nobody ever issues the final decrement: the closure holds the div, the div's listener map holds the closure. The ring is unreachable from any root and immortal — the leak is <em>structural</em>, not a forgotten <code>delete</code>. The 2000s IE folklore ("don't build closures over DOM nodes") exists because that engine had no collector that could see both sides of this ring. The ring comes in two stock shapes: parent↔child (mutual <code>parent_</code>/<code>first_child_</code> counts) and listener↔element (the one drawn above).</p>
+<p><strong>So: tracing.</strong> A collector that starts from roots and follows pointers can discover that a ring has no path from any root — refcounting can only ask "does anyone point at me?", never "can anyone <em>reach</em> me?". That single difference is why every modern engine traces.</p>
+<h2 id="oilpan-tracing-the-blink-heap-with-buckets-barriers-and-a-trace-method">Oilpan: tracing the Blink heap, with buckets, barriers, and a Trace method</h2>
+<p>Oilpan (Blink's tracing GC, ~2014-era origin, now on V8's <code>cppgc</code> library) owns the C++ heap you met in the first section. Its heap layout is module 01 chapter 19's size-class allocator re-derived inside a collector: the heap is carved into pages — 128 KiB (2^17) in 2024-era cppgc — and each page serves one bucket, a fixed slot size. A request rounds up to its bucket (pointer-sized, 8 B granularity); same-size objects cohabit, so a freed slot is reusable by the next same-size node without fragmentation. Objects past the largest bucket (on the order of 16 KiB; the table is version-specific) get dedicated large-object pages — the same split a malloc makes between arenas and <code>mmap</code>.</p>
+<p>Three pointer types define the programming model:</p>
+<ul>
+<li><code>Member&lt;T&gt;</code> — an on-heap edge. The tracer follows it during marking.</li>
+<li><code>Persistent&lt;T&gt;</code> — a root: a pointer stored <em>outside</em> the heap, in the fields of non-GC'd C++ objects or in globals, that must outlive any single collection.</li>
+<li><code>WeakMember&lt;T&gt;</code> — an edge that does not keep the target alive; cleared before the target is swept.</li>
+</ul>
+<p>(Raw <code>Node*</code> on the C++ stack is handled separately — Oilpan scans the mutator stack <em>conservatively</em> during a stop, which is why rendering code may hold a plain pointer across a GC point and survive.)</p>
+<p>Marking needs to know every edge, and every class declares its own, in the <code>Trace()</code> method — the one piece of macro-heavy ceremony every Blink class writes:</p>
+<pre><code class="language-cpp">// Simplified from Blink's ContainerNode (Oilpan, 2024-era).
+void ContainerNode::Trace(Visitor* visitor) const {
+  visitor-&gt;Trace(first_child_);   // Member&lt;Node&gt;: if target is white, mark it
+  visitor-&gt;Trace(last_child_);    // black and enqueue it for its own Trace()
+  Node::Trace(visitor);           // base class traces parent_, next_, prev_...
+}</code></pre>
+<p>Because marking is <strong>incremental and concurrent</strong>, the collector runs while mutator code executes — which creates the classic race the two earlier modules already derived: an object marked black (done) gains a new child after the marker passed over it; the child is white, nobody will enqueue it, and sweep frees a reachable object. The fix is the same contract module 01 chapter 15 gave V8's scavenger and module 10 chapter 04 showed the JVM's JIT emitting: a <strong>write barrier</strong>. In Oilpan it is compiled into <code>Member</code> stores as a combined barrier (schematic; function names vary across cppgc versions):</p>
+<pre><code class="language-cpp">node-&gt;first_child_ = child;              // Member&lt;Node&gt;::operator=
+//   1. store the pointer
+//   2. WriteBarrier dispatch, one branch on global collector mode:
+//        marking phase:     black source, white target -&gt; mark target now
+//        generational mode: old source, young target   -&gt; record slot in the
+//                           remembered set, so a young GC can find it</code></pre>
+<p>Skip the remembered set and a young collection misses an old-to-young edge; skip the marking half and you get a swept-but-reachable object — the use-after-free crash class that shows up in Blink security bugs as "heap-use-after-free in blink::*" (more in <em>What insiders know</em>).</p>
+<p>The pause-time story: the 2018 project that made Blink GC marking concurrent moved full collections on heavy pages from ~100 ms pauses to the ms class, per the project's own reports. A 100 ms pause against a 16.6 ms frame budget is six dropped frames from GC alone — "concurrent" was not optional.</p>
+<h2 id="two-heaps-one-dom-the-wrapper-bridge">Two heaps, one DOM: the wrapper bridge</h2>
+<p>Now the core problem. The renderer has <strong>two</strong> collectors: V8's (module 01 chapter 15's generational scavenger plus its major marker) for JS objects, and Oilpan for the C++ DOM. One address space, two heaps, and objects that must reference each other <em>by design</em> — your JS closure holds a div, the div's listener map holds a JS function. They cannot merge (V8 is a shared, embedder-agnostic library; Oilpan knows C++ types), so they share objects through an explicit bridge: the <strong>wrapper</strong>.</p>
+<p>When script first touches a node, Blink creates a wrapper: a plain V8 JSObject with (historically two) internal slots — slot 0 the node pointer (in sandboxed builds, a handle into V8's external pointer table, chapter 05's territory), slot 1 the type info. The node caches the wrapper in a field of its own, and that cache is the <strong>identity guarantee</strong>: re-wrapping returns the same JS object, which is why <code>document.body === document.body</code>. Without the cache, every access would mint a fresh wrapper and identity comparisons — the backbone of user code — would all be false.</p>
+<pre><code class="language-text">        V8 heap (the JS world)                 Blink heap (Oilpan)
++---------------------------------+      +------------------------------------+
+| onClick (closure)               |      | HTMLDivElement (C++ Node)          |
+|   captured var `tree`           |      |   first_child_ --&gt; 10,000 spans    |
+|     |                           |      |   parent_ == null (detached)       |
+|     v                           |      |            ^                       |
+|   wrapper (JSObject)            | slot |            | strong: a wrapper     |
+|     slot 0: node handle --------|---O-&gt;|  marked live by V8 is an OILPAN    |
+|     slot 1: WrapperTypeInfo     |      |  ROOT; Blink marks the node        |
++---------------------------------+      |  and traces Member edges from it   |
+        ^                               +------------|-----------------------+
+        |  node -&gt; wrapper: a WEAK reference (the wrapper_ field)             |
+        +-----------------------------------------------                      |
+                                                                             |
+   directions, stated once:                                                  |
+   - JS keeps the wrapper alive  -&gt; wrapper keeps the NODE alive             |
+     (V8 marking -&gt; EmbedderHeapTracer -&gt; Oilpan marking)                    |
+   - the node does NOT keep the wrapper alive (weak backref)                 |
+   - if JS forgets the wrapper, V8 collects it; if that was the node's       |
+     last owner, Oilpan sweeps the node ("wrapper disposes node")            |</code></pre>
+<p>The coordination, step by step, during one major collection:</p>
+<ol>
+<li>V8 marks its graph from JS roots (globals, the stack, handles).</li>
+<li>Wrappers are special: when the marker finds one live, it must ask the embedder, because slot 0 is a cross-heap edge V8 refuses to treat as "just a pointer." The API is V8's <code>v8::EmbedderHeapTracer</code>: V8 hands the live wrappers to Blink's implementation, which reads each node pointer and <strong>marks the node as an Oilpan root</strong>.</li>
+<li>Oilpan traces <code>Member</code> edges outward — including the <em>reverse</em> cross-heap edges: an on-heap event listener map holds V8 function references, and tracing them marks those JS closures in V8's heap.</li>
+<li>Both sides iterate to a fixed point — a wrapper discovered late can resurrect a node, whose listener can resurrect another closure; only when neither heap produces new marks is the verdict final.</li>
+</ol>
+<p>Read the semantics off the diagram: liveness flows JS → wrapper → node → children; it never flows node → wrapper. The weak direction is the modern "wrappers don't leak nodes" fix — a page that keeps a huge tree alive in C++ but lets JS forget every handle collects the whole tree: no JS root marks the wrapper, and the node cannot defend its own wrapper.</p>
+<h2 id="the-leak-one-closure-ten-thousand-nodes">The leak: one closure, ten thousand nodes</h2>
+<p>Everything above exists because of one failure mode. The canonical reproducer, inline and runnable:</p>
+<pre><code class="language-html">&lt;!doctype html&gt;
+&lt;meta charset="utf-8"&gt;
+&lt;title&gt;detached leak lab&lt;/title&gt;
+&lt;button id="leak"&gt;leak once (~1 MB)&lt;/button&gt;
+&lt;button id="clean"&gt;clean variant&lt;/button&gt;
+&lt;script&gt;
+const body = document.body;
+
+function buildSubtree() {
+  const root = document.createElement('div');   // 10,000 bare spans
+  for (let i = 0; i &lt; 10000; i++) {
+    root.appendChild(document.createElement('span'));   // ~80 B each, C++ side
+  }
+  return root;
+}
+
+document.getElementById('leak').addEventListener('click', () =&gt; {
+  const tree = buildSubtree();
+  body.appendChild(tree);                 // attach: the DOM work is real
+  // ONE listener, on an element that STAYS attached; its closure captures
+  // the parent of the subtree:
+  body.addEventListener('click', function onClick() {
+    tree.classList.toggle('go');          // &lt;-- the capture that leaks
+  });
+  body.removeChild(tree);                 // detach the subtree
+  // `tree` (the local) dies; the closure's captured copy does not.
+});
+
+document.getElementById('clean').addEventListener('click', () =&gt; {
+  const tree = buildSubtree();
+  body.appendChild(tree);
+  body.removeChild(tree);
+  // fix: nothing captures `tree`. No listener references it, no global does:
+  // the wrapper has no JS root, the node has no C++ owner -- the whole
+  // subtree is collectable, all 10,001 nodes, on the next major GC.
+});
+&lt;/script&gt;</code></pre>
+<p>Draw what the leak button leaves behind:</p>
+<pre><code class="language-text">GC root: the window / document (live, attached)
+
+HTMLBodyElement (attached, live)
+   | listener map (a Blink-side, on-heap registry)
+   v
+onClick (V8 closure)  &lt;-- Oilpan traced INTO V8 to keep this live (step 3)
+   | environment record: captured `tree`
+   v
+wrapper (V8 JSObject) &lt;-- V8 kept this live; via EmbedderHeapTracer it is
+   |                      an Oilpan root (step 2)
+   | slot 0
+   v
+HTMLDivElement (DETACHED: parent_ == null, layout_object_ == null)
+   | first_child_
+   v
+HTMLSpanElement x 10,000 (DETACHED)   ~10,001 nodes x ~80 B = ~0.8 MB of
+                                       C++ memory, per click, forever</code></pre>
+<p>The scale: 10,001 nodes × ~80 B ≈ 0.8 MB — call it ~1 MB per leak instance — plus the V8-side tax (a wrapper per touched node, the closure, the listener record), so a DevTools delta lands in the 2–3 MB class per click on a 2024-era Chrome (version-dependent). One instance per route change, and a day-old SPA tab is hundreds of MB. Nothing renders wrong, nothing throws: detached nodes cost zero frames — chapter 03's pipeline never sees them. The leak is invisible except to the task manager and the heap snapshot.</p>
+<p><strong>The honest subtlety.</strong> The ring shape from the refcounting section — listener <em>on the detached node itself</em>, closure capturing that same node — is exactly what embedder tracing was built to kill: a rootless ring marks nothing from either side's roots, and both heaps collect it in a coordinated major GC (IE and pre-Oilpan Chrome leaked rings forever). What still leaks is what this reproducer builds: a <strong>rooted chain</strong> — the listener's owner (<code>body</code>) is alive, so the closure is live, so the wrapper is live, so 10,001 nodes are live. The collectors are working correctly; the program is keeping garbage reachable. That is why the fix is program-side: remove the listener (<code>removeEventListener</code>, or register with <code>addEventListener('click', fn, { signal: controller.signal })</code> and abort on teardown), or let the closure capture nothing that outlives the subtree.</p>
+<h2 id="reading-the-heap-snapshot-three-numbers-and-a-delta">Reading the heap snapshot: three numbers and a delta</h2>
+<p>The instrument for all of this is DevTools' Memory panel, with three numbers per object you must be able to read:</p>
+<ul>
+<li><strong>Shallow size</strong> — the object's own bytes. A DOM wrapper's row carries the C++ node's bytes too (external memory), which is why a detached node shows a non-zero shallow size.</li>
+<li><strong>Retained size</strong> — everything that dies if this object dies; computed from the dominator tree (the object is the <em>unique</em> gate those bytes pass through). For the detached div: itself plus its 10,000 spans, ~0.8 MB on one row.</li>
+<li><strong>Distance</strong> — the shortest path, in objects, from a GC root. Live DOM nodes sit at small distances (4–8 is typical); a large distance on something you expected to be garbage is the smell.</li>
+</ul>
+<p>The full workflow is the lab below; the two views that matter are the <strong>Detached</strong> filter (class names literally begin with "Detached" — <code>Detached HTMLDivElement</code>, <code>Detached HTMLSpanElement</code>) and the <strong>Retainers</strong> pane, which names the chain — for this leak, roughly <code>Detached HTMLSpanElement &lt;- first_child of Detached HTMLDivElement &lt;- onClick &lt;- event_listeners of HTMLBodyElement &lt;- window</code> (labels vary slightly by version). That retainer line is the bug report, pre-written by the engine.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>console.log</code> is a root.</strong> Objects logged to the console are retained <em>while DevTools is open</em> — snapshots taken with the console showing them "leak" exactly those objects, retainer chains ending in the console. The false leak that eats an afternoon: repro visible only when DevTools is open, flat memory in closed-console soak tests.</li>
+<li><strong>Finalizer timing is a lie by design.</strong> <code>FinalizationRegistry</code> and <code>WeakRef</code> callbacks run only after a major GC that notices the death. V8 schedules GCs from allocation pressure plus a memory-reducer heuristic on a seconds-class timer that only fires when it predicts a win — an idle page (a dashboard that stopped allocating) can go many minutes, the "finalizer didn't fire for 20 minutes" story, with no GC at all. Unreachable is not collected; collected is not finalized; finalized is not soon.</li>
+<li><strong><code>performance.measureMemory()</code></strong> exists (Chrome 89, 2021, Chromium-only) but only on cross-origin-isolated pages (COOP+COEP headers) — which is chapter 05's isolation machinery gating a memory API.</li>
+<li><strong>Snapshot perturbation.</strong> Taking a heap snapshot forces a GC first, and the snapshot itself allocates — baselines for the three-snapshot technique must be snapshot-to-snapshot deltas, never absolute totals.</li>
+<li><strong>The crash signature of a missing barrier</strong> is not a leak but a Blink use-after-free: an object swept while reachable (<code>heap-use-after-free in blink::...</code> in crash reports). The write barrier is memory-safety machinery, not a performance detail — the same class of bug module 01 chapter 15's V8 barrier prevents on the other heap.</li>
+<li><strong>A strong <code>v8::Persistent</code> is a permanent root.</strong> Embedder code holding one per cached object re-creates the IE leak on a modern engine: the collector cannot question it, only the code that drops it.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Everything runs in any Chrome/Chromium; the instrument is built in. Save the HTML above as <code>leak.html</code>, open it, and:</p>
+<ol>
+<li><strong>Identity check first</strong> (console, the wrapper cache made visible): <code>document.body === document.body</code> → <code>true</code>; <code>document.querySelector('button') === document.querySelector('button')</code> → <code>true</code> (same node, same wrapper); two <code>createElement('div')</code> calls → <code>false</code> (two nodes, two wrappers).</li>
+<li><strong>The leak, measured.</strong> DevTools → Memory → <em>Heap snapshot</em> → Snapshot 1 (it forces a GC first — let it). Click <strong>leak once</strong> three times, take Snapshot 2, and type <code>Detached</code> in the Summary-view class filter: expect ~30,000 rows (<code>Detached HTMLSpanElement</code> × ~30,000, <code>Detached HTMLDivElement</code> × 3) — counts vary with Chrome version, the shape does not.</li>
+<li><strong>Read the retainer.</strong> Click one <code>Detached HTMLDivElement</code>: Shallow in the tens-of-bytes wrapper + external C++ class; Retained ~0.8 MB (its 10,000 spans); the Retainers pane shows the chain through <code>onClick</code> to <code>event_listeners</code> on the live body — the diagram from the previous section, printed by the engine.</li>
+<li><strong>The delta view.</strong> Switch the view dropdown to <em>Comparison</em> / "Objects allocated between Snapshot 1 and Snapshot 2": the # delta for <code>Detached HTMLSpanElement</code> should be ~+30,000, the size delta in the 6–9 MB class for three clicks (version-dependent).</li>
+<li><strong>Prove the fix.</strong> Click <strong>clean variant</strong> the same number of times, snapshot again, compare: <code>Detached</code> rows near zero, delta near zero. Same DOM work, same detach — no capture, no leak.</li>
+<li><strong>Watch the scheduler sit idle.</strong> After the clicks, note the timestamp and wait: <code>Detached</code> rows persist for minutes on an otherwise idle page — no allocation pressure, no major GC, which is the finalizer lesson in instrument form. (The <em>Allocation instrumentation on timeline</em> mode shows the wrapper allocation stacks if you want the forest, not the trees.)</li>
+</ol>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>The "memory grows per navigation" SPA incident.</strong> You can now run the full diagnosis: three snapshots, Detached filter, retainer chain — and the chain names the listener to remove. The fixes (remove the listener, abort its signal, stop the capture) fall out of reading the chain as a root→wrapper→node path.</li>
+<li><strong>Listener architecture.</strong> Per-node listeners on a 10,000-row list mean 10,000 listener records and 10,000 chances for one closure to capture the wrong thing. Event delegation (one listener on the container using <code>event.target</code>) is not a style preference; it removes 9,999 cross-heap chains by construction.</li>
+<li><strong>Teardown code review.</strong> The question that catches this bug class is mechanical: <em>does any closure that outlives this subtree capture a node inside it?</em> — asked whenever a route or component unmounts.</li>
+<li><strong>The interview answer.</strong> "Chrome has two tracing collectors per renderer; they share DOM nodes through V8 wrappers, coordinated by embedder tracing — V8 marks live wrappers, Blink marks the nodes behind them, Oilpan marks JS listeners back into V8, and they iterate to a fixed point" — three sentences that separate senior browser knowledge from framework knowledge.</li>
+<li><strong>Cache design.</strong> A WeakRef-based cache is fine for <em>latency</em> (recompute a dead entry) but never the <em>memory</em> story: bound it by count or bytes with an LRU, because eviction depends on a GC an idle page may not schedule for minutes.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 16 ch01</strong> — the renderer process is the leak's blast radius: a per-navigation leak accumulates until tab close, because the process (not the page) owns both heaps.</li>
+<li><strong>Module 16 ch03</strong> — detached nodes have <code>layout_object_ == null</code>: chapter 03's invalidation flags are why this leak costs zero frames and hides from rendering profiling.</li>
+<li><strong>Module 16 ch04</strong> — the detached subtree is entry one in the leak taxonomy; the three-snapshot technique returns there for workers and WASM memory.</li>
+<li><strong>Module 16 ch05</strong> — cross-origin isolation gates <code>performance.measureMemory</code>; the V8 sandbox's external pointer table holds the wrapper's slot-0 handle — the bridge's raw pointer becomes a capability.</li>
+<li><strong>Module 01 ch15</strong> — V8's generational scavenger, its remembered-set write barrier, the old/young split: the same contract Oilpan implements on the C++ side.</li>
+<li><strong>Module 01 ch19</strong> — the size-class allocator: Oilpan's bucketed pages are that pattern re-derived for a collector.</li>
+<li><strong>Module 10 ch04</strong> — compiler-inserted barriers in managed runtimes: here the "compiler" is the <code>Member&lt;T&gt;</code> template plus macros, and the developer writes the <code>Trace()</code> method the JVM's JIT would have generated.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> V8 can trace the V8 heap; Oilpan can trace the Blink heap. Name the two directions of liveness evidence that cross the wrapper bridge during one coordinated major GC, and explain why neither collector is allowed to treat the wrapper's slot-0 pointer as "just a pointer."</li>
+<li><strong>Predict the number.</strong> The leak page's subtree holds 10,000 bare <code>HTMLSpanElement</code>s plus one root div (bare Element ≈ 80 B of C++ memory, 2024-era). Roughly how much Blink-side memory does one leak instance retain? If DevTools reports a size delta of ~2–3 MB per instance, what accounts for the difference?</li>
+<li><strong>Predict the output.</strong> A page has exactly one <code>&lt;div&gt;</code> in its body. What does this print, and why — one line of reasoning per line? ``<code>js const a = document.querySelector('div'); const b = document.querySelector('div'); console.log(a === b); console.log(document.createElement('div') === document.createElement('div')); console.log(document.body === document.body); </code>``</li>
+<li><strong>Diagnose.</strong> An SPA gains ~1 MB per route change. Route teardown calls <code>container.replaceChildren()</code> (emptying the container), but snapshots accumulate <code>Detached HTMLDivElement</code> rows whose retainer chains end in <code>event_listeners</code> on a live element. Why doesn't <code>replaceChildren</code> help, and what is the minimal fix?</li>
+<li><strong>Diagnose.</strong> A dashboard registers a <code>FinalizationRegistry</code> callback that logs "freed" and drops a cache entry. After the page sits idle an hour, nothing has logged, <code>WeakRef.deref()</code> still returns objects, and a heap snapshot shows the entries unreachable. Explain the scheduler, not the semantics.</li>
+<li><strong>Concept.</strong> Classify each pointer in a Blink-flavored program: (a) a <code>Member&lt;Element&gt;</code> child field on an on-heap <code>ContainerNode</code>; (b) a <code>Node*</code> held in a local variable of a C++ function that may cross a GC point; (c) a node pointer stored in a non-GC'd manager object that must keep the node alive indefinitely; (d) a cache entry in an on-heap map that should <em>not</em> keep its target alive.</li>
+<li><strong>Diagnose.</strong> QA reports a memory "leak" that reproduces only when DevTools is open: snapshots grow by every object the page logs. With DevTools closed, a 12-hour soak shows flat memory. The page calls <code>console.log(node)</code> for every node it creates. What is actually retaining the objects, and how do you prove it to QA?</li>
+<li><strong>Cross-chapter.</strong> Module 01 chapter 15 derived V8's remembered-set write barrier; Oilpan uses a combined marking+generational barrier on <code>Member</code> stores. In a hypothetical build the <em>marking</em> half is broken. A black <code>ContainerNode</code> (already marked) gains a new child after the marker passed it; the child is white and reachable only through that parent. What happens at sweep time, what does the user see, and why won't the heap snapshot show anything "missing"?</li>
+</ol>
+<details><summary>Answers</summary>
+<ol>
+<li><strong>Evidence flows both ways.</strong> JS → C++: when V8's marker finds a wrapper live, V8 hands it to Blink's <code>EmbedderHeapTracer</code> implementation, which reads slot 0 and marks the node as an Oilpan root (then Oilpan traces <code>Member</code> edges through the DOM). C++ → JS: when Oilpan traces an on-heap listener map, the V8 function references inside it are marked in V8's heap, keeping the closure live; the two iterate to a fixed point. Slot 0 cannot be "just a pointer" for V8: the target lives in a heap V8 does not own — opaque data would orphan the DOM side, an unconditional root would leak every node forever.</li>
+<li><strong>~0.8 MB, call it ~1 MB per instance</strong> on the C++ side: 10,001 nodes × ~80 B ≈ 800 KB. The extra ~1–2 MB is the V8-side tax — one wrapper per touched node, the closure, the listener record — plus external memory attributed to wrappers. Both numbers are true: "one listener leaks ~1 MB of DOM" and "the tool shows ~2–3 MB."</li>
+<li><strong>true, false, true.</strong> First: two lookups return the <em>same node</em>, and the node→wrapper cache guarantees the same wrapper object — identity is exactly what the cache exists to provide. Second: two <code>createElement</code> calls construct two distinct C++ nodes, so two wrappers — <code>false</code>. Third: <code>document.body</code> is one node accessed twice; the cache mints the wrapper once and re-returns it — <code>true</code> on every call, forever.</li>
+<li><strong><code>replaceChildren</code> detaches; it does not de-root.</strong> The container drops its parent-side references, but the retainer chain shows the real owner: a listener on a <em>live</em> element whose closure captures the detached subtree. Liveness flows root → <code>event_listeners</code> → closure → captured var → wrapper → node → children. Minimal fix: remove the listener at teardown (<code>removeEventListener</code>, or an <code>AbortController</code> signal aborted on unmount), or rewrite the closure to capture nothing that outlives the route.</li>
+<li><strong>Unreachable is not collected; collected is not finalized.</strong> V8 runs major GCs when allocation pressure or the memory-reducer heuristic (a seconds-class timer that only fires when it predicts a worthwhile reduction) says so. An idle dashboard allocates ~nothing, so no trigger fires and no marking pass ever notices the entries are unreachable — <code>deref()</code> keeps succeeding because the target was never swept. Fix the cache with an explicit bound (count/bytes + LRU); never make correctness depend on finalizer timing.</li>
+<li><strong>(a)</strong> <code>Member&lt;Element&gt;</code> — an on-heap edge, followed by the tracer via the class's <code>Trace()</code> method. <strong>(b)</strong> A raw <code>Node*</code> on the C++ stack — Oilpan scans the mutator stack conservatively at a GC point, so plain locals are roots without ceremony (why rendering code may hold <code>Node*</code> across safepoints). <strong>(c)</strong> <code>Persistent&lt;Node&gt;</code> — a root by declaration; the collector never questions it, so the manager must eventually clear it or the object goes immortal, IE-style. <strong>(d)</strong> <code>WeakMember&lt;T&gt;</code> — an on-heap weak edge, cleared before the target is swept, so the cache entry cannot keep the target alive.</li>
+<li><strong>The console is the root.</strong> While DevTools is open, objects logged to the console are retained by the console itself — the "retainers" chain for those objects ends there. That is the proof: show QA the retainer pane naming the console, then repeat the soak with the console cleared and watch memory stay flat. The snapshot procedure itself also forces a GC and allocates, so absolute totals between runs are not comparable — only deltas.</li>
+<li><strong>The white child is swept although reachable</strong> — the black parent was already marked, the marker will not revisit it, and with the marking half of the barrier broken the store never forces the child to be marked. At sweep the child's slot is freed and later reused. The user sees a crash, not a leak: the classic <code>heap-use-after-free in blink::</code> signature. The snapshot shows nothing "missing" because the object was <em>never marked</em> — the snapshot shares the collector's broken liveness view. This is the exact failure the barrier exists to prevent, the same race module 01 ch15's V8 barrier kills on the JS heap and module 10 ch04's JIT-inserted barriers kill in the JVM.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 16 — Browser engine internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

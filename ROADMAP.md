@@ -4,8 +4,9 @@ One program: go to the root layer of every field of computer science, from first
 principles, and stay there until the field's insiders would nod. Modules are built in
 dependency order — each one is a root of the ones after it.
 
-**All twelve modules are now LIVE** — 82 chapters, ~266,000 words, per-chapter quizzes,
-labs, and twelve final exams.
+**All seventeen modules are now LIVE** — 107 chapters, ~375,000 words, per-chapter quizzes,
+labs, and seventeen final exams. The stack is complete from transistors to distributed
+systems.
 
 ## Status legend
 
@@ -113,6 +114,52 @@ anatomy of "CUDA out of memory" (the caching allocator, fragmentation), unified
 memory, Apple Silicon, and CXL — closing with the full register-to-RDMA tower table.
 **4 chapters + final exam.** Start [here](modules/12-gpu-memory/README.md).
 
+## Module 13 — networking internals · **LIVE**
+
+A packet is memory in motion: encoding and the Ethernet frame, the NIC's DMA
+ring (packets land in RAM before the CPU knows), sk_buff anatomy and conntrack,
+TCP as two buffer machines (windows, congestion control, bufferbloat), the
+userspace I/O ladder (epoll's ready list, io_uring's shared rings, zero-copy), and
+QUIC/RDMA as the network becoming memory. **5 chapters + final exam.** Start
+[here](modules/13-networking-internals/README.md).
+
+## Module 14 — file systems & storage · **LIVE**
+
+The disk is the heap that outlives the process: HDD geometry and the SSD's FTL (a
+garbage-collecting log-structured allocator in firmware), the VFS trio and the page
+cache (fsync decoded), ext4's journal as the WAL idea at disk scale, the copy-on-write
+lineage (Btrfs, ZFS, APFS), and the special file systems that ARE the OS (procfs,
+tmpfs, overlayfs) — ending with the fd-to-NAND path drawn end to end.
+**5 chapters + final exam.** Start [here](modules/14-filesystems-storage/README.md).
+
+## Module 15 — virtualization, containers & the cloud · **LIVE**
+
+A VM is a process that thinks it's a computer: Popek-Goldberg and VT-x, EPT and the
+second page table (with ballooning as a garbage collector for VMs and KSM's
+side-channel cost), virtio's rings and live migration's convergence arithmetic,
+containers as namespaced processes (cgroups, overlayfs, seccomp, escape economics),
+and the cloud as one computer (oversubscription arithmetic, Firecracker, the
+who-owns-the-bytes table). **5 chapters + final exam.** Start
+[here](modules/15-virtualization-cloud/README.md).
+
+## Module 16 — browser engine internals · **LIVE**
+
+The operating system that won: process-per-site and the broker sandbox, the DOM
+as a heap graph (Oilpan and the two-collector wrapper problem, the detached-node
+leak derived), the rendering pipeline as memory traffic (the 16.6 ms budget, layout
+thrashing), the page's memory (leak taxonomy, workers, WASM's guard pages), and the
+security boundary (SOP, site isolation, Spectre's browser chapter).
+**5 chapters + final exam.** Start [here](modules/16-browser-internals/README.md).
+
+## Module 17 — digital hardware: from transistors to silicon · **LIVE**
+
+The root under the root: CMOS and the power equation, flip-flops and the pipeline
+(hazards, forwarding, the Pentium 4 story), RTL as the other discipline (the FIFO
+ring in ~40 lines of Verilog), the cache born in RTL (the 6T cell, the direct-mapped
+cache, DRAM timing), and the economics that decide why your CPU looks the way it
+does (yield = e^(−D·A), chiplets, EUV). **5 chapters + final exam.** Start
+[here](modules/17-hardware-design/README.md).
+
 ---
 
 ## Build order reasoning
@@ -121,11 +168,18 @@ Memory first because: security bugs *are* memory bugs (02, 03); decompilation re
 stack frames and vtables (04); mobile OSes are memory-driven schedulers (05–07); COBOL is
 a memory model (08); distributed consistency is memory-model theory at scale (09);
 compilers *manufacture* memory models (10); databases are disk-scaled memory hierarchies
-(11); accelerators are a new hierarchy level (12). One root, twelve trees.
+(11); accelerators are a new hierarchy level (12). The second round went outward and
+downward: networking is buffers in motion (13); file systems are allocators that
+outlive the process (14); virtualization is the memory illusion sold as a product
+(15); the browser is the OS everyone actually runs (16); and hardware is the physics
+under every claim the program ever made (17). One root, seventeen trees.
 
 ## What could come after
 
-The program is extensible by design: each live module names its own frontiers
-(networking internals, file systems, virtualization, browser engines, hardware
-design). The method stays the same: first principles down, insider facts on the
-table, labs you can run, quizzes with teeth.
+The program is extensible by design; the named frontiers now: cryptography internals
+(the math, the timing side channels, the implementation bugs), programming language
+theory & type systems (why Rust's borrow checker is a theorem), embedded & firmware
+(the world of no MMU), formal verification (the machines that prove kernels), and ML
+systems/training infrastructure (the distributed memory machine at datacenter scale).
+The method stays the same: first principles down, insider facts on the table, labs you
+can run, quizzes with teeth.

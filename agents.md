@@ -81,3 +81,41 @@ same format.
   live across all 12 modules (33-page URL sweep, 0 failures; module 01's
   legacy URLs untouched). A `deploy.yml` Actions workflow is also committed
   as the optional modern path if Pages is ever switched to workflow builds.
+
+---
+
+## Session 003 — 2026-10-13 · the deepening round: modules 13-17, the stack completed
+
+- **Task:** the second expansion round: cover the roadmap's named frontiers —
+  networking internals, file systems, virtualization/containers/cloud, browser
+  engines, digital hardware — at the same first-principles, insider depth as
+  modules 01-12, with quizzes, labs, and final exams; extend the site to a
+  17-module program; push.
+- **Agents:** main orchestrator (Super Z / GLM) + 30 chapter/exam-writing
+  subagents in five waves + one retry. Main agent wrote the 5 module specs
+  (READMEs with per-chapter mandatory-content checklists — the subagent
+  contracts) and extended `tools/build_site.py` to a 17-module builder
+  (MODULES_META/ROADMAP_MODULES for m13-m17, program grid, facts, sitemap).
+- **Content:** 25 new chapters (5 per module: DMA rings/sk_buff/TCP buffers/
+  epoll-io_uring/QUIC-RDMA; storage hardware/VFS/page cache/ext4 journal/CoW
+  lineages/special filesystems; VT-x/EPT/virtio/containers/cloud-as-computer;
+  process model/Oilpan two-collector problem/render pipeline/page memory/
+  security boundary; transistors/pipelining/RTL/the cache in RTL/silicon
+  economics) + 5 final exams (12 questions each, worked answers). Total
+  program: 107 chapters, ~375,000 words, 84 chapter quizzes + 17 final
+  exams. Labs stay runnable: ethtool/ss/strace/unshare/systemd-run/
+  debugfs/fio/DevTools/iverilog-optional, with paper labs for yield and
+  BDP arithmetic.
+- **Site:** modules 13-17 render to m13/..m17/; 144 generated pages; program
+  grid + roadmap + sitemap extended (172 URLs). README/ROADMAP updated to
+  the 17-module program ledger with new word/chapter counts.
+- **QA:** corrected-regex structure check over all 30 new markdown files
+  (exact quiz counts: 8 per chapter, 12 per exam; matched details tags; zero
+  tabs); tag-balance + internal-link validation across all 144 pages —
+  0 issues.
+- **Subagent timeouts:** 4 of 30 hit the session deadline with reports lost
+  but files fully written on disk (13-01, 13-03, 15-04, 17-04) — verified by
+  structure grep + word count, the session-002 protocol: trust the artifact.
+  13-05 was retried successfully.
+- **Result:** pushed to `main`, 17 modules LIVE at
+  <https://srivtx.github.io/deep-roots/>.

@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Userspace I/O: read, epoll, io_uring — deep-roots</title>
+<meta name="description" content="Chapter 04 of module 13: Userspace I/O: read, epoll, io_uring">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Userspace I/O: read, epoll, io_uring — deep-roots">
+<meta property="og:description" content="Chapter 04 of module 13: Userspace I/O: read, epoll, io_uring">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Userspace I/O: read, epoll, io_uring — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of module 13: Userspace I/O: read, epoll, io_uring">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 13 &middot; buffers all the way down the wire</div>
+<h1 class="post-title">Userspace I/O: read, epoll, io_uring</h1>
+<div class="post-meta">chapter 04 &middot; ~19 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A blocking <code>read()</code> is two copies deep — the NIC DMAs the packet into a kernel <code>sk_buff</code>, the syscall copies the bytes into your buffer — and the wait is worse than the copies: one thread per connection, 8 MB of stack each. <code>select</code>/<code>poll</code> re-scan every descriptor every call (O(n), twice — your loop plus the kernel's); <code>epoll</code> inverts it: register once, a kernel callback links ready fds onto a ready list, and <code>epoll_wait</code> returns only those — O(1) to wait, O(ready) to report. <code>io_uring</code> finishes the arc: requests and completions become producer-consumer rings shared with the kernel, so submitting work is a memory write, not a syscall — chapter 01's DMA ring, one layer up. Zero-copy deletes the copies by passing page <em>references</em> instead of bytes.</blockquote>
+<h2 id="the-copy-ladder-what-a-blocking-read-really-moves">The copy ladder: what a blocking read() really moves</h2>
+<p>Chapter 02 ended with data in the right place: the socket's receive queue holds an <code>sk_buff</code>. <strong>What does it cost your process to get those bytes?</strong> The honest ladder for the echo round trip:</p>
+<pre><code class="language-text">        echo round trip: 4 copies, 2 syscalls
+        (every arrow that touches the CPU is a cost you pay)
+
+  wire --&gt; NIC ====DMA (1)====&gt; skb on socket rcv queue   [kernel memory]
+                                   |
+                        read()  -&gt; syscall #1
+                                   |
+                             CPU copy (2) -&gt; user buf    [your memory]
+                                   |
+                        write() -&gt; syscall #2
+                                   |
+                             CPU copy (3) -&gt; skb on snd queue
+                                   |
+                             ====DMA (4)====&gt; NIC --&gt; wire</code></pre>
+<p>One <code>read()</code> is <strong>1 syscall and 2 copies</strong> — the DMA that filled the kernel buffer, the CPU copy into yours (count the hidden kernel entries — the interrupt that deposited the data, the first-touch page fault — and each direction crosses twice). The round trip is what matters: <strong>4 copies, 2 syscalls per request</strong>, none negotiable while your buffer sits between two kernel buffers. The file variant of rung 1 is the page cache (module 07 ch05). A syscall costs ~100-500 ns on modern x86-64 — paid per operation, per connection, for zero bytes moved.</p>
+<p>The worse half is the <em>wait</em>. Blocking I/O means one thread per connection:</p>
+<pre><code class="language-c">/* block_echo.c — the pre-2002 shape: one thread per connection. */
+void *worker(void *arg) {
+    int c = (int)(intptr_t)arg;
+    char buf[4096];
+    for (;;) {
+        ssize_t r = read(c, buf, sizeof buf);  /* sleeps in the kernel until data lands */
+        if (r &lt;= 0) break;                     /* EOF or error: this thread exits */
+        if (write(c, buf, r) != r) break;      /* partial-write case elided: teaching stub */
+    }
+    close(c);
+    return 0;
+}
+/* main loop: accept() -&gt; pthread_create(worker) -&gt; pthread_detach(), forever */</code></pre>
+<p>Module 01 ch04's arithmetic returns: glibc/Linux default thread stack is 8 MB (<code>ulimit -s</code>). Ten thousand mostly-idle connections: <strong>10,000 threads, 80 GB of <em>virtual</em> address space</strong> — harmless on 64-bit (128 TB of VA), RSS only touched pages, a few KB per thread (~100-300 MB total). What kills first is the context-switch machine gun: ~1-2 µs direct per switch on a 2020s server, plus cache pollution that can dwarf it — every idle read sleeps, every arriving byte wakes. Two problems, then, and they are different: the <strong>copies</strong> (per byte) and the <strong>wait</strong> (per connection). Epoll fixes the wait and touches the copies not at all.</p>
+<h2 id="deleting-rungs-zero-copy-as-reference-passing">Deleting rungs: zero-copy as reference-passing</h2>
+<p>One rung exists only because of an API decision: your buffer. The page-cache page <em>is</em> the data; your buffer is a second copy that exists only because <code>read()</code>'s signature demands one. Zero-copy removes the rung by passing page <em>references</em>.</p>
+<p><strong><code>sendfile(out, in, off, count)</code></strong> (Linux 2.2, 1999) is provable from its signature alone — no user pointer anywhere:</p>
+<pre><code class="language-c">int out = accept(lfd, 0, 0);
+int in  = open("file.bin", O_RDONLY);
+for (;;) {
+    ssize_t n = sendfile(out, in, NULL, 1 &lt;&lt; 20);  /* 1 MB at a time, no user buffer at all */
+    if (n &lt;= 0) break;
+}</code></pre>
+<p>Fast path: the kernel attaches page-cache pages to the socket's send queue as skb fragments (chapter 02's scatter-gather machinery); the NIC DMAs straight out of page-cache pages. CPU copies: <strong>zero</strong> (disk still DMAs into the page cache once, if cold). Modern <code>sendfile</code> runs on the <strong><code>splice</code></strong> machinery (2.6.17, 2006): a Linux pipe is not a byte channel but an array of <code>pipe_buffer</code> structs — each a <code>{page, offset, len, ops}</code> reference to a refcounted page. <code>splice(in -&gt; pipe -&gt; out)</code> moves references; <code>tee()</code> duplicates them.</p>
+<p><strong><code>MSG_ZEROCOPY</code></strong> runs the trick the other way — the <em>user's</em> pages become the source:</p>
+<pre><code class="language-c">int one = 1;
+setsockopt(s, SOL_SOCKET, SO_ZEROCOPY, &amp;one, sizeof one);
+send(s, big, len, MSG_ZEROCOPY);   /* kernel pins big[]'s pages; NIC DMAs from user memory */
+recvmsg(s, &amp;msg, MSG_ERRQUEUE);    /* completion arrives later, on the ERROR queue */</code></pre>
+<p>The kernel pins your pages — chapter 01's ownership rule again: a buffer posted to the device belongs to the device until it comes back. Hence the completion notification is <em>mandatory</em>: <code>send()</code> returns before the hardware has read your bytes, and the buffer may not be reused until the error-queue notification clears the range. The crossover: pinning and tracking pages costs more than one CPU copy of a small buffer — kernel developers' 2017 measurements on 10 Gbps-class NICs put the break-even around <strong>10 KB per send</strong>. And on TCP a sharper rule follows from chapter 03: the send buffer is a <em>retransmission safety copy</em>, so your pinned pages are released not when the NIC finishes but when the data is <strong>ACKed</strong> — completions fire at ACK time, not DMA time. Quiz question 7 lives here.</p>
+<h2 id="from-scanning-to-callbacks-how-the-ready-list-is-built">From scanning to callbacks: how the ready list is built</h2>
+<p>Fixing the wait means one thread watching many connections. <code>select</code> (1983-era BSD) and <code>poll</code> share one design: <strong>re-ask the kernel about every fd, every call.</strong></p>
+<ul>
+<li><code>select</code>: the <code>fd_set</code> is a bitmap — 1,024 bits = 128 bytes in glibc (<code>FD_SETSIZE = 1024</code>) — copied in and written out per call; the kernel walks fds 0..nfds-1 checking readiness, then your loop walks them again with <code>FD_ISSET</code>: two O(n) scans per wakeup.</li>
+<li><code>poll</code>: an array of 8-byte <code>pollfd</code>s, no 1,024 cap — but still copied in and out and scanned kernel-side and user-side every call: at 10,000 connections, ~80 KB each way per wakeup, and last call's registration buys nothing — the kernel has no memory of what you asked before.</li>
+</ul>
+<p><code>epoll</code> (Linux 2.5.44, 2002; kqueue, FreeBSD 4.1, 2000, is the BSD cousin) makes one design change: <strong>split registration from waiting.</strong> <code>epoll_ctl(ADD)</code> registers an fd <em>once</em>, planting a callback; <code>epoll_wait</code> returns only descriptors that are actually ready. Derive the mechanism — the part worth drawing:</p>
+<pre><code class="language-text"> data lands on the wire
+   -&gt; NIC DMA + NAPI poll               [ch01]
+   -&gt; skb queued on the socket rcv queue [ch02]
+   -&gt; sk-&gt;sk_data_ready(sk) called      [sock_def_readable]
+   -&gt; wake_up() on sk-&gt;sk_wq            [the socket's own wait queue]
+        -&gt; ep_poll_callback(epi)        [epoll_ctl(ADD) installed this]
+             -&gt; epi spliced onto ep-&gt;rdllist    [O(1): list insertion]
+             -&gt; epoll_wait woken (it sleeps on ep-&gt;wq, not on any socket)
+ epoll_wait: copies at most `maxevents` ready entries to user space  [O(ready)]</code></pre>
+<p>No scan ever happens: the arriving packet <em>pushes</em> the fd onto the ready list. Wait O(1), report O(ready). The C10K problem (Dan Kegel, 1999) died here — nginx-era demonstrations run ~100,000 mostly-idle connections on one epoll loop, each costing an epitem and a wait-queue entry, not a thread, not a scan.</p>
+<p><strong>Level-triggered vs edge-triggered</strong> is the semantics of that list. LT (default) answers "is it ready <em>now</em>?" — a still-readable socket is re-reported on every <code>epoll_wait</code> until drained. Safe, but two traps: fully servicing one busy fd starves the rest (LT keeps re-reporting it), and every wakeup re-reports everything. ET answers "did it <em>transition</em>?" — reported <strong>once per event</strong> — and the contract that makes it correct:</p>
+<pre><code class="language-c">/* ET: the event means "data arrived", not "some data remains". Drain or lose. */
+for (;;) {
+    ssize_t r = read(fd, buf, sizeof buf);
+    if (r &lt; 0) { if (errno == EAGAIN) break; /* drained: done until the NEXT edge */ close(fd); break; }
+    if (r == 0) { close(fd); break; }        /* EOF */
+    handle(buf, r);
+}</code></pre>
+<p>Miss the drain-to-<code>EAGAIN</code> loop and leftover data sits unread forever — no new edge comes, because no new <em>arrival</em> came. A top-three epoll bug; nginx's pattern (ET + nonblocking + drain + move on) keeps one loop fair across 100k fds. <code>EPOLLONESHOT</code> extends it for threads: one event wakes exactly one worker, the fd silent until re-armed with <code>EPOLL_CTL_MOD</code>. <code>EPOLLEXCLUSIVE</code> (Linux 4.5+) stops the thundering herd when multiple epoll sets share one listen fd.</p>
+<p><strong>The accept side has queues of its own.</strong> A listening socket holds two: the SYN queue (half-open connections — SYN seen, ACK pending; bounded by <code>tcp_max_syn_backlog</code>, distro-tuned, typically 128-2,046) and the accept queue (completed handshakes waiting for <code>accept()</code>, bounded by <code>min(backlog, net.core.somaxconn)</code> — 128 before Linux 5.4, 4,096 since). When the accept queue fills, Linux <em>drops the final ACK</em> and retransmits the SYN-ACK: clients see slow connects, not errors — the silent production symptom. A SYN flood attacks the SYN queue; <strong>SYN cookies</strong> are the derived countermeasure — store no state at all. The SYN-ACK's ISN is a MAC over the 4-tuple plus a time counter, with the MSS folded in as an index into a small table (Linux's scheme; bit layout varies by kernel). The client's ACK returns <code>seq-1</code> = the cookie; recompute, verify, materialize the socket — no queue entry ever existed, so no flood fills one. The price: SYN-time options (window scaling, SACK) are not carried. Hence <code>tcp_syncookies = 1</code> (default): cookies only on overflow, never by choice.</p>
+<h2 id="io-uring-the-dma-ring-s-idea-applied-to-syscalls">io_uring: the DMA ring's idea, applied to syscalls</h2>
+<p>Even a perfect epoll loop pays one <code>epoll_wait</code> per wakeup plus <code>read</code>/<code>write</code> per event — each 100-500 ns of transition for zero bytes moved; at ~1M operations/second, a third of the budget. <code>io_uring</code> (Linux 5.1, 2019, Jens Axboe) removes the transitions by making the <em>queue itself</em> the interface — chapter 01's DMA ring, moved up a layer:</p>
+<pre><code class="language-text"> two rings, mmap'd by BOTH kernel and userspace
+ (io_uring_setup() returns an fd; the memory behind it is mapped twice)
+
+ SQ — submissions        user is PRODUCER, kernel is CONSUMER
+ +--------+--------+--------+--------+   the index ring holds u32s into
+ |idx 0   |idx 1   |idx 2   | ...    |   the SQE array (one per submission)
+ +--------+--------+--------+--------+
+  ^ head: kernel consumes    ^ tail: user appends
+     each SQE = 64 B:  opcode u8 | flags u8 | ioprio u16 | fd i32 |
+                      addr/off/len (union, u64 x2) | user_data u64 | ...
+
+ CQ — completions        kernel is PRODUCER, user is CONSUMER
+ +---------------------+---------------------+-----
+ | user_data (u64)     | res (s32) | flags   | ...   16 B per CQE
+ +---------------------+---------------------+-----
+  ^ head: user advances ("cqe_seen")   ^ tail: kernel writes results</code></pre>
+<p>Both sides see both rings, so head and tail are communicated by <em>writing memory</em>. Submitting a read: fill an SQE, bump the SQ tail — no syscall yet; one <code>io_uring_enter()</code> flushes a whole batch, and completions return as CQEs whose <code>res</code> is exactly what <code>read()</code> would have returned, tagged with your <code>user_data</code>. The CQ ring defaults to 2x the SQ size; on real overflow, completions spill to a kernel-side list (since Linux 5.5) — drain or lose them.</p>
+<p><strong>SQPOLL</strong> is the endgame: <code>IORING_SETUP_SQPOLL</code> starts a kernel thread that polls the SQ ring itself — submissions need no syscall, not even the batch flush. The lineage is now explicit: DMA descriptor ring with an MMIO doorbell (ch01) -&gt; virtio vring, the same ring between VM and host (module 15 ch03, queued) -&gt; io_uring's SQ/CQ between user and kernel, doorbell replaced by a polling kernel thread. Three instances of one idea: <em>shared-memory producer-consumer rings with the doorbell optimized away.</em> Two add-ons matter: <strong>registered buffers</strong> (<code>io_uring_register(IORING_REGISTER_BUFFERS)</code>) pin your buffers once, then <code>READ_FIXED</code>/<code>WRITE_FIXED</code> opcodes use them — MSG_ZEROCOPY's per-send pin paid once at setup. <strong>Linked SQEs</strong> (<code>IOSQE_IO_LINK</code>) chain operations — read linked to write fires the write the instant the read completes, no round trip through userspace. The honest liburing example (raw-syscall io_uring is ~150 lines of setup):</p>
+<pre><code class="language-c">/* iouring_read.c — one READ through the shared rings. liburing-dev required. */
+#include &lt;liburing.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;fcntl.h&gt;
+int main(void) {
+    struct io_uring ring;
+    io_uring_queue_init(16, &amp;ring, 0);          /* 16 SQEs; CQ defaults to 32 */
+
+    int fd = open("iouring_read.c", O_RDONLY);
+    char buf[4096] __attribute__((aligned(16)));
+
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&amp;ring);
+    io_uring_prep_read(sqe, fd, buf, sizeof buf, 0);  /* opcode, fd, addr, len -&gt; 64 B */
+    sqe-&gt;user_data = 42;
+
+    io_uring_submit(&amp;ring);                     /* ONE syscall, even for a full batch */
+
+    struct io_uring_cqe *cqe;
+    io_uring_wait_cqe(&amp;ring, &amp;cqe);             /* returns a pointer into the CQ ring */
+    printf("read %d bytes, user_data=%llu\n", cqe-&gt;res,
+           (unsigned long long)cqe-&gt;user_data); /* res == what read() would return */
+    io_uring_cqe_seen(&amp;ring, cqe);              /* advance CQ head: a memory write */
+    return 0;
+}</code></pre>
+<p><strong>Decode the "0 syscalls" claim.</strong> True in the steady state on the data path: submission is a memory write, completion consumption a memory read. What still costs: setup and registration; the SQPOLL thread burning one full core while it polls, and after <code>sq_thread_idle</code> ms of silence it sleeps — the next submission then needs <code>io_uring_enter(IORING_ENTER_SQ_WAKEUP)</code>, so sparse traffic plus SQPOLL is the worst of both worlds; waiting for CQEs is spinning or <code>IORING_ENTER_GETEVENTS</code>; some opcodes run on kernel <code>io-wq</code> workers; and completions still cost the kernel their interrupt/softirq work. io_uring removed the <em>transitions</em>, not the work.</p>
+<p><strong>The fan-fear.</strong> From 2019 to 2023 io_uring was syzbot's most productive syscall surface — a steady stream of use-after-free and refcount bugs, several used in the era's sandbox escapes. Google removed io_uring from Chrome and ChromeOS in early 2023; Android followed within the year; Docker's default seccomp allowlist omits the <code>io_uring_*</code> family, so containers deny it unless the profile is extended. Module 16 ch05 (queued) lands this as its browser-sandbox lesson: every fast path cut into the kernel is new attack surface.</p>
+<h2 id="leaving-the-kernel-behind-dpdk-af-xdp-and-the-decision-table">Leaving the kernel behind: DPDK, AF_XDP, and the decision table</h2>
+<p>If transitions are the tax, the last rung removes the collector: <strong>kernel bypass.</strong> DPDK puts a userspace poll-mode driver (PMD) in charge of the NIC, packet pools in hugepages (2 MB or 1 GB), and one pinned core spinning on each RX queue — no interrupts, no syscalls, no <code>sk_buff</code>, no page faults on the data path. Recall chapter 01's number: 14.88 Mpps at 10 Gbps with 64-byte frames; the kernel stack does ~1-2 Mpps per core, XDP ~5 Mpps (ch02), DPDK line rate. The bill: you have reimplemented a network stack (or adopted one — mTCP, F-Stack) with no conntrack, no qdisc, no debugging help — and the polling core is 100% CPU whether traffic flows or not: ch01's NAPI hybrid, deliberately undone. <strong>AF_XDP</strong> is the middle path: an XDP program in the driver (ch02) redirects frames into <strong>UMEM</strong> — memory registered once, shared kernel/user — through four rings (fill, completion, RX, TX; the ring idea again); the kernel keeps the control path, the data path is ring-to-ring — less raw throughput than DPDK, a fraction of the work.</p>
+<p>Every rung is now on the table — choose by load <em>shape</em>, not fashion (orders of magnitude, one core, 2020s hardware):</p>
+<div class="table-wrap"><table><thead><tr><th>Load shape</th><th>Rung that wins</th><th>Why</th></tr></thead><tbody><tr><td>under ~500 connections, simplicity first</td><td>blocking <code>read</code> + threads</td><td>copies identical; threads are cheap at this count</td></tr><tr><td>1k-100k mostly-idle connections</td><td>epoll (LT or ET)</td><td>wait is O(1), report O(ready); 1 syscall per batch</td></tr><tr><td>100k-1M connections</td><td>epoll + <code>SO_REUSEPORT</code>, one loop per core</td><td>shard accept and ready-list load across cores</td></tr><tr><td>small ops at 10^5-10^6+/s (storage, RPC, proxies)</td><td>io_uring + registered buffers (+ SQPOLL only when hot)</td><td>amortizes transitions to zero on the data path</td></tr><tr><td>line-rate packets, Mpps per box</td><td>DPDK / AF_XDP</td><td>kernel and <code>sk_buff</code> leave the path entirely</td></tr><tr><td>large sequential payloads, any conn count</td><td><code>sendfile</code> / <code>splice</code> / MSG_ZEROCOPY (&gt;10 KB)</td><td>deletes the CPU copies, orthogonal to conn count</td></tr></tbody></table></div>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><code>ss -lnt</code> on a listening socket: <strong>Recv-Q is the current accept-queue depth, Send-Q is the backlog you passed to <code>listen()</code></strong> (capped by <code>somaxconn</code>). One glance tells you a server that "mysteriously" stops accepting at load forgot to raise its backlog — and that nginx's famous default backlog of 511 fought <code>somaxconn</code> 128 for years before Linux 5.4.</li>
+<li><code>epoll_ctl(ADD)</code> on a <em>regular file</em> fails with <code>EPERM</code> — epoll only registers fds that can block; regular files are always ready. "Why can't I epoll my log file" is this, not a bug.</li>
+<li>epoll and zero-copy fix different axes: event loops fix the <em>wait</em>, <code>sendfile</code>/MSG_ZEROCOPY the <em>copies</em>. A proxy migrated to epoll that still does <code>read</code>+<code>write</code> still pays 4 copies per request — the gain came from thread removal alone.</li>
+<li>The MSG_ZEROCOPY completion is ACK-time on TCP, DMA-time on UDP — debugging a "send isn't done" stall on a zerocopy socket is a chapter 03 job (<code>ss -ti</code>, unacked bytes), not a chapter 04 one.</li>
+<li>io_uring's SQE is 64 B and CQE 16 B, fixed by the UAPI since 5.1. Ring sizing is arithmetic, not tuning: 256 SQEs = 16 KB of SQEs, 512 CQEs = 8 KB, plus the index rings — all mapped, all deliberately cache-line-sized.</li>
+<li><code>FD_SETSIZE</code> is a glibc compile-time constant; redefining it before <code>&lt;sys/select.h&gt;</code> really does grow your <code>fd_set</code>s — but <code>select</code> still copies the whole bitmap twice per call. The fix for the 1,024 wall is <code>poll</code>/<code>epoll</code>, not a bigger bitmap.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>One Linux box, no root. Verified on Linux 6.x; outputs trimmed.</p>
+<p><strong>1. The syscall tax, counted.</strong> The ~40-line epoll ET echo skeleton — compile, run, hit it with <code>nc localhost 5000</code>:</p>
+<pre><code class="language-c">/* epoll_echo.c — edge-triggered echo: one process, everything nonblocking.
+   build: gcc -O2 epoll_echo.c -o epoll_echo */
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;arpa/inet.h&gt;
+#include &lt;sys/epoll.h&gt;
+
+static void nb(int fd) { int f = fcntl(fd, F_GETFL, 0); fcntl(fd, F_SETFL, f | O_NONBLOCK); }
+
+int main(void) {
+    int lfd = socket(AF_INET, SOCK_STREAM, 0), one = 1;
+    setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &amp;one, sizeof one);
+    struct sockaddr_in a = {0};
+    a.sin_family = AF_INET; a.sin_port = htons(5000); a.sin_addr.s_addr = INADDR_ANY;
+    bind(lfd, (struct sockaddr *)&amp;a, sizeof a); listen(lfd, 512); nb(lfd);
+
+    int ep = epoll_create1(0);
+    struct epoll_event ev = { .events = EPOLLIN, .data.fd = lfd };
+    epoll_ctl(ep, EPOLL_CTL_ADD, lfd, &amp;ev);          /* listen fd: LT is fine */
+
+    for (;;) {
+        struct epoll_event out[64];
+        int n = epoll_wait(ep, out, 64, -1);         /* O(ready): returns only real events */
+        for (int i = 0; i &lt; n; i++) {
+            if (out[i].data.fd == lfd) {
+                for (;;) {                           /* drain accepts too */
+                    int c = accept4(lfd, 0, 0, SOCK_NONBLOCK);
+                    if (c &lt; 0) break;
+                    struct epoll_event ce = { .events = EPOLLIN | EPOLLET, .data.fd = c };
+                    epoll_ctl(ep, EPOLL_CTL_ADD, c, &amp;ce);
+                }
+            } else {
+                for (;;) {                           /* ET: MUST drain to EAGAIN */
+                    char buf[4096];
+                    ssize_t r = read(out[i].data.fd, buf, sizeof buf);
+                    if (r &gt; 0) { if (write(out[i].data.fd, buf, r) &lt; r) {} } /* stub: see note */
+                    else break;                      /* EAGAIN (drained), EOF, or error */
+                }
+            }
+        }
+    }
+}
+/* note: production must loop write() to EAGAIN and buffer partial writes —
+   this stub is for syscall-counting only. */</code></pre>
+<p>Under load (<code>yes hello | nc localhost 5000</code> in a loop), measure:</p>
+<pre><code class="language-console">$ strace -c -p $(pidof epoll_echo)
+% time     seconds  usecs/call     calls    errors syscall
+------     ----------- ---------- --------- --------- ----------------
+ 62.00      0.091947           2     45087           epoll_wait
+ 23.31      0.034511           1     40201           read
+ 14.69      0.021772           1     39855           write</code></pre>
+<p>The shape is the finding: <code>epoll_wait</code> once per batch, then raw <code>read</code>/<code>write</code> per event — the ET drain loop means no syscall per "is there more?" probe. A select-based server shows the same three names with near-identical counts — and per-call times that grow linearly with fd count, because a full <code>strace</code> (not <code>-c</code>) prints the entire fd list that <code>select</code> copied and scanned on every line. The count column ties; the time column does not.</p>
+<p><strong>2. Zero-copy, visible in the signature.</strong> <code>strace</code> a <code>read</code>+<code>write</code> copier and a <code>sendfile</code> copier of the same file over the same socket:</p>
+<pre><code class="language-console">$ strace -o /tmp/a.txt ./copy_rw   # read(3, "..."..., 131072) = 131072   &lt;- names a user buffer
+                                     # write(4, "..."..., 131072) = 131072
+$ strace -o /tmp/b.txt ./copy_sf   # sendfile(4, 3, [0], 2147483647) = 131072  &lt;- no buffer anywhere</code></pre>
+<p>The copier's read/write arguments <em>name a user pointer</em> — that pointer is the copy; <code>sendfile</code>'s argument list has nowhere for one to be, and under <code>strace -c</code> it halves the syscall count per 128 KB chunk.</p>
+<p><strong>3. The accept queue, live.</strong></p>
+<pre><code class="language-console">$ ss -lnt | rg 5000
+LISTEN 0  512  0.0.0.0:5000 0.0.0.0:*    # Recv-Q=0 (queue empty), Send-Q=512 (backlog)
+$ sysctl net.core.somaxconn net.ipv4.tcp_syncookies net.ipv4.tcp_max_syn_backlog
+net.core.somaxconn = 4096                 # since Linux 5.4; was 128
+net.ipv4.tcp_syncookies = 1               # 1 = cookies only when the SYN queue overflows
+net.ipv4.tcp_max_syn_backlog = 2048       # distro-tuned; stock kernels sit lower</code></pre>
+<p>Burst connections faster than the server accepts (<code>seq 2000 | xargs -P 200 -I{} nc -z localhost 5000 &amp;</code>) and Recv-Q climbs toward Send-Q — the number clients pay for as silent connect latency.</p>
+<p><strong>4. io_uring, honestly.</strong> CPython has no stdlib io_uring binding (as of 3.12), so the lab is the liburing program from section 4. Check <code>ls /usr/include/liburing.h</code> — absent on minimal boxes: <code>apt-get install liburing-dev</code>, compile with <code>gcc iouring_read.c -luring -o iouring_read</code>. Installing nothing, <code>grep io_uring /proc/kallsyms | head -3</code> at least confirms the kernel carries the machinery.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>The crash at 1,025 clients.</strong> A legacy daemon corrupts state exactly when fd numbers cross 1,024, no error from <code>select</code> — it is <code>FD_SET</code> writing past the 128-byte bitmap in <em>userspace</em>, silently; the fix is <code>poll</code>/<code>epoll</code>, not a bigger array.</li>
+<li><strong>The 100% core that isn't a bug.</strong> One pegged core, <code>ps</code> showing a kernel thread (<code>iou-sqp-*</code>, name varies) or a DPDK poll thread — by design: a polling core trading CPU for latency. Budget it, pin it, or drop SQPOLL/PMD for sparse traffic.</li>
+<li><strong>Picking an event model with the decision table.</strong> Connections, operations/second, payload size — three axes, and only the third is fixed by zero-copy. Most "we need io_uring" proposals are 500-connection services that need none of this.</li>
+<li><strong>Reading a zerocopy stall.</strong> A TCP MSG_ZEROCOPY sender wedged waiting for completions is almost always unACKed data (chapter 03's retransmission machine): <code>ss -ti</code> shows the unacked bytes; completions arrive when the ACKs do.</li>
+<li><strong>The interview derivation.</strong> "Why is epoll O(1)?" — draw the wait-queue callback splicing an epitem onto the ready list when <code>sk_data_ready</code> fires; it separates reciting from knowing.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Chapter 01</strong> built the DMA descriptor ring — producer, consumer, doorbell. io_uring's SQ/CQ is that ring one abstraction up, SQPOLL replacing the MMIO doorbell; NAPI's interrupt-vs-poll trade reappears as <code>sq_thread_idle</code>.</li>
+<li><strong>Chapter 02</strong> ended the receive path at the socket's skb queue — rung 1 of this ladder; XDP/AF_XDP's rings point the same idea at packets, and skb frags are what sendfile's page references attach to.</li>
+<li><strong>Chapter 03</strong> derived the send buffer as a retransmission safety copy — that is <em>why</em> <code>write()</code> blocks on a full snd queue and why TCP MSG_ZEROCOPY completions wait for ACKs; your drain-to-EAGAIN rate is the receiver's rwnd drain rate in disguise.</li>
+<li><strong>Chapter 05</strong> takes the bypass logic to its ends: QUIC rebuilds TCP in userspace (every syscall this chapter eliminated becomes the app's own), and RDMA's registered memory is registered buffers taken to hardware.</li>
+<li><strong>Module 01 ch02</strong> (the latency tower) gains its syscall row; <strong>module 01 ch04</strong> supplied the 8 MB stack arithmetic; <strong>module 07 ch05</strong> owns the page cache and the page-pinning machinery zero-copy leans on.</li>
+<li><strong>Module 15 ch03</strong> (queued) is virtio's vring — the ring idea in virtualization; <strong>module 16 ch05</strong> (queued) is the browser-sandbox chapter where the io_uring removal lands as a case study.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Your coworker proposes switching the event loop from level-triggered to edge-triggered epoll "for efficiency." State what question each mode answers about a descriptor, why the ET drain-to-<code>EAGAIN</code> rule exists, and the characteristic failure of each mode under a careless handler.</li>
+</ol>
+<ol>
+<li><strong>Predict the number.</strong> An echo server (blocking <code>read</code> + <code>write</code>, one thread) serves 50,000 pipelined 100-byte requests on one already-open connection. Count the syscalls and data-path copies the kernel performs (ignore <code>accept</code>). Then say which numbers <code>sendfile</code> would change if the payload came from a file instead of the peer — and which it would not.</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A 15-year-old daemon runs <code>select()</code> with <code>FD_SET</code>/<code>FD_ISSET</code>. After years of flawless operation it starts crashing — or reporting garbage on unrelated fds — precisely when the process holds around 1,025 client connections. No syscall returns an error. What is the bug, in whose memory does the corruption land, and why is there no error message?</li>
+</ol>
+<ol>
+<li><strong>Concept.</strong> Walk the exact path from "a packet arrives on the wire" to "<code>epoll_wait</code> returns this fd": name the four kernel steps, say where the O(n) scan <em>would</em> have been in <code>select</code>, and give the work <code>epoll_wait</code> does per ready fd and per call.</li>
+</ol>
+<ol>
+<li><strong>Predict the number.</strong> A thread-per-connection server holds 10,000 idle connections, glibc default stacks, Linux. How much virtual address space do the stacks claim, roughly how much RSS, and what resource actually runs out first? Justify the last part.</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> An ET epoll server handles each event with a single <code>read(fd, buf, 8192)</code> — no loop. Small-request clients work perfectly; clients that send 20 KB in a burst hang after the first response, and a packet capture shows their data sitting in the server's kernel receive queue, unread, forever. Explain the mechanism, and why the same handler with <code>EPOLLET</code> removed would have worked.</li>
+</ol>
+<ol>
+<li><strong>Cross-chapter.</strong> The same <code>send(s, buf, 64*1024, MSG_ZEROCOPY)</code> on a UDP socket reports completion ~5 µs after the NIC's DMA finishes, but on TCP the completion can arrive tens of milliseconds later with the DMA long done. Derive the difference from chapter 03's reason the TCP send buffer exists and chapter 01's rule about who owns a buffer posted to hardware.</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A service using <code>io_uring</code> with <code>IORING_SETUP_SQPOLL</code> does about 50 operations per second. Ops sees one CPU core pinned at 100%, eaten by a kernel thread (<code>iou-sqp-...</code>, name varies). What is burning the core, why is that unavoidable while the thread is hot, and what is the correct fix given the 50 ops/s rate?</li>
+</ol>
+<details><summary>Answers</summary>
+<ol>
+<li><strong>LT asks "is it ready <em>now?</em>"; ET asks "did it <em>transition</em> since the last report?"</strong> LT re-reports a still-readable fd on every <code>epoll_wait</code> until drained; ET reports once per arrival. The drain rule exists because ET fires on the <em>edge</em>: if the handler reads only part of the data, the remainder generates no new edge — nothing new arrived — so reading until <code>EAGAIN</code> is the only way to know you are done. LT's careless-handler failure: fully servicing one busy fd starves the rest, because LT keeps re-reporting it. ET's: forgetting the drain loses the tail <em>permanently</em> (question 6's stall).</li>
+</ol>
+<ol>
+<li><strong>100,000 syscalls and 200,000 copies.</strong> Per request: <code>read</code> = 1 syscall, 2 copies (NIC DMA into the skb, CPU copy skb-&gt;user); <code>write</code> = 1 syscall, 2 copies (CPU copy user-&gt;skb, DMA skb-&gt;NIC). From a file via <code>sendfile</code>, the CPU copies drop to <strong>zero</strong> on the fast path (page-cache pages attach to the socket as skb frags) and the syscall count falls to one per chunk. Unchanged: the two DMAs per round trip — the wire must still be fed — and the per-packet skb work. Zero-copy deletes CPU copies, never the DMAs.</li>
+</ol>
+<ol>
+<li><strong><code>FD_SET</code> is an unguarded bitmask write past the end of the <code>fd_set</code> — in the program's own userspace memory.</strong> glibc's <code>FD_SET(c, &amp;set)</code> does <code>fds_bits[c/64] |= 1 &lt;&lt; (c%64)</code> with no bounds check, and the set is 128 bytes (1,024 bits), so fd 1,025 writes into adjacent stack or struct memory. The kernel never objects — <code>select</code> trusts your <code>nfds</code>, and the corruption happened in glibc <em>before</em> the syscall; hence no error message. A userspace buffer overrun wearing a syscall costume; fix with <code>poll</code> or <code>epoll</code>.</li>
+</ol>
+<ol>
+<li><strong>DMA ring post -&gt; NAPI poll -&gt; skb queued on the socket's rcv queue -&gt; <code>sk_data_ready</code> -&gt; <code>wake_up</code> on the socket's wait queue -&gt; the <code>ep_poll_callback</code> planted by <code>epoll_ctl(ADD)</code> splices the epitem onto the ready list (O(1)) -&gt; the sleeping <code>epoll_wait</code> wakes and copies out at most <code>maxevents</code> entries.</strong> In <code>select</code>, those last steps are instead a kernel walk over every fd from 0 to nfds-1 — the O(n) that vanished. Per ready fd: one O(1) splice plus one 12-byte <code>epoll_event</code> copied out; per call: O(ready) copy-out — O(1) when idle, because the sleep is on the epoll's own wait queue.</li>
+</ol>
+<ol>
+<li><strong>80 GB virtual, ~40-160 MB RSS, and the scheduler/context-switch budget goes first.</strong> 10,000 x 8 MB = 80 GB of <em>virtual</em> address space — harmless on 64-bit Linux (128 TB per process). RSS is only touched pages, a few KB per idle thread. What breaks first is CPU scheduling: every idle thread wakes and sleeps on blocking reads, and at ~1-2 µs per switch (plus cache pollution that often dominates), the CPU spends its budget switching rather than working. The 80 GB figure is the trap answer.</li>
+</ol>
+<ol>
+<li><strong>The leftover 12,288 bytes generate no new edge, so ET never re-reports them.</strong> The 20 KB burst was one arrival — one edge, one wakeup. The handler read 8,192 bytes and returned; the rest sits in the kernel receive queue, and because no <em>new</em> data arrives, no transition ever fires and the fd never returns to the ready list — exactly what the capture shows. With <code>EPOLLET</code> removed, LT re-evaluates "is it ready <em>now</em>?" every <code>epoll_wait</code>: the still-readable socket is re-reported, and even the single-read handler drains eventually. The ET fix is the drain loop to <code>EAGAIN</code>.</li>
+</ol>
+<ol>
+<li><strong>The TCP send buffer is a retransmission safety copy, so the pinned pages are not released at DMA time.</strong> Chapter 03: bytes cannot leave the send buffer until ACKed, because loss is normal and the sender must be able to retransmit. With MSG_ZEROCOPY the pinned user pages <em>are</em> that safety copy, so the kernel holds them — and you must not reuse them — until the ACK covers the last byte; hence completion at ACK time. UDP has no retransmission obligation, so chapter 01's rule applies in its plain form: the buffer belongs to the device until the DMA returns it, and completion fires right after.</li>
+</ol>
+<ol>
+<li><strong>The SQPOLL kernel thread, by design.</strong> <code>IORING_SETUP_SQPOLL</code> starts a kernel thread that busy-polls the submission ring so submissions need no doorbell syscall — the trade is a whole core for zero-syscall submission, and while the thread spins it sits at 100% CPU regardless of how little work exists (it sleeps only after <code>sq_thread_idle</code> ms with no submissions). At 50 ops/s the service pays a core to save microseconds per second. Fix: drop SQPOLL and use plain <code>io_uring_enter</code> per batch, or set a small <code>sq_thread_idle</code> and accept the wake cost (<code>IORING_ENTER_SQ_WAKEUP</code>). Polling designs pay in CPU what they save in latency, breaking even only at high op rates — DPDK's core, one layer down.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 13 — Networking internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VFS: files, inodes, and the page cache — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 14: VFS: files, inodes, and the page cache">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="VFS: files, inodes, and the page cache — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 14: VFS: files, inodes, and the page cache">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="VFS: files, inodes, and the page cache — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 14: VFS: files, inodes, and the page cache">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 14 &middot; the heap that outlives the process</div>
+<h1 class="post-title">VFS: files, inodes, and the page cache</h1>
+<div class="post-meta">chapter 02 &middot; ~18 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> When your program calls <code>write(fd, buf, n)</code>, "the file" is four kernel objects: the fd is an index into a per-process table, pointing at a <code>struct file</code> (which owns the offset and flags), which hangs off a dentry (a cached <em>name</em>), which points at the inode (the <em>identity</em>: number, size, block map). The VFS is the dispatch layer — each inode carries its own function-pointer tables — fronting ext4, tmpfs, and NFS with the same five syscalls. Between your process and the disk sits the page cache, a per-inode XArray of 4 KB pages keyed by offset, so a <code>read()</code> is usually a memory copy and a <code>write()</code> is a copy plus a dirty bit — the real I/O happens later, in the background, unless you demand it with <code>fsync</code>. Every surprising file behavior — interleaved reads after <code>fork</code>, "free memory is 0," writes that stall seconds later, zero-length files after a crash — is one of those objects, or that cache, behaving exactly as designed.</blockquote>
+<h2 id="one-file-four-objects">One file, four objects</h2>
+<p>Derive the objects from the problem: one file, many processes at once, independent positions, no per-syscall path re-resolution, and a dozen file systems behind one API. That decomposes into: <em>a per-process handle</em> (the fd), <em>a shared open-instance</em> (<code>struct file</code>), <em>a cached name</em> (the dentry), and <em>the thing itself</em> (the inode).</p>
+<pre><code>  process A                       process B (forked child of A)
++------------------+             +------------------+
+| fd table         |             | fd table         |
+| [0] [1] [2] [3]..|             | [0] [1] [2] [3]..|
++------|-----------+             +------|-----------+
+       | fd 3                            | fd 3
+       └────────────┐          ┌─────────┘
+                    ▼          ▼
+          +----------------------------------+  f_count = 2
+          | struct file                      |  ONE shared offset
+          |   f_pos     = 5,242,880          |  (fork/dup share THIS)
+          |   f_flags   = O_WRONLY|O_APPEND  |
+          |   f_count   = 2                  |  (each open() makes a NEW one)
+          |   f_op  ──► ext4 file_operations |  dispatch table
+          +--------------|-------------------+
+                         │ f_path
+                         ▼
+          +---------------------------+
+          | dentry  "app.log"         | the NAME (cached)
+          |   d_parent ──► "log"      |
+          |             ──► "var"     |
+          +------------|-------------+
+                       │ d_inode
+                       ▼
+          +------------------------------+
+          | inode 131074                 | the IDENTITY
+          |   i_mode   = 0100644         |
+          |   i_size   = 10,485,760      |
+          |   i_nlink  = 1               |
+          |   i_mapping ──► page cache   | the DATA cache
+          |   i_op / i_fop: method ptrs  | per-filesystem dispatch
+          +------------------------------+</code></pre>
+<p><strong>The fd</strong> is the smallest free index into the per-process fd table (POSIX: <code>open</code> returns the lowest unused one — why redirection tricks like <code>2&gt;&amp;1</code> work). The table is born with 64 entries on 64-bit Linux 6.x and grows on demand, capped by <code>RLIMIT_NOFILE</code> (soft 1024 on most distributions). fds 0, 1, 2 are only convention — the shell wires them before <code>exec</code>.</p>
+<p><strong>The <code>struct file</code></strong> is the open <em>instance</em>: offset (<code>f_pos</code>, a signed 64-bit <code>loff_t</code>), flags, mode, and a refcount. Module 01 chapter 04 met its fork semantics already: <code>fork()</code> copies the child's fd <em>table entries</em> and bumps <code>f_count</code> — both processes share one <code>struct file</code>, therefore <strong>one offset</strong>. Two processes reading one inherited fd interleave, each consuming what the other fetched. Two processes that each called <code>open()</code> have two <code>struct file</code>s with independent offsets, so each reads the whole file; <code>dup</code>/<code>dup2</code> reproduce the shared case inside one process. <code>O_APPEND</code> overrides the offset rule: each write ignores <code>f_pos</code> and lands atomically at <code>i_size</code>, under the inode lock — the property that makes multi-writer log appends sane.</p>
+<p><strong>The dentry</strong> is the name cache: one object per path component ("/var/log/app.log" = 4 linked dentries). Resolution is a directory lookup per component — real I/O on a cold cache; dentries cache the result so the second <code>open</code> skips it. Chapter 05's lab shows their true memory price in <code>/proc/slabinfo</code>.</p>
+<p><strong>The inode</strong> is the identity — the thing with a number, mode, size, link count, and a pointer into its file system's block layout. Inode numbers are unique only <em>within</em> one file system, which is why hard links cannot cross a mount point (<code>link(2)</code> returns <code>EXDEV</code>). The VFS's whole trick lives here: <code>i_op</code>/<code>i_fop</code> are per-inode function-pointer tables, so <code>read()</code> on an ext4 inode calls ext4's code and on a tmpfs inode calls tmpfs's — the C-vtable idea of module 01, and how one syscall API fronts N file systems.</p>
+<h2 id="the-inode-is-an-object-header-names-are-pointers">The inode is an object header; names are pointers</h2>
+<p>Treat the disk as a persistent heap: the data blocks are the payload, and the inode is the metadata header in front of it — module 01 chapter 05's allocator headers, but for a heap that survives processes. ext4 gives each inode 256 bytes by default: mode, size, 4 timestamps, link count, and the block map — in ext4 a list of <em>extents</em>, <code>(start_block, length)</code> pairs, not the old indirect pointer tree (chapter 03 derives why).</p>
+<p>From that framing, the two "name" behaviors fall out:</p>
+<p><strong>Hard links are two pointers, one object.</strong> <code>ln a b</code> creates a second dentry aimed at the same inode and increments <code>i_nlink</code> — <code>stat -c '%h'</code> shows 2. There is no "original": mode, size, and contents live in the inode, so both names share them equally. <code>rm</code> is really <code>unlink()</code>: it decrements <code>i_nlink</code> and removes one dentry. The object is freed — blocks returned — only when <code>i_nlink</code> hits 0 <em>and</em> the last open fd closes (<code>i_count</code>). That conjunction is the "I deleted the 20 GB log but <code>df</code> didn't drop" incident: the daemon's fd keeps the inode — and its blocks — alive. <code>lsof +L1</code> finds exactly these.</p>
+<p><strong>A symlink is a file whose payload is a path string.</strong> On ext4, a target ≤ 60 bytes is stored <em>inline in the inode</em> — the fast symlink; longer targets spill to a 4 KB block. <code>open()</code> traverses them automatically: resolving <code>/a/b</code> where <code>b</code> is a symlink restarts resolution at the target, nested traversal capped at 40 links before <code>ELOOP</code> (Linux 6.x). A dangling symlink still <code>lstat</code>s fine, but <code>open</code> fails with <code>ENOENT</code> — the name exists, the target doesn't. <code>readlink -f</code> resolves every component to a canonical real path.</p>
+<p><strong>Directories are files whose payload is (name → inode) records.</strong> Nothing is special at the disk level: <code>ls /var</code> is a <code>read()</code> of /var's data blocks. An ext4 record is an 8-byte header — 4-byte inode number, 2-byte record length, 1-byte name length, 1-byte file type — plus the name padded to a 4-byte boundary. <code>.</code> and <code>..</code> are <em>real records</em> pointing at the directory itself and its parent — that is why <code>ls -la</code> shows them. The namespace tree is data stored inside inodes, a graph in the heap's payload walked by a resolver. Two rules protect that walk: hard links to directories are forbidden (<code>EPERM</code>), because a cycle would loop path resolution and <code>fsck</code> forever; and the directory's <code>i_nlink</code> encodes the tree — a fresh directory has nlink 2 (its name in the parent plus its own <code>.</code>), each immediate subdirectory's <code>..</code> adds 1, so <code>stat -c '%h' /d</code> = 2 + subdirectory count on ext4-style file systems. (btrfs reports 1 for every directory regardless — a monitoring trap, not a bug.)</p>
+<h2 id="the-page-cache-a-heap-in-front-of-the-disk">The page cache: a heap in front of the disk</h2>
+<p>Derive it from chapter 01's latency ladder: RAM answers in ~100 ns, NVMe in ~20-100 µs, HDD in ~10 ms — any byte read twice justifies a cache. Linux's answer is the page cache: per inode, an <code>address_space</code> holding 4 KB pages keyed by file offset (page index = offset / 4096), stored in an XArray — the structure that replaced the radix tree in kernel 4.20.</p>
+<p>The paths through it:</p>
+<ul>
+<li><strong>read</strong> = find page (inode, offset). Hit: copy to the user buffer, no I/O, done in microseconds. Miss: allocate the page, submit a 4 KB read (or a readahead window), sleep on the page lock until I/O completes, then copy.</li>
+<li><strong>write</strong> = find-or-allocate the page, <code>copy_from_user</code> into it, set <code>PG_dirty</code>, return. That's all. On ext4 the blocks are not even chosen yet — delayed allocation defers that to writeback time (chapter 03).</li>
+</ul>
+<p>So the moment <code>write()</code> returns, nothing has touched the disk. The dirty page's full lifecycle:</p>
+<pre><code> write(fd, buf, 4096) at offset 4,096,000
+   │  copy_from_user into cache page index 1000
+   ▼
+ page marked PG_dirty  ──► write() RETURNS here (~µs)
+   │
+   │   ...later: writeback cadence is 5 s (vm.dirty_writeback_centisecs=500),
+   │   a page may sit dirty up to 30 s (vm.dirty_expire_centisecs=3000)
+   ▼
+ flusher thread wakes when dirty exceeds 10% of RAM
+   (vm.dirty_background_ratio=10)          [background threshold]
+   │   ext4 now resolves delayed allocation -&gt; real block numbers
+   ▼
+ PG_dirty ──► PG_writeback  (in flight; /proc/meminfo: Writeback)
+   │
+   ▼ device acknowledges
+ page is clean but STAYS CACHED (a future read is a hit)
+   │
+   ▼ under memory pressure: clean page dropped, no I/O (re-read if touched again);
+     dirty page CANNOT be dropped - it must be written back first
+ ─────────────────────────────────────────────────────────────
+ fsync(fd) = force this entire ladder NOW, for this inode,
+             then FLUSH the device's own write cache</code></pre>
+<p>Three consequences:</p>
+<p><strong>1. "Free memory is wasted memory."</strong> The kernel fills RAM with cached pages and returns them only under pressure, so <code>free -h</code> shows buff/cache eating everything and "free" near 0 forever — not a leak, the design. Read the "available" column: what reclaim can actually yield.</p>
+<p><strong>2. Write latency is a lie.</strong> A 1 GB sequence of <code>write()</code> calls completes at memcpy speed — well under a second — while the flush happens up to 30 s later. The throttle is <code>vm.dirty_ratio</code> (default 20% of RAM; <code>vm.dirty_bytes</code> overrides absolutely, default 0): crossing it drafts the <em>writing process itself</em> into writeback, blocking inside <code>balance_dirty_pages()</code> until the level falls. On a 64 GB box that is 12.8 GB of rope — the "my bulk writer randomly stalls in D state" incident.</p>
+<p><strong>3. Reclaim turns into I/O the system never asked for.</strong> Under memory pressure, clean cache pages drop free (cost: a later re-read); dirty pages must be written back before they can drop. A merely-memory-hungry box starts emitting disk writes no process issued, and in the worst case the OOM killer fires while kswapd still grinds through gigabytes of stale dirt. "The disk is slow" is often a memory problem wearing a disk costume.</p>
+<h2 id="fsync-decoded-what-the-write-succeeded-has-to-mean">fsync decoded: what "the write succeeded" has to mean</h2>
+<p>The ladder of durability: <code>write()</code> = "in RAM." Writeback = "left RAM." Neither survives power loss. <code>fsync(fd)</code> is the contract that the bytes are on the medium, and it does four jobs: (1) write out every dirty page of that inode; (2) write the metadata needed to <em>find</em> the data — size and extent updates, which on ext4 also forces delayed allocation to resolve right now; (3) push the metadata through the journal (chapter 03); (4) issue a cache-flush command to the device — NVMe <code>FLUSH</code>, SATA <code>FLUSH CACHE</code> (or the FUA bit per write) — so the drive's volatile DRAM buffer actually drains to the media. <code>fsync</code> returning 0 means the device acknowledged it.</p>
+<p>The family: <strong>fdatasync</strong> skips metadata not needed for retrieval (mtime and friends) — 2-5× cheaper on some file systems, though on ext4's default ordered mode the journal commit dominates. <strong>sync(2)</strong> flushes the whole system and, per its Linux man page, may return before all data is out; <strong>syncfs(2)</strong> is the per-filesystem variant that waits.</p>
+<p><strong>The rung everyone forgets is rung (4), and drives have lied about it.</strong> In the 2000s, consumer drives shipped volatile write caches and some silently ignored <code>FLUSH CACHE</code> — the firmware scandals that ate file-system journals. Today the honest version of the same physics: an SSD's DRAM write cache is volatile unless the drive carries power-loss protection (supercapacitors). A PLP drive reports its cache as non-volatile, so <code>FLUSH</code> is nearly a no-op — fsync costs tens of microseconds; a consumer drive must actually push DRAM to NAND, costing milliseconds. That is the insider reason fio-measured fsync latency varies by 10-100× across drives all labeled "enterprise": some have the capacitors, some don't. Check the volatile-write-cache bit (<code>nvme id-ctrl</code>, VWC), not the label.</p>
+<p><strong>The ext4 data-loss story (the 2006-2009 bug class, peaking 2008-2009).</strong> An application saves its config: writes the new file, closes it — no fsync — then renames it over the old one. With delayed allocation the data sat only in the page cache with <em>no blocks assigned</em>; the rename is pure metadata, journaled, committed within ext4's 5 s journal interval. Power fails after the rename commits but before writeback: the rename landed, the old content is gone, the new content never reached the disk — the file comes back zero-length. KDE session files were the famous casualty. The kernel fix was <code>auto_da_alloc</code> (default since 2.6.30): ext4 recognizes the rename-over pattern and forces allocation/writeback before the rename commits. The portable lesson: when the <em>ordering</em> of two updates matters — new content, then the name that points at it — the code must be <code>write temp → fsync(temp fd) → rename → fsync(directory fd)</code>. The last fsync, on a directory fd, makes the rename itself durable, and it is the step most production code omits. And note: close() is not in the recipe — close flushes nothing, by POSIX design.</p>
+<h2 id="three-ways-around-the-cache-o-direct-readahead-mmap">Three ways around the cache: O_DIRECT, readahead, mmap</h2>
+<p><strong>O_DIRECT</strong> routes the I/O around the page cache: the device DMAs (nearly) directly into the user buffer. The price is alignment — file offset, transfer length, and buffer address must all be multiples of the logical block size, 512 at minimum and 4,096 to be safe; violations return <code>EINVAL</code> (use <code>posix_memalign</code>). Why databases want it: module 11 chapter 02's buffer pool <em>is</em> a page-cache replacement — the kernel cache would hold the same pages twice (a RAM tax) and add writeback-stall latency the DB cannot control. The trap: <strong>do not mix O_DIRECT and buffered I/O on the same file</strong>. An O_DIRECT write does not portably update or invalidate the cached pages, so a buffered reader can serve stale bytes. If you must mix, <code>posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED)</code> to evict first.</p>
+<p><strong>Readahead</strong> is the cache betting on the future: the kernel's on-demand heuristic detects 3-4 sequential hits and doubles the prefetch window, up to <code>read_ahead_kb</code> (default 128 KB per backing device, Linux 6.x). It only fires <em>forward</em> — a backwards read gets zero readahead, every 4 KB a cold fault: the mechanism behind the folklore that scrubbing a video in reverse is slow. <code>posix_fadvise</code> steers it: <code>POSIX_FADV_SEQUENTIAL</code> (read aggressively), <code>POSIX_FADV_WILLNEED</code> (prefetch now), <code>POSIX_FADV_RANDOM</code> (stop the doubling; random misses would thrash the window).</p>
+<p><strong>mmap</strong> is module 01 chapter 03's demand paging, pointed at a file: the first touch of a cold page is a major fault that reads the 4 KB from disk and installs the mapping. <code>MAP_PRIVATE</code>: a write triggers copy-on-write into an anonymous page — the file is never modified. <code>MAP_SHARED</code>: a write dirties the page-cache page itself, flowing through the same writeback ladder as any <code>write()</code> — and the mapped page <em>is</em> the page-cache page, so <code>read()</code>, <code>write()</code>, and <code>mmap</code> on one file share one physical copy in RAM. The cost is a fault per 4 KB, ~1-2 µs each: touching 1 GB cold = 262,144 faults ≈ 0.25-0.5 s of pure fault overhead, while a sequential <code>read()</code> loop with a 1 MB buffer spends 1,024 syscalls plus one big memcpy — syscall amortization beats fault amortization, so <strong>sequential whole-file access: <code>read()</code> wins</strong>. mmap wins the other cases: sparse access to a huge file (touch 4 KB every 4 MB of a 10 GB file = 2,560 faults; <code>pread</code>-style reads drag 128 KB of readahead per 4 KB — ~32× the bytes moved), and repeated small random access to an already-cached file (each warm hit is a TLB-level access, ~100 ns, versus ~1 µs of syscall per <code>pread</code>).</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><code>cat /proc/PID/fdinfo/3</code> prints <code>pos:</code> and <code>flags:</code> (octal) of a live fd — the first command when a reader "is stuck": the live <code>f_pos</code> of the live <code>struct file</code>.</li>
+<li>Deleted-but-open files: <code>df</code> says full, <code>du</code> finds nothing. <code>lsof +L1</code> lists files with link count 0 still held open — the log "rotated" with <code>rm</code> while the daemon kept its fd.</li>
+<li>fsync latency is a <em>drive</em> property: power-loss protection capacitors → µs-class FLUSH; volatile cache → ms-class. Benchmark with <code>fio --fsync=1</code> before trusting the "enterprise" label.</li>
+<li>The durable-replace recipe: <code>write temp → fsync(temp) → rename → fsync(parent dirfd)</code>. The directory fsync is the step roughly 90% of production code omits.</li>
+<li><code>vm.dirty_ratio</code> / <code>dirty_background_ratio</code> / <code>dirty_writeback_centisecs</code> / <code>dirty_expire_centisecs</code> default to 20 / 10 / 500 / 3000. On a 64 GB box, 20% is 12.8 GB of dirty rope before writers throttle — write-heavy services set <code>vm.dirty_bytes</code> (tens of MB) to buy small frequent stalls.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Any Linux box. Watch the write lie live:</p>
+<pre><code class="language-console">$ grep -E '^(Cached|Dirty|Writeback):' /proc/meminfo
+Cached:          4823320 kB
+Dirty:               176 kB
+Writeback:             0 kB
+
+$ dd if=/dev/zero of=/tmp/blob bs=1M count=500 status=none
+# in a second terminal, while/after the write:
+$ for i in $(seq 10); do grep -E '^(Dirty|Writeback):' /proc/meminfo; sleep 2; done
+Dirty:            512000 kB      &lt;- the 500 MB "completed" but lives in RAM
+Writeback:           0 kB
+Dirty:            468000 kB      &lt;- flusher draining it (5 s cadence)
+Writeback:         44000 kB      &lt;- in flight right now
+...</code></pre>
+<p>The 500 MB <code>dd</code> finishes in a fraction of a second; <code>Dirty</code> spikes to ≈ 512,000 kB and drains over the next 5-30 s. (On a small-RAM box, 500 MB may exceed the 10% background threshold and throttle the writer mid-<code>dd</code> — itself a demonstration.)</p>
+<p>Measure the fsync gap:</p>
+<pre><code class="language-python">#!/usr/bin/env python3
+import os, time
+N, DATA = 200, b"x" * 4096
+
+def bench(do_fsync):
+    tag = "fsync" if do_fsync else "close"
+    path = f"/tmp/bench-{tag}.bin"
+    t0 = time.perf_counter()
+    for _ in range(N):
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        os.write(fd, DATA)          # lands in the page cache only
+        if do_fsync:
+            os.fsync(fd)            # forces ladder + device FLUSH
+        os.close(fd)                # note: close, by itself, flushes NOTHING
+    dt = time.perf_counter() - t0
+    print(f"{tag:11s}: {dt/N*1e6:9.1f} us per 4 KiB write")
+    os.unlink(path)
+
+bench(False)
+bench(True)</code></pre>
+<p>Typical results: close-only 40-300 µs per write (a memcpy); fsync 0.3-2 ms on a consumer NVMe with a volatile cache, 10-20 ms on a 7,200 rpm HDD, tens of µs to ~0.2 ms on a PLP drive. That 10-100× spread is rung (4) of the ladder.</p>
+<p>Watch the one shared offset, live:</p>
+<pre><code class="language-console">$ exec 3&lt;/usr/bin/python3          # any file; fd 3 in THIS shell
+$ head -c 1048576 &lt;&amp;3 &gt; /dev/null  # read 1 MB through the redirected fd
+$ cat /proc/$$/fdinfo/3
+pos:    1048576                    &lt;- advanced by exactly 1 MB
+flags:  0100000                    &lt;- octal: O_RDONLY | O_LARGEFILE</code></pre>
+<p>Run the <code>head</code> again: <code>pos</code> doubles — one fd, one <code>struct file</code>, one offset.</p>
+<p>See which pages of a file are cached (<code>apt install vmtouch</code> if missing):</p>
+<pre><code class="language-console">$ vmtouch /usr/bin/python3
+           Files: 1
+     Directories: 0
+  Resident Pages: 3102/12242 (32%/0.99M of 47.8M)</code></pre>
+<p>Then the fadvise knobs, documented: <code>os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)</code> evicts the file's clean pages (drop, re-read, compare timings); <code>POSIX_FADV_WILLNEED</code> prefetches now. And the namespace arithmetic: <code>ls -li</code>, <code>stat -c 'inode %i links %h size %s' f</code>, then <code>ln f g</code> — links go 1 → 2 on one inode.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>"Free memory is 0"</strong> is not an incident. Read <code>free -h</code>'s available column and <code>/proc/meminfo</code>'s Dirty/Writeback before paging anyone; if Dirty is huge, <em>that</em> is the story.</li>
+<li><strong>A bulk writer freezing in D state every few minutes</strong> is <code>balance_dirty_pages</code>: Dirty crossing 20% of RAM. Fix with <code>vm.dirty_bytes</code> sized to what the device drains in ~1 s.</li>
+<li><strong>Zero-length files after a crash</strong> on ext4: look for write-close-rename with no fsync; fix with the durable-replace recipe, directory fsync included.</li>
+<li><strong>Buying storage for a latency-critical database or log</strong>: benchmark <code>fio --fsync=1</code> on the actual drive and demand power-loss protection; the label does not certify it.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li>Module 01 ch03 (demand paging) — mmap is that machinery with a file as backing store.</li>
+<li>Module 01 ch04 (fork) — the interleaved-read behavior is <code>struct file</code>'s refcount and shared offset, now drawn.</li>
+<li>Module 01 ch05 + ch19 (allocators) — the page cache is a heap in front of the disk, the inode its object header; this module's ch01 plays the same game in FTL firmware.</li>
+<li>Module 11 ch01 (fsync, torn writes) — this chapter adds the device-cache rung and FLUSH/FUA.</li>
+<li>Module 11 ch02 (buffer pool, B-trees) — why databases take <code>O_DIRECT</code>; the B-tree returns as ext4's extent index in ch03.</li>
+<li>Module 14 ch01 — the latency ladder explains why 30 s of dirt and a 5 s journal interval are tolerable.</li>
+<li>Module 14 ch03 — delayed allocation, JBD2, and <code>auto_da_alloc</code> complete the crash story.</li>
+<li>Module 14 ch05 — dentry/inode slab costs; overlayfs copy-up.</li>
+<li>Module 15 (queued, containers) — overlayfs builds on this chapter's VFS objects.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Two shells each run <code>cat movie.mkv</code> at the same time, and each prints the entire file. A program instead opens the file once and <code>fork</code>s; parent and child both read from that inherited fd, and they interleave — roughly alternate chunks. Name the kernel object and field that differs between the scenarios, and state the rule for how each <code>open()</code> behaves.</li>
+</ol>
+<ol>
+<li>ext4-style file system, Linux 6.x. You run <code>mkdir /d</code>, then create subdirectories <code>a</code>, <code>b</code>, <code>c</code> inside it, then <code>rmdir /d/b</code>. What does <code>stat -c '%h' /d</code> report at the end, and where did each contribution to the number come from?</li>
+</ol>
+<ol>
+<li>A Python script writes 300 MB to a fresh file on an 8 GB RAM box using 1 MB <code>write()</code> calls, closes the fd, and immediately greps <code>Dirty</code> in <code>/proc/meminfo</code> in a 2 s loop. Roughly what Dirty value does it see, does the writer ever stall, and how long does Dirty take to drain? Name the thresholds and cadences involved.</li>
+</ol>
+<ol>
+<li>Process A opens <code>/shared/state</code> with <code>O_DIRECT</code> and overwrites a 4 KB record at offset 40960 with a new value, using a <code>posix_memalign</code>-ed buffer. Process B, doing buffered <code>read()</code>s on the same file, keeps seeing the old value. The write verifiably reached the disk. What is the mechanism, and what are two fixes?</li>
+</ol>
+<ol>
+<li>On ext4, an application writes a new version of <code>config.ini</code>, closes it, and <code>rename()</code>s it over the old path — no fsync anywhere. The machine loses power 3 s after the rename. After reboot, <code>config.ini</code> exists but is zero-length. Explain the exact ordering that produced this, name the kernel fix, and give the correct code sequence.</li>
+</ol>
+<ol>
+<li>A service writing a 40 GB import file on a 64 GB RAM server freezes for several seconds every few minutes, in D state, even though the disk is an NVMe that should absorb the load. <code>/proc/meminfo</code> at freeze time shows Dirty ≈ 13 GB. What code path is the process stuck in, what default knob put it there, and what is the standard fix and its trade?</li>
+</ol>
+<ol>
+<li>PostgreSQL opens its data files with <code>O_DIRECT</code> rather than letting the kernel cache them. Connect this to module 11 ch02: name the two caches that would hold the same page twice, the two costs of that duplication, and the alignment trap an unaligned access into a direct-I/O fd can hit.</li>
+</ol>
+<ol>
+<li>Two NVMe drives both marketed as enterprise: drive X completes 4 KB write+fsync in 40 µs, drive Y in 2 ms. Neither is lying about throughput. What physical difference explains the fsync gap, and what does the FLUSH command actually do on each?</li>
+</ol>
+<details><summary>Answers</summary>
+<ol>
+<li><strong>The <code>struct file</code> (specifically <code>f_pos</code> and <code>f_count</code>).</strong> Two independent <code>open()</code> calls each construct a <em>new</em> <code>struct file</code> with its own offset, so both readers see the whole file. After one <code>open()</code> plus <code>fork()</code>, both processes' fd tables point at the <em>same</em> <code>struct file</code> (<code>f_count</code> = 2), so there is one shared <code>f_pos</code>: each <code>read</code> advances it for both, and the chunks interleave. <code>dup</code>/<code>dup2</code> reproduce the shared case — module 01 ch04's fork semantics made concrete.</li>
+</ol>
+<ol>
+<li><strong>4.</strong> Fresh directory: nlink 2 — its entry in the parent plus its own <code>.</code>. Each of a, b, c adds a <code>..</code> record pointing back at /d: 2 + 3 = 5. <code>rmdir /d/b</code> removes b's records (including its <code>..</code>): back to 4. The number is the <em>incoming edge count</em> — also why hard links to directories are forbidden (cycles).</li>
+</ol>
+<ol>
+<li><strong>Dirty spikes to ≈ 307,200 kB; no stall; drains within ~30 s.</strong> The writer stalls only above <code>vm.dirty_ratio</code> = 20% of 8 GB = 1.6 GB (background flushers wake at 10% ≈ 820 MB, never reached; writeback starts on the 5 s cadence). Pages may sit dirty up to 30 s (<code>dirty_expire_centisecs=3000</code>), so they drain over roughly the next 5-30 s. The write completed at memcpy speed — the point: <code>write()</code> returning said nothing about the disk.</li>
+</ol>
+<ol>
+<li><strong>The O_DIRECT/buffered coherence hole.</strong> The direct write went to the device without updating or portably invalidating the page-cache pages; B's buffered reads are cache hits serving the stale pre-write copy. Fix one: don't mix modes — make B read O_DIRECT too. Fix two: evict around the direct write — <code>posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED)</code> before/after, so B's next read faults in the new contents.</li>
+</ol>
+<ol>
+<li><strong>Delayed allocation + journaled rename.</strong> The data lived only in the page cache, no blocks reserved; close() flushes nothing. The rename is metadata-only and journaled, so within the 5 s journal commit the new name replaced the old — durably — while the new file's data had no on-disk blocks. Power loss destroys the page-cache-only data: name resolves, content gone, size 0. The kernel fix is <code>auto_da_alloc</code> (default since 2.6.30): ext4 detects the rename-over pattern and forces allocation/writeback before the rename commits. Correct sequence: <code>open temp → write → fsync(temp fd) → rename → fsync(dir fd of final path)</code> — the last step makes the rename itself durable.</li>
+</ol>
+<ol>
+<li><strong><code>balance_dirty_pages()</code>.</strong> Dirty crossed <code>vm.dirty_ratio</code> (default 20% of 64 GB ≈ 12.8 GB ≈ the observed 13 GB), so the kernel drafted the writer itself into synchronous writeback until the level drops — the "stalls randomly on writes" class. Fix: set <code>vm.dirty_bytes</code> (with <code>dirty_background_bytes</code> lower, e.g. 64-256 MB) so writeback starts early and throttling is brief. Trade: more frequent, smaller flushes — you pay cadence for tail latency.</li>
+</ol>
+<ol>
+<li><strong>The database's buffer pool and the kernel page cache would both hold the same page.</strong> Costs: (a) RAM duplication — twice the cache for the same data, cutting effective cache size; (b) loss of control — the DB's eviction policy (module 11 ch02) knows the access pattern, while the kernel adds writeback-stall latency the DB cannot predict. Alignment trap: file offset, length, and buffer address must be multiples of the logical block size (512/4 KiB) or the syscall fails with <code>EINVAL</code> — an unaligned buffered-style read into the direct fd fails outright.</li>
+</ol>
+<ol>
+<li><strong>Power-loss protection capacitors.</strong> Drive X carries PLP: its DRAM write cache can drain to NAND even after power failure, so it reports the cache as non-volatile and FLUSH is essentially a no-op — fsync costs little beyond the write itself. Drive Y has a volatile cache: FLUSH forces a synchronous DRAM→NAND drain, a millisecond-class operation. Same sequential throughput, 50× different fsync latency — measure it (<code>fio --fsync=1</code>), don't infer it from the label.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 14 — File systems &amp; storage</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

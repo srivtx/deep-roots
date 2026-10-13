@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The browser as an operating system — deep-roots</title>
+<meta name="description" content="Chapter 01 of module 16: The browser as an operating system">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The browser as an operating system — deep-roots">
+<meta property="og:description" content="Chapter 01 of module 16: The browser as an operating system">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The browser as an operating system — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of module 16: The browser as an operating system">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 16 &middot; an OS that renders</div>
+<h1 class="post-title">The browser as an operating system</h1>
+<div class="post-meta">chapter 01 &middot; ~18 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A tab runs code written by strangers, delivered over a network, with no install step — an operating system's job description, minus the honesty. Chrome's 2008 answer was to build a process topology instead of a better program: one privileged broker (the browser process) owning the screen, the disk, and the sockets; many unprivileged renderers, each holding one site's DOM and JavaScript behind a seccomp/seatbelt sandbox; a GPU process quarantined because kernel drivers cannot be fixed; and Mojo, a capability-passing IPC fabric where "who may talk to whom" is a question of handle ownership, not policy. The cost is arithmetic: every renderer pays a ~30-50 MB private floor (2024-era desktop Chrome, about:blank), so 40 tabs of distinct sites bill roughly 2 GB. Site isolation (Chrome 67-77, the Spectre response) moved the boundary from tab to site for a further 10-20% RAM tax. The RAM complaints are the sandbox's invoice.</blockquote>
+<h2 id="one-crash-kills-the-kingdom-the-single-process-era-as-an-os-history-lesson">One crash kills the kingdom: the single-process era as an OS history lesson</h2>
+<p>Start with what a browser was in 2006: one C++ process. Netscape's descendants (Firefox through the mid-2010s), IE6/IE7, Opera — every tab was a thread in one address space, and NPAPI plug-ins like Flash ran <em>in-process</em> too. That design is legitimate if your components are correct. Derive what happens when they are not: a process is the unit of <em>fault isolation</em> (an address space that dies together), a thread is not. One heap corruption in tab 38 — a freed <code>nsIContent</code> walked later, a plug-in writing past a buffer — takes down all 40 tabs and the session, because the failure modes of a shared address space are <em>unioned</em>.</p>
+<p>Put a number on it. Say each tab, over a long browsing session, has a 1% independent chance of hitting a fatal bug (browser-style crash: heap corruption, plug-in fault, third-party code). With 40 tabs sharing one address space, the probability the <em>session</em> dies is the probability that <em>at least one</em> tab hits its bug:</p>
+<pre><code class="language-text">P(session dies) = 1 - (1 - 0.01)^40 = 1 - 0.669 = 0.331  ~ 33%</code></pre>
+<p>One process turns forty small risks into one coin-flip-shaped risk. This, not a marketing slide, is the 2006-2008 pain that motivated Chrome's launch design: the September 2008 comic and design docs framed the browser as multi-process <em>from version 1</em> (September 2, 2008). IE8 (2009) split the frame process from tab processes, though tabs shared processes above a cap; Firefox held out until the Electrolysis rollout of 2016-2017. The OS analogy is earned, not asserted: a browser needs a scheduler (the event loop, chapter 03), allocators (three heaps per page — chapters 02 and 04), device drivers (the network stack, the GPU), and the one thing 2006 browsers lacked — a <em>kernel/user boundary</em> between trusted core and untrusted payload. That boundary is a process boundary, and the rest of this chapter is its price list.</p>
+<h2 id="fault-isolation-priced-the-40-tab-arithmetic">Fault isolation, priced: the 40-tab arithmetic</h2>
+<p>Process-per-tab (2008) buys the 33%-vs-1% win with the most honest currency in systems: address space. A second process duplicates the <em>state</em> even where it shares the <em>bytes</em>. Re-derive the floor from module 01 chapter 03's page-fault machinery:</p>
+<ul>
+<li>Code pages (Blink, V8, Skia, ICU's data tables) are file-backed and mapped copy-on-write. Forty renderers mapping the same shared library text share one physical copy via the page cache. So code is not the multiplier.</li>
+<li>But every mapping carries per-process <em>page tables</em>, and every renderer dirties its own pages: COW faults on writable data, per-process allocator metadata (V8 heap page headers, PartitionAlloc buckets), its own thread stacks, its own ICU/Skia lazily-initialized state. Dirty pages are private by definition.</li>
+</ul>
+<p>Measure it and you get the floor: a minimal renderer — one showing <code>about:blank</code> — costs ~30-50 MB private memory on 2024-era 64-bit desktop Chrome (Linux/Windows; the figure moves a few MB per release). That is the price of entry before the page does anything — now the headline arithmetic:</p>
+<pre><code class="language-text">40 tabs, all distinct sites, minimal renderers:
+  40 x ~40 MB (renderers)      = 1600 MB
+  + ~200 MB  (browser process) ~ 
+  + ~100 MB  (GPU process)     ~  1.9-2.0 GB total
+  + ~40 MB   (network service) ~</code></pre>
+<p>"Chrome eats RAM" is true and correct: the memory is the sandbox's bill, itemized exactly like an OS's — fault isolation costs address space. The floor does <em>not</em> include the page's data (JS heap, DOM, decoded images), which rides on top and is chapter 04's subject. And the sharing that saves you: 40 tabs of the <em>same</em> site cost less than 40 distinct sites, because same-site renderers can be consolidated (under memory pressure, mostly on Android) and the file-backed code is already shared.</p>
+<h2 id="the-boundary-moves-again-from-tab-to-site-2018-2019">The boundary moves again: from tab to site (2018-2019)</h2>
+<p>Process-per-tab has a hole you can state in one sentence: the sandbox isolates <em>syscalls</em>, not <em>speculation</em>. Module 02 chapter 07 derived Spectre: a renderer that shares one address space with a cross-site document can mount cache-timing side-channel reads against that document's data, from inside the sandbox, without one syscall being out of policy. The fix is not a faster sandbox — it is never letting cross-site documents share an address space at all, <em>even inside one tab</em>. That is site isolation, and it changed the boundary's unit:</p>
+<ul>
+<li><strong>Chrome 67 (June 2018, desktop):</strong> full site isolation — cross-site documents get different renderer processes, including in the same tab.</li>
+<li><strong>Chrome 77 (September 2019, Android):</strong> broader rollout, but gated on device RAM — low-RAM phones still get only partial isolation (a curated list of high-value sites), because the RAM tax is regressive on small devices.</li>
+</ul>
+<p>The unit is the <strong>site-instance</strong>, not the tab and not the origin. A <em>site</em> is scheme plus eTLD+1 (the registrable domain): <code>mail.google.com</code> and <code>accounts.google.com</code> are the same site and will share a renderer; <code>mail.google.com</code> and <code>evil.example</code> are different sites and will not, even when the second is a 300-pixel iframe inside the first. An iframe whose content lives in another process is an <strong>OOPIF</strong> — out-of-process iframe — and post-2018 a busy page is a small distributed system: the frame tree spans processes, coordinated through the browser process. The cost was measured, not guessed: ~10-20% more total memory for typical browsing in Google's 2018 published numbers, plus more processes per tab (the "one Gmail tab = 6 processes" decode is below). Chapter 05 pays off that bill; here it is only booked honestly: the Spectre response cost 10-20% of the RAM budget, and it was worth it.</p>
+<h2 id="the-process-zoo-least-privilege-drawn-as-a-topology">The process zoo: least privilege drawn as a topology</h2>
+<p>Now draw the machine this argument produces. Least privilege stops being a checklist and becomes a topology: every power gets its own crash domain, and the arrows are the whole security policy.</p>
+<pre><code class="language-text">                THE BROWSER PROCESS (the broker: pid 1 of the family)
+                powers: windowing/UI, disk (profile, cache), privilege.
+                The only process allowed to say "yes". Its death = everything.
+               +---------------------------------------------------+
+               |  UI + tab strip + omnibox | policy + IPC umpiring |
+               +----+-----------------+-------------------+--------+
+                    |                 |                   |
+       Mojo pipe    |    Mojo pipe    |    Mojo pipe      |  (an arrow is a
+       (brokered    |   (brokered)    |   (brokered)      |   capability: its
+        requests    |                 |                   |   endpoint must be
+        only)       |                 |                   |   HANDED to you)
+                    v                 v                   v
+    +---------------------+  +----------------------+  +----------------------+
+    | RENDERER            |  | RENDERER             |  | GPU PROCESS          |
+    | site-a.com          |  | site-b.com           |  | sandboxed, but the   |
+    | DOM + V8 + style +  |  | DOM + V8 + style +   |  | ONLY process that    |
+    | layout. Seccomp:    |  | layout. Seccomp:     |  | talks to the kernel  |
+    | no disk, no socket, |  | no disk, no socket,  |  | GPU driver. Death =  |
+    | no fork. Dies =     |  | no fork. Dies =      |  | black flash, then    |
+    | one "Aw, Snap" tab. |  | one "Aw, Snap" tab.  |  | auto-restart.        |
+    +----------+----------+  +----------------------+  +-----------^----------+
+               |                                                  |
+               | rasterized tiles as SHARED-MEMORY buffers        |
+               | (zero-copy: ~14 MB per 2560x1440 RGBA tile,      |
+               |  never a Mojo message payload)                   |
+               +--------------------------------------------------+
+    +---------------------+  +--------------------------+  +-------------------+
+    | NETWORK SERVICE     |  | UTILITY PROCESSES        |  | EXTENSION process |
+    | own process, own    |  | (audio, data decoding,   |  | user-consented,   |
+    | seccomp profile;    |  | storage...): one power = |  | broad chrome.*    |
+    | renderers reach the |  | one process = one seccomp|  | APIs. A DIFFERENT |
+    | network only via    |  | profile                  |  | threat model.     |
+    | pipes they were     |  +--------------------------+  +-------------------+
+    | handed              |
+    +---------------------+</code></pre>
+<p>Walk the zoo, because each box exists for a reason you can now derive:</p>
+<p><strong>The browser process</strong> is module 15 chapter 04's broker at web scale. It owns the powers — windowing, the profile on disk, process creation — and every privileged request from below must cross it. On Linux it applies the sandbox to children (seccomp-BPF plus namespaces); on Windows, restricted tokens and job objects; on macOS, Seatbelt profiles. It is also a single point of failure, which is why Chromium's <em>service-ification</em> project (2017-2019) has been peeling powers out of it.</p>
+<p><strong>Renderer processes</strong> are the untrusted payload: the DOM, V8, style, layout — everything derived from network bytes. The sandbox's promise is stated in the negative: no disk, no sockets, no <code>fork()</code>. A renderer exploit buys the attacker a sandboxed process and nothing else; escaping needs a second bug (chapter 05's rule).</p>
+<p><strong>The GPU process</strong> exists because of one unsolvable fact: kernel GPU drivers are not securable. They were not written to face hostile input, and two decades of driver CVEs plus browser telemetry (Windows display drivers sat in top crash buckets for years) say they will not be fixed. You cannot sandbox your way out of a kernel bug, so the unfixable code gets its own crash domain and the renderers send it commands over IPC. Separate process since roughly 2011 (Chrome 10-era).</p>
+<p><strong>Utility and service processes</strong> are the service-ification split: the network service became its own process in the 2018 era (Chrome 66-70), and audio, storage, and data decoding followed. The pattern is "least privilege as topology": each power is a process with its own seccomp profile, so compromising the audio service buys you... audio.</p>
+<p><strong>Extension processes</strong> are renderers with a different threat model. They are still sandboxed-ish processes, but they hold <code>chrome.tabs</code>, <code>webRequest</code>, and friends — capabilities no web page gets — <em>by user consent</em>. The threat is not sandbox escape; it is the user installing the attacker. Manifest V3 (rolled out 2021-2023) exists to shrink exactly that API surface.</p>
+<h2 id="mojo-capability-pipes-zero-copy-bytes">Mojo: capability pipes, zero-copy bytes</h2>
+<p>The arrows in the diagram are Mojo, Chromium's IPC fabric (introduced 2014, dominant by 2017, and as of 2024 essentially all cross-process Chrome IPC). Two ideas, both derived from module 13 chapter 04 and module 15 chapter 04.</p>
+<p><strong>Idea one: a pipe endpoint is a capability.</strong> Mojo's primitive is the <em>message pipe</em> — two endpoints, messages flow between them. Endpoints are handles, and handles move only by being <em>sent in a message</em> or <em>handed out at process creation</em>. You can only talk to someone if someone gave you their pipe. That is the object-capability model in production: policy ("may renderer R use the network?") is replaced by possession (R holds a <code>URLLoaderFactory</code> pipe scoped to R's origin, or it holds nothing). The native ancestor is <code>SCM_RIGHTS</code> FD passing over a Unix socket — module 13 ch04 — where a capability is a kernel-table reference you can obtain only by transfer, never by naming. Interfaces are declared in an IDL:</p>
+<pre><code class="language-mojom">// shape trimmed from Chromium's network.mojom (illustrative, not verbatim)
+module network.mojom;
+
+interface URLLoader {
+  // A renderer holds one of these per request it is allowed to make.
+  // The pipe itself IS the permission: no pipe, no network.
+  FollowRedirect(uint32 remotes_count);
+  SetPriority(RequestPriority priority, int32 intra_priority_value);
+};
+
+interface URLLoaderFactory {
+  // The browser process hands a factory to a renderer, scoped to that
+  // renderer's site; what it mints is only what the policy allowed.
+  CreateLoaderAndStart(pending_receiver&lt;URLLoader&gt; loader,
+                       int32 request_id, uint32 options,
+                       UrlRequest request,
+                       pending_remote&lt;URLLoaderClient&gt; client);
+};</code></pre>
+<p><strong>Idea two: messages are for control, shared memory is for payload.</strong> The compositor hot path would be absurd over message copies: one 2560x1440 RGBA tile is ~14 MB, and at 60 fps you would be memcpy'ing hundreds of MB per second just to hand pixels to the GPU process. Instead the raster result lives in a shared-memory or native buffer (<code>SharedImage</code>/<code>GpuMemoryBuffer</code> in 2024-era Chrome), and the Mojo message carries only the <em>handle</em> — module 13 ch04's zero-copy idea, applied inside one machine. In modern Chrome raster work usually executes inside the GPU process itself; the tile buffers still cross as shared mappings, never as payload.</p>
+<p>One more guarantee rides the same boundary: <strong>one V8 isolate per renderer (at minimum)</strong>. Each renderer's JavaScript heaps are separated <em>by the process boundary</em> — the guarantee module 15 gave virtual machines, delivered at JavaScript-object granularity. A page never shares an isolate with another site's page; within one page, workers get their own isolates as threads (chapter 04).</p>
+<h2 id="anatomy-of-the-30-50-mb-floor">Anatomy of the 30-50 MB floor</h2>
+<p>Decompose the floor you priced, because Chrome's Task Manager (Shift-Esc) shows you these pieces. A renderer's memory has two shelves:</p>
+<ul>
+<li><strong>File-backed, physically shared</strong> (mapped COW from disk): Blink (DOM/layout/style code), V8's engine code, Skia (raster), ICU's data tables (tens of MB on disk, mmapped lazily). Forty renderers share one physical copy through the page cache. Task Manager counts this <em>proportionally</em> (a fraction per process), which is why the "Memory footprint" column (2024-era naming; older builds split "Memory"/"Private") does not sum naively across rows.</li>
+<li><strong>Private, per-process</strong> (the floor): page tables and COW'd data pages, V8 heap metadata and stacks, the renderer's own allocator arenas, thread stacks, per-heap initialization state.</li>
+</ul>
+<p>On top of the floor rides the <em>page's</em> data — the JS heap, the DOM tree (chapter 02's Oilpan heap), style and layout structures, decoded images, compositor layers — which is why a Gmail renderer reads ~150-300 MB in the Task Manager while an <code>about:blank</code> renderer reads ~20-50 MB on the same 2024-era build. The lab below makes you measure both.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The crash taxonomy, decoded from symptoms.</strong> Renderer death: one "Aw, Snap" sad tab, reload spawns a fresh renderer. Browser process death: everything, session restore on relaunch. GPU process death: the screen flashes black or freezes for a fraction of a second, then <em>comes back without reloading any tab</em> — the renderers never died; the browser respawns the GPU process and re-submits. That is the entire answer to "why did my screen go black and come back."</li>
+<li><strong>The "one Gmail tab = 6 processes" decode.</strong> Browser + GPU + network service + the tab's renderer (<code>mail.google.com</code>) + one or two OOPIF renderers for cross-site iframes (embedded video, sign-in frames) + an extension process (password manager, blocker). Six is normal; it is site isolation working, not a leak.</li>
+<li><strong>The honest RAM defense.</strong> Fault isolation costs address space; process count is the bill. ~40 MB private per minimal renderer times tab count, plus 10-20% for site isolation (Google's 2018 measurements). Anyone can re-derive the 40-tab ~2 GB figure with a task manager.</li>
+<li><strong>The Zygote trade (Linux).</strong> Chrome keeps a pre-warmed, pre-sandboxed template process that forks renderers on demand — process creation without re-exec, sandbox applied <em>before</em> the first fork so every child inherits it. The cost: <code>fork()</code> inherits the zygote's address-space layout, so all renderers in a family share library addresses — one info leak defeats ASLR family-wide. The mitigation history is per-fork re-randomization of what the browser controls (V8 cage and PartitionAlloc region seeds; fresh namespaces), while inherited library layout remains a documented Linux-specific trade. Windows has no <code>fork()</code> — each renderer is <code>CreateProcess</code>d, code shared via the page cache; macOS uses <code>posix_spawn</code> plus a Seatbelt profile. Neither has a zygote.</li>
+<li><strong><code>--process-per-site</code> and <code>--single-process</code> exist as flags</strong> — QA and memory-constrained Android builds use them — and each drops a guarantee: <code>--process-per-site</code> merges all instances of a site into one renderer (fault isolation and JS coherence now span tabs); <code>--single-process</code> puts the broker and the payload in one address space (never ship).</li>
+<li><strong>Android's partial isolation.</strong> Low-RAM devices get site isolation only for a curated allowlist of high-value sites; a "same renderer despite cross-site iframe" report on a phone may be policy, not a bug.</li>
+<li><strong>The interview trap.</strong> "Chrome uses process-per-tab" was true for 2008-2017 and is wrong after: the unit is the <em>site-instance</em> (site plus frame-tree context), and same-site instances may be consolidated under memory pressure. Saying "tab" where you mean "site" dates you to before Spectre.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Everything below runs on any 2024-era Chrome/Chromium desktop build. Ten minutes, no screenshots — read the numbers off the tool.</p>
+<ol>
+<li><strong>The zoo from the outside (bash, any Linux box):</strong></li>
+</ol>
+<pre><code class="language-bash">pgrep -c chrome          # process count, one number
+# or the classic form without pgrep's process-name matching:
+ps aux | grep -c [c]hrome   # the [] stops grep from counting itself</code></pre>
+<p>With ~5 real tabs expect roughly 10-20 processes on desktop (2024-era Chrome, Linux). The count exceeds tabs+1 because of the GPU, network, and utility boxes in the diagram.</p>
+<ol>
+<li><strong>The process tree, named (type it in the omnibox):</strong> open <code>chrome://process-internals</code>. Each row names its type: <code>Browser</code>, <code>GPU Process</code>, <code>Network Service</code>, <code>Renderer</code>, <code>Utility</code>, <code>Extension</code>. Match rows to the diagram, one per box.</li>
+</ol>
+<ol>
+<li><strong>The sandbox, per process:</strong> open <code>chrome://sandbox</code> (Linux). Look for per-process lines of the shape <code>Renderer Sandbox: Layer 1 Seccomp-BPF</code> — layer 1 is the syscall filter (module 15 ch04's machinery, live). The browser process itself shows no seccomp layer: the broker must keep its powers.</li>
+</ol>
+<ol>
+<li><strong>The floor vs the page (the best 2 minutes here):</strong> press <code>Shift-Esc</code> (Chrome's Task Manager). Open a tab showing <code>about:blank</code> and note its renderer row: ~20-50 MB footprint. Now open <code>https://mail.google.com</code> (or any heavy site) and find its renderer: ~150-300 MB. The difference is the page's three heaps (JS, DOM, images/layers) riding on the ~40 MB floor. Sort by the memory column; note the <code>Extension</code> rows — user-consented capabilities, not leaks.</li>
+</ol>
+<ol>
+<li><strong>The crash taxonomy, safely:</strong> kill a <em>renderer</em> from the same Task Manager (select its row, "End process") — one sad tab, other tabs untouched. That is fault isolation as a user-level experiment: 1 tab, not 33% of your session.</li>
+</ol>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Triage a field report in one question.</strong> "Everything went black for a second then came back, no reload" = GPU process restart; "the tab showed a sad face" = renderer; "the whole browser vanished" = browser process. You now know which log (<code>chrome://gpu</code>, <code>chrome://crashes</code>) to pull.</li>
+<li><strong>Size automation fleets.</strong> Headless Chrome running N isolated contexts (Playwright/Puppeteer) costs roughly the renderer floor times context count plus the fixed zoo: budget ~50-100 MB per context before page data (2024-era, order-of-magnitude), and your forecasts stop surprising you.</li>
+<li><strong>Explain the laptop fan.</strong> 40 tabs of 40 distinct sites is ~2 GB by floor arithmetic alone; telling a user "close duplicate sites, not duplicate tabs" is now derived — consolidation and shared code pages make same-site duplicates cheaper.</li>
+<li><strong>Read a Chrome CVE like a native.</strong> The first thing a write-up tells you is the process the bug lives in. Renderer bug: sandbox escape still needed (chapter 05's two-bug rule). Browser-process bug: game over, that's the broker. GPU process: driver-adjacent crash domain.</li>
+<li><strong>Win the design argument.</strong> Anyone proposing "let's put the untrusted parser in a thread of the trusted process" can be answered with the 2006 arithmetic: <code>1-(1-c)^N</code> turns N small failure probabilities into one large one.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 16 ch02</strong> — the DOM/Oilpan heap that lives inside the renderers introduced here; the two-collector problem is a <em>within-one-box</em> story.</li>
+<li><strong>Module 16 ch03</strong> — the 16.6 ms/60 fps pipeline whose tile traffic crosses the shared-memory arrow drawn in this chapter's diagram.</li>
+<li><strong>Module 16 ch04</strong> — the per-page memory anatomy (three heaps, workers, WASM) that rides on top of the ~40 MB floor priced here.</li>
+<li><strong>Module 16 ch05</strong> — why site isolation's 10-20% RAM tax was worth paying: SOP as isolation policy and the two-bug escape rule.</li>
+<li><strong>Module 01 ch03</strong> — page faults and COW: the machinery behind "code is shared, dirty pages are private."</li>
+<li><strong>Module 01 ch15</strong> — V8's heap: the isolate-per-renderer is that heap's process home.</li>
+<li><strong>Module 02 ch07</strong> — Spectre: the side channel that moved the boundary from tab to site in Chrome 67.</li>
+<li><strong>Module 13 ch04</strong> — epoll/IPC patterns: <code>SCM_RIGHTS</code> FD passing and zero-copy shared buffers are Mojo's direct ancestors.</li>
+<li><strong>Module 15 ch04</strong> — seccomp and capabilities: the broker model you just saw live in <code>chrome://sandbox</code>.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>A 2007 single-process browser holds 40 tabs. Over a long session, each tab independently has a 1% chance of hitting a fatal bug. Compute the probability the whole session dies, and the same probability after moving to process-per-tab.</li>
+<li>One tab shows <code>site1.com</code>, embedding two cross-site iframes: <code>ads.net</code> and <code>pay.example</code>. A second tab shows <code>site2.com</code>, embedding <code>ads.net</code> again (same site as the first tab's ad iframe). Under full desktop site isolation (Chrome 67+ behavior), how many <em>renderer</em> processes are involved at minimum, and why is the answer not 5?</li>
+<li>Arithmetic check: 40 tabs of 40 distinct sites, each minimal renderer ~40 MB private, browser process ~200 MB, GPU ~100 MB, network service ~40 MB. What is the total, and which term dominates? What changes if the 40 tabs are all the <em>same</em> site?</li>
+<li>Why did Chrome put GPU work in its own process rather than letting seccomp'd renderers call the kernel GPU driver directly? Name the property of the driver that forces this design.</li>
+<li>A user reports: "the screen went black for about half a second, then everything came back — none of my tabs reloaded." Which process died, and why did no tab reload?</li>
+<li>On 2024 desktop Chrome with default settings, an engineer finds an iframe sharing a renderer with the top-level page: the top-level page is <code>mail.google.com</code>, the iframe is <code>accounts.google.com</code>. Is site isolation broken? Answer precisely.</li>
+<li>A QA rig launches Chrome with <code>--process-per-site</code> to "save memory" for a 60-tab soak test across 12 sites. Mid-run, a crash in one tab takes out several other tabs, and two tabs' <code>localStorage</code> writes interleave. What guarantee did the flag drop, and what is the correct unit it violated?</li>
+<li>Cross-chapter: in Mojo, a renderer can only talk to the network service if the browser process handed it a <code>URLLoaderFactory</code> pipe endpoint. Which mechanism from module 13 ch04 is the direct native ancestor of this "possession, not policy" rule, and why does it make reviewing a new IPC interface mostly a question of "who gets handed this endpoint?"</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>~33% vs ~1%.</strong> Single process: the session survives only if <em>no</em> tab hits its bug: <code>P = (0.99)^40 = 0.669</code>, so <code>P(dies) = 0.331</code>. Process-per-tab: each tab's 1% is contained — a tab crash costs one reload, and the session dies only with the browser process itself. That containment is the 2008 design: fault probabilities no longer <em>union</em> — <code>1-(1-c)^N</code> grows toward 1 with N; c stays c.</li>
+<li><strong>4.</strong> The naive count is 5 (two pages plus three iframes, one process each). The correct minimum is 4, and the discount comes from the <em>second tab's</em> <code>ads.net</code> iframe: site isolation keys processes on the <strong>site</strong>, not on the frame and not on the tab, so the two <code>ads.net</code> iframes — same site, different tabs — may share one renderer (Chrome does reuse same-site renderers). The four processes: <code>site1.com</code>, <code>site2.com</code>, <code>pay.example</code>, and one shared <code>ads.net</code>. Frames do not each get a process; sites do.</li>
+<li><strong>~1.9-2.0 GB; the renderer term dominates (1600 of 1940 MB, ~82%).</strong> <code>40 x 40 = 1600</code>, plus 200 + 100 + 40 = 1940 MB. The renderer floor is the fault-isolation bill, and it scales linearly with distinct sites. All same site: renderers may be consolidated (under memory pressure, mostly on Android), so the count drops toward a handful and the total toward a few hundred MB — the file-backed code was already shared. Same-site duplicates are cheap; distinct sites are what you pay for.</li>
+<li><strong>The kernel driver cannot be fixed, so it must be quarantined.</strong> Seccomp filters a process's <em>syscalls</em>, but a renderer legitimately needs GPU ioctls to render — and those ioctls run kernel code that was never written to face hostile arguments (two decades of driver CVEs; Windows display drivers were top browser-crash buckets for years). A sandbox cannot repair a kernel bug. So the design moves the unfixable code into its own crash domain: renderers proxy commands to the GPU process, and a driver exploit or driver crash kills one sandboxed GPU process that the browser respawns — never the renderers, never the broker.</li>
+<li><strong>The GPU process died; the renderers never did.</strong> Compositing (turning raster results into screen frames) is downstream of the GPU process, so its death shows as dropped/black frames until the browser process respawns it and re-submits. A tab <em>reload</em> is what happens when its renderer dies — but the renderers and their DOM/JS state survived untouched, so no navigation occurred. "Black flash, no reload" is the signature of a GPU-process crash.</li>
+<li><strong>No — isolation is per-site, and these are the same site.</strong> A <em>site</em> is scheme plus eTLD+1 (the registrable domain): <code>mail.google.com</code> and <code>accounts.google.com</code> both bottom out at <code>google.com</code>, so site isolation deliberately <em>allows</em> them to share a renderer. The unit is the site-instance, not the origin. (Finding <code>evil.example</code> in there would be a bug — or a low-RAM Android device on the partial-isolation allowlist, or a policy/flag disabling isolation.)</li>
+<li><strong>The flag dropped per-instance fault and state isolation; the violated unit is the site-instance.</strong> <code>--process-per-site</code> reuses one renderer for <em>all</em> instances of a site: all 5 tabs of <code>site7.com</code> share one address space, so one crash kills them together (the 2006 union-of-risks problem, reintroduced per-site), and their <code>localStorage</code>/JS state share one process's heap and event loop, so writes interleave across tabs. Site isolation's contract is a process per site-<em>instance</em> (site plus frame-tree context); consolidation is only an explicitly-managed memory-pressure trade.</li>
+<li><strong><code>SCM_RIGHTS</code> file-descriptor passing over a Unix domain socket.</strong> A descriptor is a reference into a kernel table that you can obtain only by inheritance or explicit transfer — never by naming a target — so "can I talk to X?" reduces to "was I given the handle to X?" Mojo endpoints are that object-capability rule moved into userspace, so reviewing a new IPC interface is mostly asking <em>who is handed this endpoint, and what can they do with it</em> — the capability's reach is the policy. (Module 15 ch04's seccomp broker is the same shape: the broker's FDs are the permissions.)</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 16 — Browser engine internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>
