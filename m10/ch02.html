@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory-shaping optimizations — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 10: Memory-shaping optimizations">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Memory-shaping optimizations — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 10: Memory-shaping optimizations">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Memory-shaping optimizations — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 10: Memory-shaping optimizations">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 10 &middot; where memory models are manufactured</div>
+<h1 class="post-title">Memory-shaping optimizations</h1>
+<div class="post-meta">chapter 02 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Chapter 01 built the pipeline; this chapter catalogs the passes that change what your program's memory <em>actually does</em> at <code>-O2</code>. <strong>SROA</strong> dissolves stack structs into SSA values — why your local "vanishes" in gdb, and why module 03's uninitialized experiment flipped between <code>-O0</code> and <code>-O2</code>. <strong>Alias analysis</strong> decides which pointers may point at the same bytes; C's <code>restrict</code> and Rust's <code>&amp;mut</code> are <em>aliasing contracts</em> that buy precision the compiler cannot compute. <strong>Load/store surgery</strong> — redundant-load elimination, store forwarding, DSE — deletes memory traffic, including the security scrubs you wrote on purpose. <strong>LICM</strong> hoists loop-invariant work out of loops when alias and safety conditions permit. All of it runs under one license: the as-if rule — do anything the language standard cannot observe; UB is, by definition, unobservable.</blockquote>
+<h2 id="the-constitution-what-observable-means">The constitution: what "observable" means</h2>
+<p>The <strong>as-if rule</strong> (C11 §5.1.2.3) is every pass's constitution: do whatever you like so long as observable behavior matches the abstract machine executing the program literally. Observable is a short list — I/O, volatile accesses, and (since C11) atomic synchronization — everything else is negotiable.</p>
+<p>The twist: the abstract machine has holes. When behavior is undefined, there is <em>no</em> correct observable behavior to preserve, so "assume the UB never happens" is a sound deduction — free ammunition for every pass below.</p>
+<h2 id="sroa-the-stack-destructor">SROA: the stack destructor</h2>
+<p>Start from the frontend's problem (ch01). Emitting <code>int x = 5; x += 1;</code> without analyzing anything means giving every named variable one home: a stack slot. At <code>-O0</code> each local is an <code>alloca</code> plus <code>load</code>/<code>store</code> instructions. Debug builds have variables because the debugger needs a fixed address per name — and alloca-per-variable is what the frontend emits with zero analysis.</p>
+<p>LLVM's <strong>mem2reg</strong>, the canonical first optimizing pass, unpicks that: walk the dominator tree, place phi nodes (ch01's register-merger) at joins where two versions of a variable meet, replace each load with the SSA value that reaches it, delete the non-escaping allocas. One pass turns "memory with names" into "values with versions." Release builds have no variables because nothing after mem2reg can see them — they are SSA values now, which register allocation (ch03) keeps in registers or spills on demand. Nothing hides your variable; it was dissolved.</p>
+<p><strong>SROA</strong> (scalar replacement of aggregates) extends mem2reg to structs and arrays: a non-escaping aggregate alloca is split field by field into separate scalars. GCC's twin is <strong>SRA</strong> (<code>-ftree-sra</code>); HotSpot C2's "scalar replacement" (ch04) is the same idea in a GC language. The escape condition is the whole game: pass <code>&amp;p</code> to any call and the object must exist in memory, because an unknown callee may hold the address — ch04's escape analysis, seen from the factory floor.</p>
+<pre><code>BEFORE SROA: one 8-byte stack object            AFTER SROA: two SSA scalars, 0 bytes
+
+  struct pair { int a; int b; };  p;
+  rbp-8  +----------------+                     store i32 %mul, ptr %p.a  -&gt; gone
+         | p.a = x * 2    |   (store)           store i32 %add, ptr %p.b  -&gt; gone
+  rbp-4  +----------------+                                 |              |
+         | p.b = y + 3    |   (store)                    %mul = mul i32 %x, 2
+         +----------------+                                          %add = add i32 %y, 3
+          return p.a + p.b;   (2 loads, 1 add)                          \    /
+                                                                        add i32 %mul, %add
+
+  8 bytes of frame, 4 memory ops            0 bytes of frame, 1 op: leal 3(%rsi,%rdi,2), %eax</code></pre>
+<p>This closes module 03 ch02's mystery: its program (an uninitialized <code>int x</code> read after <code>dirty(41,1)</code> ran at the same stack depth) printed <strong>42 at <code>-O0</code></strong> and <strong>1 at <code>-O2</code></strong> on gcc 14.2.0. At <code>-O0</code>, <code>x</code> has a fixed frame slot the previous call still occupies (module 01 ch04's stack reuse); at <code>-O2</code>, mem2reg never gives <code>x</code> a home, the read of an indeterminate value is UB, and the function folds to a constant. Same UB, different evidence — why "works at -O0, breaks at -O2" is folklore rather than diagnosis.</p>
+<h2 id="alias-analysis-who-may-point-where">Alias analysis: who may point where</h2>
+<p>Every optimization in this chapter reduces to one question: <em>can a load through <code>p</code> see a store through <code>q</code>?</em> Three answers. <strong>No-alias</strong> — provably different objects: free to reorder, merge, or delete. <strong>Must-alias</strong> — provably the same object and offset: a store-then-load can forward the stored value without touching memory. <strong>May-alias</strong> — cannot rule it out: assume the worst; this answer is where your <code>-O2</code> performance goes to die.</p>
+<p>A points-to analysis computes, per pointer, the set of objects it might reference — ideally field-sensitively (<code>p</code> points at <code>s.b</code>, not just <code>s</code>). But static aliasing is <strong>undecidable in general</strong> (Landi, 1992), so production analyses are stacked approximations: LLVM's BasicAA (same-object reasoning), globals-modref, and TBAA, cashing in C's rule that a <code>double*</code> and an <code>int*</code> cannot alias (the <code>char*</code> exception is why byte-punning via <code>memcpy</code> works).</p>
+<p>Since analysis can't be precise, languages let you <em>sell</em> precision. C99's <code>restrict</code> (6.7.3.1) promises: "for this scope, every access to this object is based on this pointer." Violate it and behavior is undefined — and you know what the optimizer does with UB. Rust's <code>&amp;mut T</code> uniqueness is the same contract, <em>enforced</em> rather than promised. The deep unification: <strong>the borrow checker is an alias analysis that runs at compile time and cannot be wrong.</strong> Rust lowers <code>&amp;mut</code> parameters with LLVM's <code>noalias</code> attribute — handing the optimizer, for free and everywhere, the answer C gets only where someone wrote <code>restrict</code>.</p>
+<h2 id="load-store-surgery">Load/store surgery</h2>
+<p>With alias facts, three passes delete memory traffic:</p>
+<p><strong>Redundant-load elimination.</strong> Two loads of the same address with no intervening may-alias store collapse to one.</p>
+<p><strong>Store forwarding.</strong> A store to <code>*p</code>, then a load must-aliasing <code>p</code>, becomes the stored value — no memory round-trip.</p>
+<p><strong>Dead-store elimination (DSE).</strong> A store no later load can ever see is dead. Locals after their last read: dead — the frame pops (module 01 ch04). A heap buffer just before <code>free</code>: dead, because compilers model <code>free</code> as clobbering the whole object. The bytes often <em>physically</em> survive in the freed chunk (module 03 ch02's UAF reads them), but the standard says they're gone — CWE-14, "compiler removal of security-critical code." The pattern, verified on gcc 14.2.0 below:</p>
+<pre><code class="language-c">void wipe_and_free(char *buf, size_t n) {
+    memset(buf, 0, n);   /* intent: zero the secrets */
+    free(buf);           /* DSE: free clobbers buf -&gt; memset is dead */
+}</code></pre>
+<p>Counters, ascending: <code>memzero_explicit()</code> — Linux's memset wrapped in a compiler barrier, existing precisely because plain memset did not survive DSE; <code>explicit_bzero()</code> (glibc ≥ 2.25); <code>memset_s()</code> (C11 Annex K, MSVC); and <code>-ftrivial-auto-var-init=zero</code> (clang ≥ 8, gcc ≥ 12), which makes initialization of every automatic variable a compiler <em>contract</em> rather than a deletable store — targeting module 03 ch02's uninitialized reads, at under 1% fleet cost in Google's published measurements. Android's platform builds ship it.</p>
+<h2 id="licm-motion-and-its-two-conditions">LICM: motion and its two conditions</h2>
+<p><strong>Loop-invariant code motion</strong> moves a computation out of a loop when it produces the same value every iteration — an invariant load executed 1000 times should execute once. Two conditions gate it:</p>
+<p><strong>Safety</strong> — motion must not introduce a fault that didn't exist. A division can't move above the guard protecting its zero divisor; a load can't move above the branch establishing the pointer is non-null, unless the compiler can prove dereferenceability (LLVM's <code>dereferenceable</code> metadata, from inlining and allocation sites). Faulting on iteration 0 of a loop that might run zero times is a behavior change.</p>
+<p><strong>Aliasing</strong> — an invariant load <code>*a</code> leaves the loop only if no store in the loop may-aliases <code>a</code>:</p>
+<pre><code class="language-c">int sum_aliased(int *a, int *b, int n) {
+    int s = 0;
+    for (int i = 0; i &lt; n; i++) {
+        s += *a;       /* invariant load — but b[i] may alias a */
+        b[i] = i;
+    }
+    return s;
+}</code></pre>
+<p>Nothing rules out <code>a == b</code> (call it <code>sum_aliased(p, p, n)</code>), so the load stays inside — verified on gcc 14.2.0, the loop body reloads <code>addl (%rdi), %ecx</code> every iteration. Add <code>int * restrict b</code> and the answer flips to no-alias — the load is hoisted to <code>movl (%rdi), %eax</code> <em>before</em> the loop. One keyword, 999 loads saved.</p>
+<h2 id="ub-as-optimization-license">UB as optimization license</h2>
+<p>Each case has the same shape: <em>assume the UB never happens, optimize as-if, watch the check you wrote evaporate.</em></p>
+<p><strong>The deleted overflow check.</strong> <code>if (x + 1 &lt; x) return true;</code> looks like a wrap detector. But if <code>x + 1</code> wrapped, that's signed overflow — UB — so the optimizer assumes it never wraps, and under that assumption <code>x + 1 &lt; x</code> is always false. gcc 14.2.0 at <code>-O2</code> compiles the function to <code>xorl %eax, %eax; ret</code> — return false, unconditionally (Lab 1). Same license, loop form: <code>for (int i = 0; i + 1 &gt; i; i++)</code> — the exit test is always true under the assumption, so it is deleted and the loop becomes three instructions ending in <code>jmp</code> back to itself: an unconditional infinite loop. Revoke the license project-wide with <code>-fwrapv</code> (defined two's-complement wraparound) — the Linux kernel historically did exactly that.</p>
+<p><strong>The deleted null check.</strong> Read this as facts, not lines:</p>
+<pre><code class="language-c">int deref_then_check(int *p) {
+    int v = *p;        /* if p were null, UB right here */
+    if (p == 0)        /* so: p is provably non-null    */
+        return -1;     /* this branch is dead           */
+    return v;
+}</code></pre>
+<p>The dereference <em>proves</em> non-nullness for everything after it. gcc 14.2.0 at <code>-O2</code> emits <code>movl (%rdi), %eax; ret</code> — check gone, <code>-Wall</code> silent (verified). The production disaster shape: the deref sits in an earlier statement (a log line touching <code>p-&gt;value</code>), the defensive check later; the crash lands at the deref, and the post-mortem shows a function that "obviously checks for null." Check <em>first</em>, or use clang's static analyzer / gcc's <code>-fanalyzer</code>, which do catch the shape.</p>
+<p><strong>The flag that never flips.</strong></p>
+<pre><code class="language-c">int ready, data;
+int spin_wait(void) {
+    while (ready == 0)   /* plain load — may be hoisted */
+        ;
+    return data;
+}</code></pre>
+<p>gcc 14.2.0 at <code>-O2</code> hoists the load and emits <code>.L3: jmp .L3</code> — read once, spin forever; the other thread's write is never seen (and it is also a C11 data race — UB twice over). The Linux kernel's <code>barrier()</code> is the cure:</p>
+<pre><code class="language-c">#define barrier() __asm__ __volatile__ ("" ::: "memory")</code></pre>
+<p>An empty instruction costing zero bytes of machine code that the optimizer must treat as potentially touching all memory: nothing hoists across it, no store near it is provably dead. With the barrier in the body, gcc reloads <code>ready</code> every iteration (verified). Why not <code>volatile</code>? <strong>volatile is not a memory model.</strong> It forces the reload but guarantees no ordering between the volatile flag and the plain <code>data</code> write, no atomicity, and a racy volatile read is still a data race. The correct tool is C11 atomics with explicit memory order — module 09 ch01's subject; the kernel grew <code>READ_ONCE</code>/<code>WRITE_ONCE</code> for the same reason.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>restrict</code> and <code>&amp;mut</code> are aliasing contracts, not optimizations.</strong> They add no instruction — they <em>license</em> others to. Violating <code>restrict</code> compiles clean and detonates only at <code>-O2</code>; violating <code>&amp;mut</code> (via unsafe pointer casting) lies to both Rust and LLVM's <code>noalias</code> attribute, which inlining propagates into aggressively wrong code.</li>
+<li><strong>DSE deleting your memset is not a compiler bug.</strong> The fix list: <code>memzero_explicit</code> (kernel, barrier-based), <code>explicit_bzero</code> (glibc ≥ 2.25), <code>memset_s</code> (C11 Annex K/MSVC).</li>
+<li><strong><code>-ftrivial-auto-var-init=zero|pattern</code></strong> (clang ≥ 8, gcc ≥ 12) converts the whole uninitialized-read family (module 03 ch02) into defined behavior; sub-1% fleet cost in Google's published measurements, shipped in Android platform builds. It does <em>not</em> save an explicit memset-before-free — that's the DSE bullet.</li>
+<li><strong>The null-check-after-deref removal is silent.</strong> gcc 14.2.0's <code>-Wall</code> reports nothing (verified); clang's static analyzer and gcc <code>-fanalyzer</code> do. In review, look for dereferences lexically <em>above</em> null checks in the same function.</li>
+<li><strong>volatile is not a memory model</strong> (a C11 footnote says so): no ordering with non-volatile accesses, no atomicity, racy volatile reads are still UB. Kernel <code>barrier()</code> is the zero-cost "forget what you know" switch; <code>READ_ONCE</code>/<code>WRITE_ONCE</code> are what the kernel actually uses for flags.</li>
+<li><strong>The as-if rule is a clause, not a metaphor</strong> — C11 §5.1.2.3's observable behavior is volatile accesses, I/O, and atomic synchronization, nothing else. "The compiler broke my code" arguments are arguments about what counts as observable; UB is unobservable by construction.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>All labs verified on <strong>gcc 14.2.0 (Debian, x86-64)</strong>; clang 18 equivalents noted where they differ. Every fragment is real output.</p>
+<p><strong>Lab 1 — the deleted overflow check.</strong></p>
+<pre><code class="language-c">/* ovf.c */
+#include &lt;stdbool.h&gt;
+bool wrapped(long x) {
+    if (x + 1 &lt; x)   /* signed overflow would be UB here */
+        return true;
+    return false;
+}</code></pre>
+<pre><code class="language-text">$ gcc -O2 -S ovf.c &amp;&amp; sed -n '/wrapped:/,/ret/p' ovf.s
+wrapped:
+        .cfi_startproc
+        xorl    %eax, %eax      # return false — the branch is gone
+        ret</code></pre>
+<p>Notice: no compare, no branch. Recompile with <code>-fwrapv</code> — the compare comes back: wraparound is now defined.</p>
+<p><strong>Lab 2 — the memset that never ran.</strong></p>
+<pre><code class="language-c">/* wipe.c */
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+void wipe_and_free(char *buf, size_t n) {
+    memset(buf, 0, n);
+    free(buf);
+}</code></pre>
+<pre><code class="language-text">$ gcc -O2 -S wipe.c &amp;&amp; sed -n '/wipe_and_free:/,/ret/p' wipe.s
+wipe_and_free:
+        .cfi_startproc
+        jmp     free@PLT        # memset deleted; tail-call to free</code></pre>
+<p>Notice: the whole function is a tail-call to <code>free</code> — the memset never ran. Swap in <code>explicit_bzero(buf, n)</code> (glibc ≥ 2.25) and it survives; <code>gcc -O2 -fdump-tree-optimized -c wipe.c</code> shows the IR body is just <code>free (buf_2(D)); [tail call]</code>.</p>
+<p><strong>Lab 3 — one keyword, 999 loads (LICM + restrict).</strong> Compile the <code>sum_aliased</code> code with <code>gcc -O2 -S licm.c</code> and diff the two loops: the aliased version reloads <code>addl (%rdi), %ecx</code> inside <code>.L3</code>; with <code>restrict</code> on <code>b</code>, the load sits before the loop as <code>movl (%rdi), %eax</code>.</p>
+<p><strong>Lab 4 — read the remarks.</strong></p>
+<pre><code class="language-text">$ gcc -O2 -fopt-info-inline-optimized -c remark.c
+remark.c:7:56: optimized:  Inlining dot/0 into top/1.</code></pre>
+<p>LLVM's <code>-Rpass</code> is the same idea: <code>clang -O2 -Rpass=dse wipe.c</code> prints one remark per deleted store pointing at the memset's source line; <code>-Rpass-missed=licm</code> explains what failed to move — the fastest way to find a hidden alias.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>The -O0/-O2 debugging bridge.</strong> A bug that only reproduces at <code>-O2</code> is one of three licenses: uninitialized read, UB-removed check, or an aliasing assumption. Bisect the <em>flags</em>, not the code: try <code>-O1</code>, then <code>-O2 -fno-strict-overflow</code>, then <code>-ftrivial-auto-var-init=zero</code> — whichever flips the bug names the family. When gdb says <code>&lt;value optimized out&gt;</code>, that is SROA working as designed: recompile that file with <code>-Og</code> instead of hunting ghosts.</li>
+<li><strong>Write scrubs that survive.</strong> Heap secrets: <code>explicit_bzero</code>/ <code>memzero_explicit</code> before free. Stack secrets die with the frame — unless a copy escaped; audit the escape, not the memset.</li>
+<li><strong>Keep hot structs un-escapable.</strong> One <code>&amp;p</code> handed to a log call pins the object to memory and disables SROA for it. Pass fields, not addresses, on hot paths.</li>
+<li><strong>Review C/unsafe-Rust interop as aliasing claims.</strong> Every <code>&amp;mut</code> crossing into C is a <code>noalias</code> promise made <em>to LLVM</em>; one aliased raw pointer underneath makes the optimizer wrong in both languages at once. (Interview version: "why did the null check disappear?" — the deref-before-check shape, <code>movl (%rdi), %eax; ret</code> as proof.)</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch04 (the stack)</strong> — the frame SROA destroys is the frame that chapter drew; spill slots (ch03 here) are the only locals that come back.</li>
+<li><strong>Module 01 ch08 (C)</strong> — UB as contract; this chapter is the contract cashed in, pass by pass.</li>
+<li><strong>Module 01 ch10 (Rust)</strong> — the borrow checker reread as a compile-time alias analysis whose facts LLVM consumes as <code>noalias</code>.</li>
+<li><strong>Module 03 ch02 (memory-bug family)</strong> — the 42-vs-1 uninitialized experiment, closed here by mem2reg; the UAF bytes DSE calls "gone" are the ones module 03's attackers read.</li>
+<li><strong>Module 03 ch04 (numeric family)</strong> — the compiler side of overflow bugs: <code>x+1 &gt; x</code> is only always-true because the bug is UB.</li>
+<li><strong>Module 09 ch01 (happens-before)</strong> — <code>barrier()</code> and volatile-vs-atomics seen from inside the optimizer.</li>
+<li><strong>Module 04 ch03 (reading disassembly)</strong> — recognize these shapes in binaries: a missing check, a hoisted load, a dissolved struct.</li>
+<li><strong>This module ch01</strong> (SSA and the phi — SROA's raw material), <strong>ch03</strong> (where dissolved scalars get registers), <strong>ch04</strong> (escape analysis as SROA for GC languages), <strong>ch05</strong> (the ABI boundary — memory stops being dissolvable when a call must agree on layout).</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>(Concept)</strong> Distinguish <em>may-alias</em> from <em>must-alias</em>, and name one optimization each licenses or blocks.</li>
+<li><strong>(Bug-diagnosis)</strong> Production crash: <code>deref_then_check</code> faults at the <code>*p</code> load; the core shows <code>if (p == 0)</code> never compiled. Why is the check gone, why is <code>-Wall</code> silent, and what source change restores it?</li>
+<li><strong>(Predict)</strong> For the SROA diagram's function (<code>p.a = x*2; p.b = y+3; return p.a + p.b;</code>): how many stack slots does the <code>-O0</code> frame use, and what single x86-64 instruction does <code>-O2</code> emit for the whole function?</li>
+<li><strong>(Bug-diagnosis)</strong> A worker thread spinning on a plain <code>int ready</code> never exits the loop at <code>-O2</code> but works at <code>-O0</code>. Give the compiler's transformation and the language-level license. <em>(Connects module 09 ch01.)</em></li>
+<li><strong>(Predict)</strong> In <code>sum_aliased(p, p, 1000)</code>: how many times is <code>*a</code> loaded per call at <code>-O2</code>? What changes with <code>int * restrict b</code> — and why is calling the restrict version that way wrong?</li>
+<li><strong>(Concept)</strong> Security files "the compiler deleted our memset" as a bug. Argue the compiler's side from the as-if rule, and give two counters.</li>
+<li><strong>(Bug-diagnosis)</strong> A freed 1 KB heap chunk in a core dump still contains the plaintext key, though the code calls <code>memset</code> right before <code>free</code>. Which pass removed the write, on what grounds, and what is the one-line fix?</li>
+<li><strong>(Predict, cross-module)</strong> Module 03 ch02's program prints <strong>42 at <code>-O0</code></strong> and <strong>1 at <code>-O2</code></strong> on gcc 14.2.0. Explain both numbers with this chapter's passes. <em>(Connects module 03 ch02 and module 01 ch04.)</em></li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>May-alias</strong> — "cannot prove they differ" — is the pessimistic answer; it <em>blocks</em> redundant-load elimination, store forwarding, LICM hoisting, and vectorization, because a store through <code>q</code> might invalidate what the pass assumed about <code>p</code>. <strong>Must-alias</strong> — "provably same object and offset" — licenses store-to-load <em>forwarding</em>: the load becomes the stored value, no memory access.</li>
+<li>The dereference runs first in the dataflow sense: a null <code>p</code> there is already UB, so the optimizer assumes it never happens — <code>p</code> is provably non-null afterwards, the branch is dead, leaving <code>movl (%rdi), %eax; ret</code>. <code>-Wall</code> stays silent because nothing is violated (gcc 14.2.0, verified). Fix: put the null check before <em>any</em> dereference, including ones hidden in earlier log statements — or run clang's static analyzer / gcc <code>-fanalyzer</code>.</li>
+<li>Four slots at <code>-O0</code> — <code>p.a</code> and <code>p.b</code> (the 8-byte aggregate) plus spilled copies of parameters <code>x</code> and <code>y</code> (verified: offsets -8, -4, -20, -24 on rbp; gcc spills incoming registers at <code>-O0</code>). At <code>-O2</code>, SROA + mem2reg dissolve <code>p</code> and everything folds into one instruction: <code>leal 3(%rsi,%rdi,2), %eax</code> — <code>2*x + y + 3</code> in a single addressing mode.</li>
+<li>The compiler hoisted the invariant load of <code>ready</code> (no may-aliasing store in the empty body), read the flag once, and compiled the loop to <code>.L3: jmp .L3</code> — a self-jump that can never observe the other thread's store (gcc 14.2.0, verified). The license: the unsynchronized read/write of a plain <code>int</code> is a C11 data race, hence UB, hence unobservable — hoisting is as-if-correct. Fix with atomics (module 09 ch01) or the kernel's <code>barrier()</code>/<code>READ_ONCE</code>, not <code>volatile</code> alone.</li>
+<li>Aliased: <strong>1,000 loads</strong> — the store <code>b[i] = i</code> may-aliases <code>*a</code> (here it must-alias, <code>a == b</code>), so the load stays in the loop. With <code>restrict</code>: <strong>1 load</strong>, hoisted before the loop. Calling the restrict version as <code>sum_restrict(p, p, n)</code> breaks the contract — "all accesses to this object are based on <code>b</code>" is false because <code>a</code> accesses it too — which is UB.</li>
+<li>The as-if rule preserves observable behavior; a store no legal load can ever observe is not observable. After <code>free</code>, the object's lifetime is over, no subsequent load is legal, so the memset's effect is unobservable and deleting it is as-if-correct (CWE-14). Counters: <code>explicit_bzero</code>/<code>memzero_explicit</code> for the free case; <code>-ftrivial-auto-var-init=zero</code> (clang ≥ 8, gcc ≥ 12) for the uninitialized-stack case.</li>
+<li><strong>DSE</strong> removed it, on the ground that <code>free</code> clobbers the entire object — post-lifetime stores are dead (verified: <code>jmp free@PLT</code>, gcc 14.2.0). One-line fix: <code>explicit_bzero(key, 1024);</code> (glibc ≥ 2.25) or <code>memzero_explicit()</code> — both built so DSE cannot prove the bytes dead.</li>
+<li>At <code>-O0</code>, every local has a fixed alloca slot; <code>f</code>'s uninitialized <code>x</code> occupies the offset <code>dirty</code>'s locals used one call earlier, and <code>dirty(41,1)</code> left 41 there — stack reuse (module 01 ch04) — so <code>x + 1</code> prints 42. At <code>-O2</code>, mem2reg promotes locals to SSA values; <code>x</code> never gets a memory home, the read is UB, and the optimizer folds <code>x + 1</code> to a constant (0 + 1), printing 1. Neither number is right — the UB is the same, only the evidence differs.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 10 — Compilers &amp; runtime internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

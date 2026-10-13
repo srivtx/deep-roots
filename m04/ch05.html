@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decompilers — deep-roots</title>
+<meta name="description" content="Chapter 05 of module 04: Decompilers">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Decompilers — deep-roots">
+<meta property="og:description" content="Chapter 05 of module 04: Decompilers">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Decompilers — deep-roots">
+<meta name="twitter:description" content="Chapter 05 of module 04: Decompilers">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 04 &middot; reading what compilers leave behind</div>
+<h1 class="post-title">Decompilers</h1>
+<div class="post-meta">chapter 05 &middot; ~13 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A decompiler runs the compiler backwards — not by "uncompiling," which is impossible, but by <em>re-deriving</em> an equivalent program from the bytes: disassemble, lift to a clean IR (p-code, microcode, BNIL), run data-flow analysis, recover variables, guess types, re-structure the CFG into if/while. Structure comes back — call graph, frame sizes, constants, vtable calls — because structure is <em>semantics</em>. Names, comments, macros, and templates never come back because they never were. The output is a <em>witness</em> — a program with the same behavior — not <em>the</em> program, and reading it well means knowing where the heuristics guessed.</blockquote>
+<h2 id="inverting-a-many-to-one-map">Inverting a many-to-one map</h2>
+<p>Compiling is a function from source programs to byte sequences, and that function is many-to-one: rename every variable, expand a macro, inline a <code>static</code> helper — the bytes do not move. So the inverse "take bytes, produce the source" has no unique answer, and no algorithm can pick the right one, because nothing in the output distinguishes the candidates. Renaming alone is a semantics-preserving bijection: <code>user_count</code> and <code>local_18</code> compile to the same register moves.</p>
+<p>That fact organizes the field. A decompiler cannot aim for <em>the</em> source; it can only aim for <em>a</em> program whose observable behavior matches the bytes. Everything recoverable is recoverable because it constrains behavior; everything lost was erased precisely when it stopped affecting behavior. The pipeline below is the shortest derivable path from bytes to a readable, behavior-equivalent program.</p>
+<h2 id="the-pipeline-lift-analyze-structure">The pipeline: lift, analyze, structure</h2>
+<pre><code class="language-text">  bytes in        THE DECOMPILER PIPELINE (Ghidra/IDA/Binary Ninja)      C-shaped text
+ (ELF .text)                                                                  (a witness)
+
++---------+    +-----------+    +-----------------+    +----------------+    +----------------+
+| 8b 45   |--&gt; | DISASM:   |--&gt; | LIFT to IR:     |--&gt; | DATA-FLOW:     |--&gt; | STRUCTURING:   |
+| 10 89 5c|    | recursive |    | p-code /        |    | def-use chains |    | CFG -&gt; if/else |
+| 24 fc ..|    | descent   |    | microcode /     |    | const propag.  |    | while; render  |
++---------+    +-----------+    | BNIL            |    | alias analysis |    | variables      |
+               follow calls,   +-----------------+    +----------------+    +----------------+
+               mark code/data     ^        |                ^      |
+                                   |        v                |      v
+                                   |   one simple op per     |   VARIABLE RECOVERY:
+                                   |   step: flags folded,   |   stack slots + registers
+                                   |   mem ops explicit,     |   coalesced into locals
+                                   |   registers -&gt; SSA      |   + TYPE PROPAGATION
+                                   |   values (varnodes)     |      (feeds back upward)</code></pre>
+<p><strong>Disassembly</strong> comes first (chapter 03's recursive-descent recipe: follow the calls, decode what is reached). The result is still unusable for reasoning: x86-64 has flags as hidden side effects — <code>cmp</code> writes 6 bits of state that a later <code>jcc</code> silently reads — plus memory operands buried inside arithmetic and one register storage with four meanings (<code>al</code>, <code>ax</code>, <code>eax</code>, <code>rax</code>).</p>
+<p><strong>Lifting</strong> fixes that: each native instruction becomes a sequence of RISC-like IR operations that expose every implicit effect:</p>
+<ul>
+<li><strong>Ghidra p-code</strong> (Ghidra 11.x): each instruction becomes one or more ops, each reading at most one memory location; state lives in <em>varnodes</em> — (address space, offset, size) triples, effectively infinite registers. <code>add rax, [rbx]</code> becomes LOAD, INT_ADD, STORE.</li>
+<li><strong>IDA microcode</strong> (Hex-Rays, IDA Pro 8/9): the same idea, refined through a ladder of maturity levels (generated → optimized → mature); decompiler plugins can rewrite the IR at each level before final C generation.</li>
+<li><strong>Binary Ninja BNIL</strong>: three exposed levels — LLIL (1:1 lift), MLIL (registers become SSA values, flag idioms folded into single comparisons), HLIL (structured, typed) — stepping between them is a UI action.</li>
+</ul>
+<p>The lift is where <code>cmp eax, 5</code> followed by <code>jg</code> collapses into one <code>INT_LESS</code> feeding a branch, and where <code>movsx</code>/<code>movzx</code> expose the signedness the machine was carrying implicitly.</p>
+<p><strong>Data-flow analysis</strong> then asks the classical questions: where each value is defined, which uses it reaches, what constants fold through, which stack slots alias — an optimizing compiler's analysis machinery, run in reverse, to <em>understand</em> instead of to <em>transform</em>.</p>
+<p><strong>Variable recovery</strong> coalesces the IR's per-register and per-slot values into source-like variables: <code>[rbp-0x18]</code> becomes <code>local_18</code>. But the compiler's register allocator already ran: two slots that never hold simultaneously-live values at <code>-O1</code> and above are often merged into one — and the decompiler faithfully reports one variable where the source had two.</p>
+<p><strong>Type propagation</strong> spreads guesses outward from anchors: a <code>malloc(0x18)</code> return is a 24-byte something; a pointer stored into an object slot then loaded and called through is a vptr (chapter 04). Every constraint propagates to every consumer, so one good anchor types a dozen functions.</p>
+<p><strong>Structuring</strong> turns the control-flow graph back into if/else/while. The honest limit, in three steps: (1) goto-free C generates exactly the <em>reducible</em> CFGs; (2) compilers occasionally emit irreducible flow (computed <code>goto</code>, Duff's-device-shaped switches, some optimized state machines); (3) any irreducible CFG <em>can</em> be structured by duplicating blocks (node splitting), but duplication can blow up exponentially in the worst case. Every structurer picks a compromise: duplicate a little, wrap the rest in <code>goto</code>, or invent a flag-and-loop shape the source never had. Cifuentes' 1994 thesis — the founding document of modern decompilation — already said it: perfect structuring is not always possible, and <code>goto</code> in decompiler output is not a bug, it is the proof.</p>
+<h2 id="what-survives-what-is-gone-forever">What survives, what is gone forever</h2>
+<pre><code class="language-text">   COMES BACK (behavior constrains it)        GONE FOREVER (never was behavior)
+   -------------------------------------      ------------------------------------
+   direct call graph     call rel32           names          renaming is free
+   stack frame sizes     push rbp; sub rsp,N  comments       never compiled
+   register locals       every def/use        high-level int/unsigned split
+   constants             immediates + .rodata macros         erased pre-parse
+   jump tables           data at fixed addr   templates      -&gt; concrete instances
+   vtable calls          vptr + table layout  inlining choices, branch pruning,
+                                               which overload, NDEBUG branches</code></pre>
+<p>The right column is not "hard to recover" — it is <em>provably absent</em>. Macros expand before parsing; a macro and its expansion are one program by the time codegen runs. Templates stamp out concrete instances: <code>max&lt;int&gt;</code> and <code>max&lt;long&gt;</code> compile to two unrelated functions, and the fact that they shared a source template is gone. Compile-time decisions — the inlined helper, the bounds check removed because the compiler proved the index in range, the <code>#ifdef DEBUG</code> block — are erased by the same rule: once they can't change behavior, they don't exist.</p>
+<h2 id="type-guessing-heuristics-all-the-way-down">Type guessing: heuristics all the way down</h2>
+<p>Since types are gone, decompilers reconstruct them from three families of evidence, weakest to strongest:</p>
+<ol>
+<li><strong>Sizes at call sites.</strong> <code>mov edi, 0x18; call malloc</code> means "allocate 24 bytes"; writes to <code>+0x10</code> and <code>+0x14</code> in that region are 4-byte fields at offsets 16 and 20; untouched offsets 0–15 are an array, padding, or a field written elsewhere. Accumulate enough offsets and a struct layout emerges — chapter 03 built exactly this by hand.</li>
+<li><strong>API consumption.</strong> A value passed to <code>fopen</code> is a <code>FILE *</code>; a 32-byte object passed to libstdc++ string methods matches the SSO layout of chapter 04 (64-bit: 15-char inline threshold, pointer/capacity/size union). Known-library identification (Ghidra's FID, IDA's FLIRT) imports thousands of such types at once.</li>
+<li><strong>Struct-field offsets, propagated.</strong> One call site typed, all callers inherit constraints. Propagation is self-reinforcing — the feature and the trap: one wrong signature poisons a neighborhood, which is why fixing one signature and watching the spread is the standard first ten minutes of a session.</li>
+</ol>
+<p>The output labels — <code>undefined4</code>, <code>int *</code>, <code>Player *</code> — are <em>hypotheses with confidence levels</em>, not facts. Ghidra says so literally: its default integer type is <code>undefined</code>, an admission.</p>
+<h2 id="where-decompilers-lie">Where decompilers lie</h2>
+<p>Four failure modes account for most wrong decompilations you will meet:</p>
+<ul>
+<li><strong>Variable merge/split errors.</strong> The compiler merged two source variables into one stack slot (disjoint live ranges); the decompiler shows a single <code>local_18</code> that is a <code>char *</code> for twenty lines and an <code>int</code> after. The mirror image: one source variable spilled across a register <em>and</em> a stack slot becomes two decompiler variables with no visible relation.</li>
+<li><strong>Inlined functions.</strong> At <code>-O2</code> the helper's boundary is gone — a 400-line decompiled "function" is five helpers plus their caller, with no call edges. The call graph silently undercounts.</li>
+<li><strong>Optimized-away bounds.</strong> Signed-overflow UB and provably-narrow ranges let the compiler delete checks that <em>exist in the source</em>. The decompiled code "has no bounds check" — and the analyst concludes the programmers never wrote one. Sometimes the compiler ate it: diff an <code>-O0</code> build before blaming anyone.</li>
+<li><strong>Indirect calls.</strong> <code>call qword ptr [rax+0x18]</code> has no statically known target: no call-graph edge, no argument-type constraint, no propagation. In optimized C++ a large fraction of edges are virtual dispatch (vtables and RTTI — chapter 04 — recover those); the rest — runtime-built function tables, op tables in bytecode VMs (chapter 06) — need dynamic reasoning the decompiler does not attempt. This is <em>the</em> hole: the target set CFI would need is exactly the set the decompiler cannot see.</li>
+</ul>
+<h2 id="scripting-the-headless-loop">Scripting: the headless loop</h2>
+<p>Everything above is automatable. Ghidra ships <code>analyzeHeadless</code>; IDA runs <code>idat64 -A -Sscript.py</code>; Binary Ninja is importable (<code>import binaryninja</code>). The canonical loop: nightly build → headless decompile → export signatures → diff against last night. Ghidra 11.3 (2025) removed Jython in favor of PyGhidra/Python 3. The vtable-write census from chapter 04 in about ten lines (Ghidra 11.x; API names drift slightly between versions):</p>
+<pre><code class="language-python"># vtable_writes.py -- list every store of a vtable address (the vptr write)
+listing = currentProgram.getListing()
+for ins in listing.getInstructions(True):        # every instruction, in order
+    if ins.getMnemonicString() in ("MOV", "MOVABS"):
+        for ref in ins.getReferencesFrom():      # refs from operands
+            if str(ref.getReferenceType()) == "DATA":
+                # MOV [mem], offset vtable -&gt; the vptr store pattern (ch. 04)
+                print("%s: %s -&gt; vtable at %s"
+                      % (ins.getAddress(), ins, ref.getToAddress()))</code></pre>
+<p>Run it headless:</p>
+<pre><code class="language-bash">support/analyzeHeadless /tmp/ghidra-projects m04ch05 \
+    -import /tmp/lab5/lab5.o -postScript vtable_writes.py</code></pre>
+<p>In IDA and Binary Ninja the equivalent hook is the function-type editor: set a prototype once (<code>Y</code> in both) and it propagates into every caller.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li>Names are <em>provably</em> unrecoverable: renaming is a semantics-preserving bijection, so no algorithm — present or future — can pick the original. <code>uVar1</code> and <code>local_10</code> are not failure; they are the theorem.</li>
+<li>The variable-merge trap is the #1 misread: one variable serving two unrelated types across a loop boundary. Test by widening the type and watching one half of the uses break — that half was a different source variable.</li>
+<li>Indirect calls are the structural hole: in a typical optimized C++ binary a double-digit percentage of dispatch is virtual or function-pointer based (varies per binary), and the static call graph omits all of it. Never trust "X is never called" from a static graph.</li>
+<li>Diff-tool economics: BinDiff 7+ (2023) is free for non-commercial use; Diaphora is free (GPL) on top of IDA. Minutes of compute turn a vendor patch into "these 12 changed functions" — the patched bounds check <em>is</em> the vulnerability write-up. That is the 1-day economy, and why patch-gap windows are measured in days.</li>
+<li>Headless entry points are where professional work happens: <code>analyzeHeadless</code> (Ghidra), <code>idat -A -S</code> (IDA), <code>import binaryninja</code> (Binja) — analysis that isn't in CI doesn't happen nightly.</li>
+<li>The custom passes live at the IR level: IDA decompiler plugins rewrite microcode before C generation — how D-810-style deobfuscation passes un-flatten control flow inside the decompiler, not by patching bytes.</li>
+<li>The twin-build trick: decompile the <code>-O0</code> build for structure and pseudo-names, the <code>-O2</code> build for what ships. The union is closer to the truth than either alone.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Ghidra is not in this module's toolchain, so the Ghidra part is commands plus <em>described</em> output — run it if you have a copy; the rest reproduces anywhere with <code>gcc</code> and <code>objdump</code> (verified here on Debian gcc 14.2.0, x86-64).</p>
+<p><strong>Part 1 — Ghidra headless (commands; expected output described).</strong></p>
+<pre><code class="language-bash">mkdir -p /tmp/ghidra-projects /tmp/lab5
+support/analyzeHeadless /tmp/ghidra-projects m04ch05 \
+    -import /tmp/lab5/lab5.o -postScript vtable_writes.py</code></pre>
+<p>Expected: an import report (<code>Import succeeded</code>, <code>Analysis succeeded</code>, function count 2) plus the script's output. In the GUI, <code>sum_abs</code> decompiles roughly so — variable <em>names</em> will differ, the <em>shape</em> will not (described, not run):</p>
+<pre><code class="language-c">int sum_abs(int *a, int n)
+{
+    int total;
+    if (n &lt; 1) {
+        total = 0;
+    }
+    else {
+        do {
+            total = total + (*a &lt; 0 ? -*a : *a);
+            a = a + 1;
+        } while (a != a_end);
+    }
+    return total;
+}</code></pre>
+<p>A <code>do-while</code> with a guard — not the <code>for</code> loop that was compiled. The structurer chose guard + do-while; the source's counter is absent for the reason Part 2 exposes.</p>
+<p><strong>Part 2 — hand-structuring the same function via objdump.</strong></p>
+<pre><code class="language-bash">cd /tmp/lab5
+gcc -O2 -c lab5.c -o lab5.o
+objdump -d --no-show-raw-insn -M intel lab5.o | sed -n '/&lt;sum_abs&gt;:/,/^$/p'</code></pre>
+<pre><code class="language-text">0000000000000020 &lt;sum_abs&gt;:
+  20:  test   esi,esi
+  22:  jle    60 &lt;sum_abs+0x40&gt;          ; if (n &lt;= 0) skip the loop
+  24:  movsxd rsi,esi                    ; n sign-extended to 64-bit
+  27:  xor    ecx,ecx                    ; total = 0
+  29:  lea    rsi,[rdi+rsi*4]            ; end = a + n (pointer arithmetic!)
+  40:  mov    edx,DWORD PTR [rdi]        ; v = *a
+  42:  mov    eax,edx
+  44:  neg    eax                        ; t = -v
+  46:  cmovs  eax,edx                    ; if sign: t = v    (abs idiom)
+  49:  add    rdi,0x4                    ; a++
+  4d:  add    ecx,eax                    ; total += |v|
+  4f:  cmp    rdi,rsi
+  52:  jne    40 &lt;sum_abs+0x20&gt;          ; while (a != end)
+  54:  mov    eax,ecx
+  56:  ret</code></pre>
+<p>The source loop was <code>for (int i = 0; i &lt; n; i++) total += abs(a[i])</code>. The compiler deleted <code>i</code>: the induction variable became pointer arithmetic (<code>lea</code> for <code>end</code>, <code>add rdi,4</code> for the increment, <code>cmp</code> of two <em>pointers</em> for the condition). A decompiler can only emit what the dataflow supports — a pointer walking to an end — so the index variable is unrecoverable <em>by construction</em>, the same theorem as the names. Hand-write what a decompiler would emit — guard, do-while, abs idiom, pointer increment — and compare with Part 1.</p>
+<p><strong>Part 3 — verify the struct heuristic from call-site sizes.</strong></p>
+<pre><code class="language-bash">objdump -d --no-show-raw-insn -M intel lab5.o | sed -n '/&lt;make_player&gt;:/,/^$/p'</code></pre>
+<pre><code class="language-text">0000000000000000 &lt;make_player&gt;:
+   0:  push   rbx
+   1:  mov    ebx,edi                   ; save hp (callee-saved spill)
+   3:  mov    edi,0x18                  ; malloc(24)  &lt;- struct size evidence
+   8:  call   d &lt;make_player+0xd&gt;       ; (relocated call in a .o)
+  12:  mov    DWORD PTR [rax+0x10],ebx  ; p-&gt;hp = hp       offset 16, 4 bytes
+  15:  mov    DWORD PTR [rax+0x14],0x1  ; p-&gt;level = 1     offset 20, 4 bytes
+  1c:  pop    rbx
+  1d:  ret</code></pre>
+<p>Read it as a type inference: 24-byte allocation; 4-byte fields at 16 and 20; offsets 0–15 untouched here → 16-byte array or padding. Candidate layout:</p>
+<pre><code class="language-text">offset  0x00 +------------------------+
+             | 16 bytes (name[16]?)   |  &lt;- inferred from the untouched gap
+       0x10 +------------------------+
+             | int hp                 |  &lt;- write at +0x10
+       0x14 +------------------------+
+             | int level              |  &lt;- write at +0x14
+       0x18 +------------------------+  &lt;- total 0x18 = 24 bytes</code></pre>
+<p>Verify against ground truth: <code>sizeof(struct Player)</code> is 24 on this toolchain, which is why <code>0x18</code> appeared in <code>edi</code>. The heuristic is defeasible — that gap could be pure padding — which is the point: it produces hypotheses you <em>test</em>, not facts you trust.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Crash triage in stripped third-party binaries</strong>: decompile the frames on the stack and read recovered locals instead of raw asm — the difference between minutes and hours.</li>
+<li><strong>Patch-gap defense</strong>: diff your vendor's update against the previous version before reading any advisory; the changed function plus a new bounds check <em>is</em> the CVE, so you can prioritize mitigation before the public write-up lands.</li>
+<li><strong>Audit your own release builds</strong>: decompile your own <code>-O2</code> output — if a bounds check you wrote is gone (proved redundant, or UB-assumed), you found either reassurance or a latent bug, cheaply.</li>
+<li><strong>Malware first 30 minutes</strong>: headless decompile plus a scripted import/string/indirect-call census, then read chapter 06's dispatcher loops as the recognizable shapes they are.</li>
+<li><strong>Interviews</strong>: "names are unrecoverable because renaming preserves semantics; perfect structuring is impossible because irreducible CFGs exist" — three sentences that beat any tool-naming answer.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 04 Chapter 03</strong> — compiler idioms (field offsets, loop shapes, jump tables) are this chapter's type-guessing evidence; the decompiler industrializes those fingerprints.</li>
+<li><strong>Module 04 Chapter 04</strong> — vtables and RTTI are the strongest anchors on optimized C++: they patch part of the indirect-call hole and seed type propagation.</li>
+<li><strong>Module 04 Chapter 06</strong> — anti-analysis targets this pipeline: flattening attacks the structurer, MBA expressions the simplifier, virtualization the lift itself.</li>
+<li><strong>Module 01 Chapter 07</strong> — the register and calling-convention model is what makes signature guessing possible: argument registers are the ABI-encoded parameter list.</li>
+<li><strong>Module 10 Chapter 01</strong> — compilers emit SSA with phi nodes at joins; variable recovery converges on the same idea from the consuming side. One IR concept, both directions of the pipeline.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>A decompiled function recompiles and behaves identically to the original binary. A reviewer says "so we recovered the source." What is wrong with that claim, in one sentence?</li>
+<li>A stripped binary's function calls <code>malloc</code> with <code>edi = 0x18</code>, then writes 4-byte values at <code>+0x10</code> and <code>+0x14</code>, never touching <code>+0x0..+0xf</code>. Give the inferred struct layout, the total size, and one alternative explanation for the untouched 16 bytes.</li>
+<li>The source contains <code>for (int i = 0; i &lt; n; i++) total += abs(a[i]);</code> at <code>-O2</code>. What loop shape does the decompiler emit, what happened to <code>i</code>, and why can't any decompiler get <code>i</code> back?</li>
+<li>A prologue is <code>push rbx; sub rsp, 0x48</code> (x86-64, SysV). How many bytes does the decompiler report for the frame, and why might the C source's locals sum to less?</li>
+<li>In a decompilation, <code>local_18</code> is a <code>char *</code> in the first half of the function and an <code>int</code> counter after a loop; values appear to "clobber" each other across the loop. Diagnose: what did the compiler do, and what would confirm it?</li>
+<li>Your decompilation of an <code>-O2</code> build shows an array write with no bounds check, and you are about to file "missing bounds check." What must you check first, and why?</li>
+<li><code>call qword ptr [rax+0x18]</code> appears in a stripped C++ binary. Name the two consequences for the call graph and type propagation, and what recovers part of it.</li>
+<li>Module 10 Chapter 01: compilers build SSA with phi nodes at joins; decompiler variable recovery also merges values at joins. Which side's merge is exact, which is heuristic, and why?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Equivalence is not identity.</strong> Compiling is many-to-one — renaming, macros, and inlining choices erase without changing behavior — so the decompiler produced <em>a</em> program with matching behavior, one of infinitely many; the original source is not merely unknown, it is <em>undeterminable</em>.</li>
+<li>A 24-byte struct: 16 untouched bytes at offset 0, 4-byte fields at 0x10 and 0x14 — matching <code>char name[16]; int hp; int level</code> (<code>sizeof</code> is 24 on x86-64 gcc 14.2.0, hence the <code>0x18</code>). Alternative: offsets 0–15 could be pure alignment padding, or fields written only in other functions; corroboration (a later <code>memcpy</code> of 16 bytes) is what upgrades the hypothesis.</li>
+<li>A guard (<code>if (n &lt;= 0)</code>) plus a <code>do-while</code> over a <em>pointer</em> compared against an end pointer. <code>i</code> became address arithmetic (<code>lea</code>, <code>add rdi,4</code>, pointer <code>cmp</code>): the induction variable no longer exists as a value in the dataflow, and a decompiler can only name what the dataflow contains — the same erasure theorem as names.</li>
+<li>Frame = 8 (pushed <code>rbx</code>) + 0x48 (72) = 80 bytes, up to 72 attributed to locals. The source can sum to less: the compiler pads <code>sub rsp</code> so <code>rsp</code> stays 16-byte aligned per the SysV ABI at every call — some of those bytes are alignment slack, not variables. Frame size is an upper bound, not a count.</li>
+<li><strong>Variable merge error.</strong> At <code>-O1</code>+ the compiler put two source variables with disjoint live ranges in the <em>same</em> stack slot, and the decompiler faithfully reports one. Confirm by widening <code>local_18</code>'s type: the uses split into two consistent groups with no cross-dependencies — two variables, one slot.</li>
+<li>An <code>-O0</code> (or <code>-fsanitize=undefined</code>) build of the same source. At <code>-O2</code> a provably-redundant or UB-triggered check is <em>deleted</em> — the source had it; the compiler removed it because the index was provably in range or signed overflow made it undefined. The UB finding may be real, but "the check never existed" is usually false.</li>
+<li>The target is data, not code, so no static edge exists. Consequence one: the call graph omits this dispatch — "never called" claims are unreliable. Consequence two: no argument constraints propagate through the edge, so types degrade to guesses. If <code>[rax+0x18]</code> is a vtable slot, chapter 04's vtable/RTTI recovery reconstructs the candidate set; runtime-built function tables (chapter 06 VMs) stay dark.</li>
+<li>The compiler's merge is exact: it built the phi form from a source it still holds. The decompiler's merge is heuristic: it must <em>guess</em> which register values and stack slots were one source variable, using live ranges and offsets as evidence — and the compiler's slot-sharing (answer 5) is exactly where the guess fails. Same IR idea, opposite information budget.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch04.html"><span class="cn-label">previous</span><span class="cn-title">Ch 04</span></a>
+<a class="next" href="ch06.html"><span class="cn-label">next</span><span class="cn-title">Ch 06</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 04 — Decompilation &amp; reverse engineering</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

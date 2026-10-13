@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 03 final exam — deep-roots</title>
+<meta name="description" content="Final exam for module 03 (the four families and the machinery that finds them), with worked answers.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 03 final exam — deep-roots">
+<meta property="og:description" content="Final exam for module 03 (the four families and the machinery that finds them), with worked answers.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 03 final exam — deep-roots">
+<meta name="twitter:description" content="Final exam for module 03 (the four families and the machinery that finds them), with worked answers.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 03 &middot; the four families and the machinery that finds them &middot; final exam</div>
+<h1 class="post-title">Module 03 final exam</h1>
+<div class="post-meta">every chapter &middot; worked answers behind the fold</div>
+<p>Twelve questions across all five chapters. Closed book; every answer is worked, not stated — the derivations are the point. Scoring: 11+ = you own this module; 8-10 = solid, revisit the flagged chapters; &lt;8 = the quiz answers below each chapter are the study path.</p>
+<p><strong>Part I — the theory (chapter 01)</strong></p>
+<ol>
+<li><strong>(concept)</strong> A teammate closes your ticket: "not a bug — it does exactly what I wrote, and it ran in production for a decade." Between which two sets does a bug live, why is a decade of uptime evidence of nothing, and what are fault, error, and failure (one line each)?</li>
+</ol>
+<ol>
+<li><strong>(predict)</strong> A C function has 8 independent two-way branches; your two tests run the all-true and all-false inputs. (a) How many paths exist, and what do line, branch, and path coverage report? (b) Two threads each execute 5 atomic blocks per loop iteration, 3 iterations, order fixed within each — how many interleavings? Give the formula.</li>
+</ol>
+<p><strong>Part II — the memory family (chapter 02)</strong></p>
+<ol>
+<li><strong>(diagnose)</strong> Name the family, the mechanism, why it fires only when memory is tight, and the restructuring that kills the class:</li>
+</ol>
+<pre><code class="language-c">void set_name(struct user *u, const char *newname) {
+    free(u-&gt;name);
+    char *fresh = strdup(newname);
+    if (fresh == NULL) return;        /* out of memory */
+    u-&gt;name = fresh;
+}
+/* teardown() later calls free(u-&gt;name) for every user */</code></pre>
+<ol>
+<li><strong>(predict)</strong> What does this print at <code>-O0</code> and at <code>-O2</code> (GCC 14.2, x86-64), why, and which sanitizer can see the bug?</li>
+</ol>
+<pre><code class="language-c">static int f(void) { int x; return x + 1; }
+static void dirty(int a, int b) { int junk = a * b; (void)junk; }
+int main(void) { dirty(20, 2); printf("%d\n", f()); }</code></pre>
+<ol>
+<li><strong>(diagnose, cross-module)</strong> Name the violation against the chapter's invariant, what the NUL byte hits on the glibc heap, and the module 02 ch04 primitive it enables:</li>
+</ol>
+<pre><code class="language-c">char *name = malloc(24);   /* exact-fit chunk, filled with 24 user bytes */
+name[24] = '\0';           /* "make sure it's terminated" */</code></pre>
+<p><strong>Part III — the race family (chapter 03)</strong></p>
+<ol>
+<li><strong>(concept)</strong> Define data race and race condition, name the document that makes one of them undefined behavior, and give a race condition with zero data races. Why does a "benign" race on an aligned <code>int64_t</code> lose on 32-bit?</li>
+</ol>
+<ol>
+<li><strong>(diagnose)</strong> Name both diseases, derive (via module 01 ch20) how thread B can receive a half-built object even when the interleaving looks sequential, and state the fix:</li>
+</ol>
+<pre><code class="language-cpp">static Widget* instance;              // plain pointer
+static std::mutex m;
+Widget* get() {
+    if (instance == nullptr) {        // CHECK: unlocked read
+        std::lock_guard&lt;std::mutex&gt; g(m);
+        if (instance == nullptr)
+            instance = new Widget();  // ACT: allocate, construct, publish
+    }
+    return instance;
+}</code></pre>
+<ol>
+<li><strong>(predict)</strong> Two threads each increment a plain <code>long long counter</code> 1,000,000 times. (a) Derive the minimum and maximum final values. (b) A run prints 1,999,998 — how many updates were lost? (c) If a run prints exactly 2,000,000, does TSan report anything?</li>
+</ol>
+<p><strong>Part IV — numeric &amp; parsing (chapter 04)</strong></p>
+<ol>
+<li><strong>(predict)</strong> Compute or derive, exactly: (a) <code>uint16_t a = 65535, b = 65535; uint32_t c = a * b;</code> — the value of <code>c</code>, the hidden undefined behavior, and why <code>-Wall -Wextra -O2</code> is silent. (b) <code>int d = 0; int n = sscanf("3000000000", "%d", &amp;d);</code> — <code>n</code> and <code>d</code>. (c) A signed 32-bit <code>time_t</code>: when does it run out, and what date appears one second later?</li>
+</ol>
+<ol>
+<li><strong>(diagnose)</strong> Two review findings — for each, name the family, the mechanism, and the fix:</li>
+</ol>
+<pre><code class="language-c">/* w = 40000, h = 27000 — both attacker-chosen */
+struct px *buf = malloc(w * h * 4);
+for (int i = 0; i &lt; w * h; i++) buf[i] = parse_next();</code></pre>
+<pre><code class="language-python">b = "résumé".encode()     # len(b) = ?
+b[:7].decode()            # raises what?
+b[:7].decode("latin-1")   # ?</code></pre>
+<p><strong>Part V — finding bugs (chapter 05)</strong></p>
+<ol>
+<li><strong>(predict)</strong> On the classic static x86-64 ASan layout, compute the shadow address for 0x7f285db00028 (chapter 05's Lab 2 address). What do shadow values 0x00, 0x03, 0xf3, and 0xfd mean? Why is the mapping 1:8, and what are ASan's slowdown and memory budgets?</li>
+</ol>
+<ol>
+<li><strong>(concept)</strong> A team reports: "we fuzz the parser — 100% statement coverage, zero crashes in a week." Give the three questions that triage this claim, with answers. Then: 500 commits have landed since the last good release — how many <code>git bisect</code> runs, and what two properties must the test predicate have?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<p><strong>Part I</strong></p>
+<ol>
+<li>The bug lives between the <strong>spec</strong> (the intended input → behavior mappings, mostly unwritten) and the <strong>behavior</strong> the program plus its environment delivers; "what I wrote" pins only the second set (ch01 §1). A decade of uptime means the fault was never <em>activated</em> — divergence is a property of program plus environment, not of observation: un-activated, not verified. <strong>Fault</strong>: the defect in the code, static, cheap. <strong>Error</strong>: the deviated state an activated fault produces. <strong>Failure</strong>: delivered service deviating from spec (ch01 §5).</li>
+</ol>
+<ol>
+<li>(a) 2^8 = <strong>256 paths</strong>. The two tests report <strong>100% line and branch coverage</strong> — every <code>if</code> taken both ways — yet walk <strong>2/256 = 0.78%</strong> of the paths: tools count arcs, never paths (ch01 §2). (b) Thread A's 5 blocks placed among the 10 slots: C(10,5) = <strong>252</strong> interleavings per iteration; three independent iterations give 252^3 ≈ <strong>1.6 × 10^7</strong> — formula C(k1+k2, k1)^n. Tests slice this space linearly.</li>
+</ol>
+<p><strong>Part II</strong></p>
+<ol>
+<li>Memory family, lifetime violation: the <strong>double-free on the error path</strong> (ch02 §3). The gap between free and reassignment leaves a dangling copy; only the OOM return skips the fix-up, so teardown frees the chunk twice — error paths are untested; this one fires only when <code>strdup</code> fails, under memory pressure. ASan catches it by quarantining frees; glibc ≥ 2.29 may abort with <code>free(): double free detected in tcache 2</code> (the tcache key, module 01 ch19). Class-killer: assign the new pointer <em>before</em> freeing the old — no early return then observes a dangling copy.</li>
+</ol>
+<ol>
+<li><code>-O0</code> prints <strong>41</strong>: locals live at fixed frame offsets, and <code>f</code>'s <code>x</code> lands on the slot <code>dirty</code> left in <code>junk</code> (20 × 2 = 40) — stack reuse (module 01 ch04). <code>-O2</code> prints <strong>anything</strong> (commonly 1, a never-written register): the read is UB, so no value is correct. Family: memory — the invariant's "reads a value someone actually wrote" clause is violated. Only <strong>MSan</strong> sees it: the bits are in bounds and alive, so ASan and UBSan pass (ch02 §4, ch05 §4).</li>
+</ol>
+<ol>
+<li>Memory family, the <strong>region</strong> violated by exactly one byte — the off-by-one: 24 granted bytes own indices 0..23, 24 slots between 25 fenceposts, and <code>name[24]</code> writes the 25th (ch02 §2). The standard permits <em>forming</em> <code>name + 24</code> (end-iteration) but never dereferencing it. On glibc the byte hits the <strong>next chunk's size field</strong>, clearing its low byte and shrinking the recorded size: module 02 ch04's <strong>NULL-byte poisoning</strong> primitive, the root of overlapping-chunk exploits. ASan aborts on the store, redzone shadow at the line.</li>
+</ol>
+<p><strong>Part III</strong></p>
+<ol>
+<li><strong>Data race</strong> (a language-rules term): two accesses to one location, at least one a write, different threads, nothing synchronizing — undefined behavior per <strong>C11 §5.1.2.4</strong>. <strong>Race condition</strong> (a logic term): correctness depends on the interleaving. Zero data races, still a race condition: check-then-act with each half in its <em>own</em> critical section — every access synchronized, the sequence still wrong (ch03 §2). The aligned <code>int64_t</code> "benign" race is one load on x86-64 but <strong>two 32-bit loads</strong> on 32-bit x86/ARM — a writer between them leaves a torn value that never existed; UB on both platforms regardless (ch03 §2).</li>
+</ol>
+<ol>
+<li><strong>Both diseases.</strong> (1) The unlocked <code>instance == nullptr</code> read is a <strong>data race</strong> — UB. (2) The shape is a <strong>race condition</strong>: check-then-act. The half-built object: <code>new Widget()</code> is three events — allocate, construct, publish — and per module 01 ch20, writes reach other cores out of program order (store buffers, the SB litmus), so the pointer can become visible <em>before</em> the constructor's field stores; the fast path returns a partially built object despite sequential-looking code (ch03 §2). Fix: publish through <code>std::atomic&lt;Widget*&gt;</code> — release store to publish, acquire load on the fast path; one synchronization edge kills the race (Java <code>volatile</code>, JEP 133). Detector: TSan.</li>
+</ol>
+<ol>
+<li>(a) Minimum <strong>1,000,000</strong>, maximum <strong>2,000,000</strong>. <code>counter++</code> is read-modify-write; the worst interleaving is lockstep: both threads read the same v and write v+1, so each <em>pair</em> of increments advances the counter by 1: 2n increments, n advances (ch03 §1). Nothing forces a loss, so the max is 2n. (b) <strong>2</strong> lost updates. (c) <strong>TSan reports the race anyway</strong>: it convicts on order, not outcome — no happens-before edge between the pair means both stacks print even when the count is right (ch03, ch05 §4).</li>
+</ol>
+<p><strong>Part IV</strong></p>
+<ol>
+<li>(a) <code>c = 4,294,836,225</code> on the two's-complement wrap — but C11 §6.3.1.1 promotes both operands to <code>int</code> first, and 4,294,836,225 &gt; INT_MAX: <strong>signed overflow — UB in the intermediate</strong>, so any value is permitted. The <code>(uint32_t)</code> cast arrives one instruction too late; to the compiler it is just <code>int</code> × <code>int</code> — <code>-Wall -Wextra -O2</code> is silent, and only UBSan sees it (ch04). (b) <code>n = 1</code> (success reported), <code>d = −1,294,967,296</code>: 3,000,000,000 mod 2^32, read signed. UB per the standard; glibc wraps silently — <code>strtol</code> is the defined tool, saturating with <code>errno = ERANGE</code> (ch04). (c) 2^31 − 1 = 2,147,483,647 s at ~31,556,952 s/year ≈ 68.1 years from 1970: <strong>2038-01-19 03:14:07 UTC</strong>; one second later the sign bit flips to −2^31, reading <strong>1901-12-13 20:45:52 UTC</strong> (ch04).</li>
+</ol>
+<ol>
+<li>(a) A <strong>numeric</strong> bug that <em>ends</em> as a <strong>memory</strong> bug. <code>w * h * 4</code> is <code>int</code> arithmetic: 40,000 × 27,000 = 1,080,000,000 fits, but × 4 = 4,320,000,000 overflows INT_MAX and wraps to <strong>25,032,704</strong> — <code>malloc</code> succeeds at ~25 MB; the loop writes ~4.3 GB of pixels through it — heap overflow, module 02 ch04's view. The failure began in the size computation, not the loop; fix: check each factor in <code>size_t</code> before the call — <code>if (h != 0 &amp;&amp; w &gt; SIZE_MAX / h / 4) return NULL;</code> (ch04). (b) <code>len(b) = 8</code>: <code>é</code> is two bytes, twice. <code>b[:7]</code> = b'r\xc3\xa9sum\xc3' severs the final <code>é</code>'s lead byte from its continuation, so <code>.decode()</code> raises <code>UnicodeDecodeError ... unexpected end of data</code>; under <code>latin-1</code> it decodes to the mojibake 'rÃ©sumÃ' — the cut crashes, the mis-declared encoding corrupts silently. Fix: slice on characters, never bytes (ch04).</li>
+</ol>
+<p><strong>Part V</strong></p>
+<ol>
+<li>shadow = (0x7f285db00028 &gt;&gt; 3) + 0x7fff8000 = 0xfe50bb60005 + 0x7fff8000 = <strong>0xfe58bb58005</strong> (ch05 §4). <code>0x00</code>: all 8 granule bytes addressable; <code>0x03</code>: only the first 3; <code>0xf3</code>: stack right redzone; <code>0xfd</code>: freed — quarantined, how ASan catches use-after-free after the free. One shadow byte describes 2^3 = 8 application bytes, so 47-bit app space needs a 16 TiB shadow <em>inside the same address space</em>; one linear formula covers both segments, the unmapped gap swallowing wild pointers. The <code>&gt;&gt; 3</code> scale never changes; the offset does (57-bit-VA kernels relocate it). Budget: ~2x slowdown, ~3x memory — the cheap one (TSan ~5-15x).</li>
+</ol>
+<ol>
+<li><strong>(a) What is the oracle?</strong> A crash-only oracle is blind to out-of-bounds <em>reads</em>: Heartbleed sized its destination from the same attacker-claimed N as the copy, so the write stayed in bounds while the read ran ~64 KB past a 19-byte allocation — no crash, only secrets. Fuzzing needs ASan as the oracle (ch05 §4, §6). <strong>(b) What is the fitness function?</strong> Statement coverage saturates after one valid input — zero gradient, blind search; edges distinguish the three outcomes of <code>if (magic == 0xAA &amp;&amp; version == 2)</code> where the statement count sees one covered line (ch05 §2). <strong>(c) Is the corpus healthy?</strong> Deduped by coverage, re-merged after code changes (the edge-to-input mapping drifts), dictionary in place (ch05 §3). Bisection: ceil(log2 500) = <strong>9 runs</strong>; the predicate must be <strong>monotone</strong> and <strong>deterministic</strong> — a flaky test turns halving into a random walk (ch05 §5).</li>
+</ol>
+</details>
+<div class="post-footer"><p>Chapter list: <a href="index.html">Module 03</a>. Module 01 also has the <a href="../quiz.html">interactive quiz</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

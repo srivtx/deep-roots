@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code signing &amp; PAC — deep-roots</title>
+<meta name="description" content="Chapter 05 of module 06: Code signing &amp; PAC">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Code signing &amp; PAC — deep-roots">
+<meta property="og:description" content="Chapter 05 of module 06: Code signing &amp; PAC">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Code signing &amp; PAC — deep-roots">
+<meta name="twitter:description" content="Chapter 05 of module 06: Code signing &amp; PAC">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 06 &middot; a memory-distrust machine</div>
+<h1 class="post-title">Code signing &amp; PAC</h1>
+<div class="post-meta">chapter 05 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> iOS trusts nothing it did not verify from silicon up: a boot ROM, burned into the chip, checks iBoot; iBoot checks the kernel; the kernel — via AMFI — checks every executable it loads. The signature is not one seal: every 16 KB code page has its SHA-256 hash in a per-binary table, signed by a certificate chaining to the root key in the ROM, and the kernel checks each page's hash <em>at page-in</em> — altered code never materializes; module 01 ch03's demand paging fused with an integrity check. Entitlements are the signed permission slips; PAC (arm64e) signs pointers so <code>ret</code> verifies return addresses. Injection dead, ROP dead: chains start with a logic bug.</blockquote>
+<h2 id="the-root-that-cannot-be-patched">The root that cannot be patched</h2>
+<p>Any chain of verification needs a <em>first</em> verifier you accept without proof. Software cannot verify itself at rest: whatever checked the bytes could be rewritten, and the rewritten checker would approve rewritten code. The regress stops only at hardware that cannot change after fabrication. Apple burns its Root CA public key into the <strong>boot ROM</strong> — mask ROM: read-only, burned in, the immutable root — and each stage verifies the next before handing over the CPU:</p>
+<pre><code class="language-text"> boot ROM (mask ROM, burned at fabrication) -- the immutable root
+ |  holds: hash of Apple Root CA public key -- unpatchable by construction
+ |  checks: signature chain of next stage -&gt; Root CA; rollback counters
+ v
+ LLB / iBoot          (A9-era: ROM -&gt; LLB -&gt; iBoot; A10+: ROM -&gt; iBoot)
+ |  checks: kernelcache signature, device tree; refuses downgrades
+ |  hands kernel a STATIC TRUST CACHE: CDHashes of known platform binaries
+ v
+ XNU kernel (arm64e)  +  AMFI (AppleMobileFileIntegrity)
+ |  AMFI: MACF policy module -- hooks exec, page-in, task ports
+ v
+ every exec, every fault on a code page:
+      SHA-256(page) == code-directory slot ?  -&gt; page materializes
+      else                                    -&gt; process dies (SIGKILL)</code></pre>
+<p>Nothing verifies the ROM — trusted by construction, which is why the chain starts at silicon. Two details make it more than ceremony: each stage enforces <strong>rollback protection</strong> (anti-downgrade counters), so an attacker cannot boot a signed but years-old, known-vulnerable firmware; and the kernel does not re-run the certificate chain per binary — iBoot hands it a <strong>static trust cache</strong> of CDHashes AMFI consults in O(1), with loadable trust caches covering OS content added later (cryptexes — chapter 04).</p>
+<h2 id="the-signature-is-a-hash-table-of-pages">The signature is a hash table of pages</h2>
+<p>A Mach-O carries <code>LC_CODE_SIGNATURE</code> (load command 0x1d) pointing into <code>__LINKEDIT</code> at a <strong>superblob</strong> — magic <code>0xfade0cc0</code> — holding typed blobs:</p>
+<ul>
+<li>the <strong>CodeDirectory</strong> (magic <code>0xfade0c02</code>): one <strong>SHA-256 (32-byte) hash slot per page</strong> of code and read-only data — the directory records its page size (4 KB or 16 KB); Apple Silicon platform binaries use 16 KB (chapter 01);</li>
+<li>the <strong>entitlements</strong> blob, DER-encoded (magic <code>0xfade7c51</code>) — one canonical encoding, no parser ambiguity;</li>
+<li>the <strong>CMS blob</strong>: a PKCS#7/CMS detached signature over the CodeDirectory's hash, made with a certificate chaining up to Apple Root CA;</li>
+<li>for bundles, <code>_CodeSignature/CodeResources</code>: hashes of every resource file and embedded framework — the "Sealed Resources" crash reports mention.</li>
+</ul>
+<p>Derive the layering: the CMS signature proves <em>who vouched</em> — one RSA verification; the CodeDirectory proves <em>the pages</em>, one slot each. A whole-file digest would force verifying the entire binary before running any of it; per-page slots let the kernel check lazily — which is where virtual memory walks in:</p>
+<pre><code class="language-text"> __LINKEDIT superblob:
+ +---------------------------------------------------------------+
+ | CodeDirectory: | h[0] | h[1] | h[2] | ... | h[N-1] |  32 B each|
+ |  1 SHA-256 slot per 16 KB page of __TEXT                     |
+ +---------------+------+------+------+------+--------+---------+
+ | CMS (PKCS#7): RSA signature over SHA-256(CodeDirectory)      |
+ |   cert: "Software Signing" &lt;- Apple Code Signing CA &lt;- Root   |
+ | Entitlements (DER): hashed into the CD's special slots       |
+ +---------------------------------------------------------------+
+             |  CDHash = SHA-256(CodeDirectory): THE identity
+             |  of this exact binary; trust caches key on it
+             v
+   text page k faults in:  SHA-256(bytes) == h[k] ?  allow : kill</code></pre>
+<p>The binary's identity is the <strong>CDHash</strong>. One changed byte of <code>__TEXT</code> makes h[k] wrong, which changes the CodeDirectory, which changes the CDHash: there is no "similar binary" — only this exact one, or not.</p>
+<h2 id="the-fault-is-the-checkpoint-page-in-validation">The fault is the checkpoint: page-in validation</h2>
+<p>Module 01 ch03 built demand paging — pages materialize only when first touched, because the fault handler is where policy lives. Chapter 04 used that hook for fixup chains; code signing uses it for integrity: XNU's <code>cs_validate_range</code> (bsd/kern/kern_cs.c) runs in the fault path for pages backed by code-signed VM objects — hash the incoming page, compare against the slot. Consequences, each derivable:</p>
+<ol>
+<li><strong>An altered page never exists.</strong> Not "detect tampering after the fact" — unsigned or altered pages simply never materialize; there is no modified code to run.</li>
+<li><strong>The cost is paid once per page, on first use.</strong> A validated page is marked validated in the VM object; only eviction re-checks. Pages never executed are never hashed — a 1-3 GB shared cache validates one faulted page at a time.</li>
+<li><strong>Unsigned memory cannot become executable at all.</strong> Write+execute mappings are refused outright (W^X, below), and dylibs must be signed and pass AMFI's <strong>library validation</strong> — every executable page traces to a signature chain or a trust cache entry.</li>
+<li><strong>Death is loud.</strong> A failing page marks the process CS_INVALID and the kernel delivers SIGKILL — the "killed: 9" of a tampered app, before any tampered byte executes.</li>
+</ol>
+<p>The insider's compression, and this chapter's thesis: <strong>virtual memory is the enforcement mechanism.</strong> Code signing on iOS is not a gate the app passes at launch and forgets — it is a property of the memory system itself: demand paging fused with a MAC check, so "executable" and "verified" are the same condition.</p>
+<h2 id="entitlements-the-signed-permission-slip">Entitlements: the signed permission slip</h2>
+<p>A signature answers <em>who wrote these bytes</em>; it cannot answer <em>what may these bytes do</em>. iOS splits the question: <strong>entitlements</strong> are a key-value list stored in the superblob and hashed into the CodeDirectory's special slots — covered by the same signature as the code, inseparable from it. AMFI consults them wherever a privilege is granted. Keys you will meet:</p>
+<ul>
+<li><code>com.apple.security.get-task-allow</code> — permits <code>task_for_pid</code>: the debugger-attach right. Xcode sets it on every development build; Apple's distribution re-signing strips it. This key is most of "works in Debug, dies in Release."</li>
+<li><code>com.apple.security.cs.allow-jit</code> — the macOS JIT exemption (below).</li>
+<li><code>com.apple.security.cs.disable-library-validation</code> — load dylibs signed by <em>other</em> teams (a real security downgrade).</li>
+<li><code>com.apple.private.*</code> — Apple-only; a third-party app requesting one is rejected at validation.</li>
+</ul>
+<p>Entitlements are policy, not proof: each service granting a capability decides which key it requires. Chapter 03 returns — a Mach port right is unforgeable, but <em>who may obtain the send right</em> to a privileged XPC service is an entitlement check; the audit token carries kernel-attested identity.</p>
+<p>Third parties reach entitlements through the <strong>provisioning profile</strong>: <code>embedded.mobileprovision</code>, itself a CMS blob signed by Apple, wrapping the allowed signing certificates, the device list (development), an expiration date, and the entitlement set the app may carry; at install, iOS checks your certificate, entitlement subset, device, and date against it. Dev profiles expire in days to a year by account class — an expired profile stops installed dev builds from launching. Enterprise distribution is the same wrapper with <code>ProvisionsAllDevices</code> and a multi-year horizon. App Store distribution removes the profile entirely: Apple re-signs the binary, strips <code>get-task-allow</code>, and wraps the payload in FairPlay, so App Store binaries verify against Apple's chain, not your team's.</p>
+<h2 id="pac-pointers-that-prove-themselves">PAC: pointers that prove themselves</h2>
+<p>Page-in validation guards code <em>at rest</em>; it does nothing about an attacker who corrupts <em>data</em> and rides existing, perfectly signed code — module 02's code-reuse attacks. Armv8.3 (2018; first consumer silicon: Apple A12, iPhone XS) adds pointer authentication; Apple's ABI for it is <strong>arm64e</strong>.</p>
+<p>Derive the goal: you cannot cheaply stop memory corruption, but you can make <em>forged pointers fail at use</em>. The CPU holds secret keys per process (rolled fresh at exec). Signing computes a keyed MAC over (pointer value + context) and stores the truncated tag in the pointer's spare high bits — on A12-class iPhones a 39-bit virtual address leaves a 24-bit field (Azad, 2019; width is chip-dependent: a wider VA, a shorter tag). Mismatch traps immediately.</p>
+<p>The canonical use is the return address: an arm64e function begins <code>PACIBSP</code> — sign LR with the B key, SP as context — and ends <code>AUTIBSP; RET</code> (module 02 ch06's rung 8). Audit module 02's gadget economy against it:</p>
+<ul>
+<li><strong>Dead: ret-to-anything.</strong> Returning through a corrupted frame authenticates a value the attacker never had signed: ROP chains, <code>pop x30; ret</code>, ret2libc — the return-hijack family. A chosen LR is wrong with probability 1 - 1/2^24.</li>
+<li><strong>Alive: signing gadgets</strong> — legitimate functions that sign values derived from attacker-influenced memory (Liljestrand et al., 2019): borrow the CPU's own key. And <strong>replay</strong>: a <em>leaked</em> signed return address is pre-forged — copy it verbatim and <code>AUTIBSP</code> passes; information leaks still matter.</li>
+<li><strong>Alive: the forward edge.</strong> <code>ret</code> checks backward edges only; steering to legitimate function entries with controlled arguments (JOP on valid call targets) is CFI/BTI's rung, not PAC's.</li>
+<li><strong>Alive, in principle: forgery.</strong> Blind guessing succeeds 1/16,777,216 per attempt — but each miss is a loud kill, and keys re-roll at every exec, so attempts do not accumulate. Mitigation, not guarantee: PACMAN (Apple M1, 2022) later showed a speculative-execution oracle recovering tags bit-by-bit. PAC prices the forgery; it does not make it impossible.</li>
+</ul>
+<p>Apple applies signing beyond LR. In libobjc on arm64e, the <strong>method cache</strong> — the per-class table of hot (selector, IMP) pairs, a favorite heap-overflow target — stores IMPs signed, authenticated at dispatch: a rewritten bucket traps instead of jumping. C++ <strong>vtable pointers</strong> in objects are signed; and chapter 04's chained fixups carry arm64e auth flags (key + diversity), so the kernel produces the <em>signed</em> function pointer as it fixes a data page — page-in linking and pointer signing, same fault path.</p>
+<h2 id="the-composite-why-ios-chains-start-with-a-logic-bug">The composite: why iOS chains start with a logic bug</h2>
+<p>Assemble the module 02 ch06 ladder as iOS stacks it. <strong>Page-in validation</strong>: no injected or altered code, ever. <strong>W^X</strong>: third-party iOS code cannot create executable memory at all — JIT lives only in Apple's WebContent process under private entitlements; on macOS with Hardened Runtime, <code>allow-jit</code> plus <code>MAP_JIT</code> gives a region toggled RX/RW per thread via <code>pthread_jit_write_protect_np</code>, so even entitled JITs are never RWX, and the sanctioned way to borrow JIT is a <code>WKWebView</code>. <strong>PAC</strong>: forged control pointers in system code fail at use. <strong>Entitlements, the sandbox, and the per-boot cache slide</strong> (chapter 04): capability minimums and address- blindness.</p>
+<p>A full chain's receipt: a memory bug whose <em>use</em> survives PAC, a leak of signed pointers, a sandbox escape, a kernel escalation — distinct bugs, each priced (module 02's five-bug ledger). The cheapest opening left is a logic bug that hands you a capability legitimately — why iOS exploit write-ups start in message parsers, not buffer overflows.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>get-task-allow</code> is a task-port gate, not "debug mode."</strong> It permits <code>task_for_pid</code> — how debugserver attaches. Dev builds carry it; distribution re-signing strips it. First diagnostic for "different behavior in Release": diff <code>codesign -d --entitlements :-</code> on both builds.</li>
+<li><strong>The MAP_JIT story:</strong> <code>mmap</code> with PROT_WRITE|PROT_EXEC fails; the only writable-then-executable path on macOS is a <code>MAP_JIT</code> region plus the per-thread <code>pthread_jit_write_protect_np(0/1)</code> toggle — writable for the JITting thread, RX for everyone else. On iOS, third parties get none of it; WKWebView's WebContent process holds the private entitlements. If your engine "needs JIT," you ship an interpreter on iOS.</li>
+<li><strong>Which PAC gadgets die:</strong> everything that <em>returns through corrupted memory</em>; what survives: signing gadgets, replayed signed pointers (pre-forged), JOP to legitimate entries, PACMAN-style tag recovery. The trap: as of iOS 17/18, third-party app code is still plain arm64 — PAC hardens the system code around you, not your pages.</li>
+<li><strong>codesign flags insiders run:</strong> <code>codesign -dv --verbose=4</code> (authority chain + CDHash; <code>hashes=2279+13</code> = 2,279 page slots + 13 special slots); <code>codesign -d --entitlements :-</code> (the colon decodes DER to XML); <code>--verify --deep --strict --verbose=2</code>. For research: <code>csrutil status</code>, then <code>nvram boot-args="amfi_get_out_of_my_way=0x1"</code> (SIP off) — the blunt instrument whose name tells you what blocked you.</li>
+<li><strong>CDHash is the identity.</strong> Trust caches key on it; the kernel compares 32 bytes, never your Team ID. Same source, two builds: two identities — sign-after-copy bugs exist because identity is total.</li>
+<li><strong>Sign last, or don't ship.</strong> Anything copied into the bundle after <code>codesign</code> runs — a build script dropping a codec dylib into <code>Contents/Frameworks/</code> — is missing from CodeResources, fails library validation or the page-in check, and dies at first load. Fix the phase order; verify with <code>codesign --verify --deep --strict</code> before archiving.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>On a Mac (macOS 13+; fragments abridged — shapes, not bytes, from a macOS 14 arm64e machine). <strong>No Mac? Treat this as a documented walkthrough</strong>: commands and output are as you would see them.</p>
+<pre><code class="language-bash"># 1. Dissect a platform binary's signature: the chain, and the identity.
+codesign -dv --verbose=4 /bin/ls
+#   Identifier=ls
+#   Format=Mach-O universal (x86_64) [arm64e]
+#   CodeDirectory v=20400 ... hashes=NNNN+13 location=embedded
+#                     ^ page slots + 13 special slots (entitlements etc.)
+#   CDHash=&lt;64 hex chars&gt;                &lt;- THE identity
+#   Authority=Software Signing           &lt;- platform binaries: no Team ID
+#   Authority=Apple Code Signing Certification Authority
+#   Authority=Apple Root CA              &lt;- the key whose hash is in boot ROM
+#   TeamIdentifier=not set
+
+# 2. Entitlements, decoded: DER -&gt; XML, the signed permission slip.
+codesign -d --entitlements :- /System/Applications/Safari.app
+#   &lt;key&gt;com.apple.security.app-sandbox&lt;/key&gt; &lt;true/&gt;
+#   (abridged; keys vary by release -- a system app's permission list)
+
+# 3. The biggest signed artifact on your machine (ch04): one signature,
+#    validated one page-in at a time.
+codesign -dv --verbose=4 \
+  /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e
+#   Identifier=com.apple.dyld.caches...   CDHash=...</code></pre>
+<p>What to notice: <code>/bin/ls</code> has no Team ID — platform binaries authenticate via Apple's chain and the trust cache; <code>hashes=NNNN+13</code> lets you <em>count the page slots</em> with no extra tooling; the entitlements are DER decoded to XML — one canonical encoding, exactly what a signature wants to hash.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Kill the "works in Debug, dies in TestFlight" class.</strong> Diff entitlements between builds (<code>codesign -d --entitlements :-</code>), then check the provisioning profile's expiry and device list — most such bugs are <code>get-task-allow</code> or an expired dev profile, a signing artifact, not your code.</li>
+<li><strong>Build-pipeline hygiene.</strong> Sign after every bundle mutation, then run <code>codesign --verify --deep --strict</code> in CI. A red build beats a tester's phone killing your app at first launch with an unexplained SIGKILL.</li>
+<li><strong>Architecture decisions under W^X.</strong> No downloaded code, no app-side JIT on iOS: design plugins as data + interpreters, route JS through WKWebView. On macOS, weigh <code>allow-jit</code> + MAP_JIT against shipping an interpreter.</li>
+<li><strong>The interview answer.</strong> "Why do iOS exploit chains start with logic bugs?" Walk the composite: page-in validation removes injection; W^X removes generated code; PAC removes forged control pointers in system code; entitlements and the sandbox cap what any single bug buys. Capabilities are priced in bugs (module 02 ch06); the cheapest opening is persuasion, not corruption.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 02 ch06 (mitigation ladder)</strong> — this chapter is iOS's stack on that ladder: page-in validation kills injection outright (below the ladder — it removes the <em>class</em>), PAC is rung 8; the five-bug ledger is the composite's price tag.</li>
+<li><strong>Module 06 ch04 (dyld &amp; shared cache)</strong> — "pre-signed" was load-bearing: one code directory covers the whole cache, so per-fault validation scales to gigabytes; arm64e chained fixups mean the kernel <em>signs</em> pointers during page-in linking.</li>
+<li><strong>Module 05 ch06 (APK &amp; OTA)</strong> — the comparison frame: Android v2/v3 signs the whole APK at install time (dm-verity is the system-partition analog); iOS verifies per page, forever, at fault time.</li>
+<li><strong>Module 01 ch03 (virtual memory)</strong> — the payoff of "the fault handler is where policy lives": demand paging is the enforcement mechanism, and enforcement costs nothing for pages never touched.</li>
+<li><strong>Module 06 ch03 (Mach ports &amp; XPC)</strong> — entitlements gate who may <em>obtain</em> port rights; the audit token carries kernel-attested identity plus entitlements to every service door.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>A reviewer proposes moving the boot ROM's verification logic to flash so boot bugs can be patched. Derive what security property dies, and why signing the flash image cannot repair the chain.</li>
+<li>An app's arm64 <code>__TEXT</code> is 4 MB, code-directory page size 16 KB, SHA-256 slots. How many hash slots does the code directory carry, and how many bytes do they occupy?</li>
+<li>On a lab Mac you hex-edit one byte of a signed app's <code>__TEXT</code> (leaving <code>__LINKEDIT</code> untouched) and launch it. The app dies — but not at launch. What passed, what failed, and why does the death land where it does?</li>
+<li>An app <code>dlopen</code>s a licensing module the server downloaded into its Documents directory. It works on macOS (with <code>disable-library-validation</code>); on iOS the process is killed the moment the library is first called. Why, and what is the design fix?</li>
+<li>An attacker reads a live frame's saved return address (correctly signed) and later replays it verbatim; it returns cleanly. The same address <em>guessed</em> kills the process. Explain both outcomes from PAC's mechanism.</li>
+<li>With a 24-bit PAC field, a blind forgery succeeds with probability 2^-24. A crash-looping victim restarts thousands of times overnight. Why doesn't the attacker accumulate progress toward those 16,777,216 possibilities?</li>
+<li>A heap overflow overwrites an Objective-C method-cache bucket's IMP on an arm64e process. What happens on the next message dispatch, compared to the same overwrite on plain arm64, and which mechanism is responsible?</li>
+<li>Chapter 04 applies fixup chains at page-in; this chapter validates page hashes at page-in; module 01 ch03 called the fault handler "where policy lives." Name the common principle, and what it predicts about the cost of a policy that only touches used pages.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Immutability of the root verifier.</strong> Mask ROM is trusted <em>by construction</em> — it cannot change after fabrication. Flash can be rewritten, so the "ROM" becomes replaceable bytes, and an attacker's image is as self-consistent as Apple's. Signing the flash image doesn't help: <em>someone</em> must verify that signature, with a key stored where? A writable key store re-opens the regress; only an unwritable key closes it.</li>
+<li><strong>256 slots</strong> (4 MB / 16 KB); 256 x 32 bytes = <strong>8,192 bytes</strong> of hash table, plus 13 special slots (entitlements, requirements, resources).</li>
+<li>The launch-time checks — code directory, CMS over its hash, entitlements, trust cache — all pass: <code>__LINKEDIT</code> was untouched, so the <em>signature of the table</em> is intact. What broke is page k vs slot h[k], compared in <code>cs_validate_range</code> at first fault. Death lands at first <em>use</em> of the edited page — minutes in, or never if cold — a SIGKILL for CS_INVALID. Validation lives in the fault handler, not exec.</li>
+<li>The downloaded dylib is covered by no signature: not your team's, not in the trust cache, absent from CodeResources. On iOS, library validation and the page-in check have no path that admits it — every executable page must trace to a signature or trust cache, so the first fault kills; on macOS, <code>disable-library-validation</code> relaxes exactly that check. Fix: ship logic as <em>data</em> the app interprets, or compile the feature in and toggle it with server flags — on iOS, downloaded code is not a distribution channel.</li>
+<li>The tag is a keyed MAC of (address + context). The leaked value is a complete (pointer, tag) pair — pre-forged; authentication recomputes and matches, so <code>AUTIBSP</code> passes. The guessed address carries a wrong tag and matches with probability 2^-24. That asymmetry is PAC's ledger: leaks (replay) still convert to control flow; blind corruption does not.</li>
+<li>Keys re-roll at every <code>exec</code>: each attempt is a <em>new</em> process with <em>new</em> keys, so guesses are independent — no partial-credit state. The attacker needs ~2^24 kills on average, each a loud, logged SIGKILL. A <em>same-process</em> oracle — a signing gadget, a PACMAN-style leak — is what accumulates; restart loops do not.</li>
+<li>On plain arm64, the corrupted bucket dispatches straight to the attacker's address — the classic method-cache hijack. On arm64e, libobjc stores method-cache IMPs <em>signed</em>; the lookup authenticates before jumping, so the overwritten value fails and traps. Mechanism: pointer authentication — return-address signing's keyed MAC applied by the runtime to a structure ROP cannot reach but heap overflows can.</li>
+<li><strong>The fault handler is the policy point</strong>: guarantees are enforced lazily, at first touch, per page — validation (this chapter) and fixup application/signing (ch04) both ride it. A policy concerning only used pages costs proportionally to <em>use</em>: untouched pages pay zero, touched pages pay once until eviction, no upfront pass over gigabytes — while enforcement stays total, since no path to execution skips the fault.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch04.html"><span class="cn-label">previous</span><span class="cn-title">Ch 04</span></a>
+<a class="next" href="index.html"><span class="cn-label">next</span><span class="cn-title">Module index</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 06 — iOS internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

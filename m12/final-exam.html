@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 12 final exam — deep-roots</title>
+<meta name="description" content="Final exam for module 12 (the tower gets a new wing), with worked answers.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 12 final exam — deep-roots">
+<meta property="og:description" content="Final exam for module 12 (the tower gets a new wing), with worked answers.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 12 final exam — deep-roots">
+<meta name="twitter:description" content="Final exam for module 12 (the tower gets a new wing), with worked answers.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 12 &middot; the tower gets a new wing &middot; final exam</div>
+<h1 class="post-title">Module 12 final exam</h1>
+<div class="post-meta">every chapter &middot; worked answers behind the fold</div>
+<p>Twelve questions, three per chapter. Closed book; every answer is worked, not stated — the derivations are the point. Scoring: 11+ = you own this module; 8-10 = solid, revisit the flagged chapters; &lt;8 = the chapter quizzes are the study path.</p>
+<p><strong>Part I — the hierarchy (chapter 01)</strong></p>
+<ol>
+<li><strong>Predict.</strong> A kernel compiles to 80 registers per thread on an Ampere-class SM: 65,536 32-bit registers, 64 warp slots, 4 warp schedulers with 16 resident warps each. Derive resident warps, occupancy, and warps per scheduler, then decide whether a 400-cycle global load issued once per 16 instructions can be hidden — at this occupancy, and at <em>any</em> occupancy.</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> A warp reads 32-bit shared memory at word strides 8, 12, and 15 (<code>smem[lane * S]</code>). For each: how many serialized passes, justified by the gcd rule? Which is fastest, and what is the general fix for a conflicted stride?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A filter kernel branches per thread: <code>if (v[tid] &gt; 0) { two global loads + 300 math instructions } else { one load + 8 instructions }</code>. Every warp splits ~50/50. The profile: 75% occupancy, 32 registers/thread, top stall "long scoreboard", issue efficiency ~50%. Trace the mechanism — what divergence does to issue efficiency and to the stall — and why 75% occupancy cannot buy either back.</li>
+</ol>
+<p><strong>Part II — coalescing &amp; the roofline (chapter 02)</strong></p>
+<ol>
+<li><strong>Predict.</strong> <code>struct V { float x, y, z; };</code> — a warp loads <code>v[tid].x</code> from an AoS array, base aligned. Derive sectors, transactions (128 B units), bytes touched, payload, efficiency; compare with SoA <code>xs[tid]</code>; and explain why the multiplier is 3x when a four-field struct gives 4x.</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> A kernel does 8 FLOP per element and moves 16 B per element (three float reads, one write) on an A100 (19.5 TFLOP/s FP32, 2.0 TB/s HBM). Give arithmetic intensity, attainable FLOP/s, percent of peak, verdict. What minimum AI reaches 50% of peak? A teammate proposes halving the FLOP count — what does the roofline say that buys?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A column-reduction kernel computes <code>s[tid] += a[r*4096 + tid]</code>: 4096 columns, a warp owns 32 of them, the loop walks rows. <code>ncu</code> reports sectors-per-request 32.0; the kernel runs ~8x slower than its row-sum sibling. Diagnose the access shape, derive the traffic, and give the one-sentence fix.</li>
+</ol>
+<p><strong>Part III — allocation &amp; the real OOM (chapter 03)</strong></p>
+<ol>
+<li><strong>Derive.</strong> A 60 MiB toy device, 20 MiB segments. Alternating requests of 5 MiB + 1 B (→ 6 MiB blocks) and 3 MiB + 1 B (→ 4 MiB blocks) fill three segments, each [6][4][6][4] MiB; then every 4 MiB block is freed. An 8 MiB request arrives. (a) The rounded request and pool? (b) Derive, rule by rule, why it fails though free = 24 MiB ≥ 8 MiB. (c) Why does the same request succeed under <code>expandable_segments:True</code>?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A training job on a 40 GiB card dies: "Tried to allocate 512.00 MiB; 3.1 GiB is reserved by PyTorch but unallocated." <code>memory_summary</code>: reserved 39.6 GiB, allocated 36.5 GiB, inactive splits 210, OOM events 5. The developer calls <code>torch.cuda.empty_cache()</code> — 0 MiB released — and retries twice. Identify the cause, explain why <code>empty_cache()</code> was guaranteed to release nothing, and give the fix ladder in cost order.</li>
+</ol>
+<ol>
+<li><strong>Concept.</strong> A model holds 10,000 tensors of 64 KiB each. What do they cost through raw <code>cudaMalloc</code>, what through the caching allocator, and why does the caching allocator exist? Name the module 01 allocator it replays and the two taxes it removes.</li>
+</ol>
+<p><strong>Part IV — unified memory &amp; the future (chapter 04)</strong></p>
+<ol>
+<li><strong>Concept (cross-module).</strong> Module 01 ch02's tower was managed by hardware (caches) plus one OS level (DRAM). The completed tower's manager column reads compiler → kernel author → hardware → driver → runtime/OS → application — each manager further from the silicon. Why must the manager get further away as levels slow down, and why is that why each faster level exists?</li>
+</ol>
+<ol>
+<li><strong>Diagnose.</strong> A pipeline allocates 2 GiB of managed memory, the <em>host</em> initializes every page, then a kernel streams it once. The kernel phase takes 786 ms; the explicit-copy version totals ~90 ms. Nsight's unified-memory track shows ~1,024 faults. Derive the per-fault overhead, name the mechanism and its module 01 chapter, then give the one-line fix and the better fix.</li>
+</ol>
+<ol>
+<li><strong>Concept (cross-module).</strong> Three things a CUDA-trained engineer gets wrong on Apple Silicon (module 07 ch06: Mach VM, Jetsam): why there is no "CUDA out of memory" and what limits memory instead; why a GPU-only benchmark drops 30-50% when the CPU streams simultaneously; and which machine — M4 Max or A100 — wins an 8 GiB host-born streaming workload, with numbers.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<p><strong>Part I</strong></p>
+<ol>
+<li>80 regs × 32 = 2,560 registers per warp; 65,536 / 2,560 = 25.6 → <strong>25 resident warps</strong> (800 threads) = <strong>39%</strong> of the 64-warp ceiling, ~6 per scheduler. Hiding needs warps ≥ latency / instructions between loads = 400 / 16 = <strong>25 per scheduler</strong>. Six is nowhere near; even 100% occupancy supplies 16 — the ratio is unhideable at <em>any</em> occupancy. The fix is tiling or ILP, not more warps — ch01's ratio test, why ch02's tiling exists.</li>
+</ol>
+<ol>
+<li>Lane <em>i</em> hits bank <code>(stride * i) mod 32</code>; passes = gcd(stride, 32). Stride 8: gcd(8, 32) = 8 → <strong>8 passes</strong>. Stride 12: gcd(12, 32) = 4 → <strong>4 passes</strong> — stride 12 beats stride 8. Stride 15: gcd(15, 32) = 1 → all banks distinct → <strong>1 pass</strong>, fastest. Odd strides are conflict-free; the fix for a conflicted stride is padding +1 (stride 33), not reordering (ch01).</li>
+</ol>
+<ol>
+<li>The 32 lanes share one program counter, so the warp executes <em>both</em> paths serially with the other side masked: ~311 instructions where a uniform branch would issue one — efficiency halves before any memory effect. The taken path's loads then stall the <em>whole</em> warp ~400 cycles: masked lanes cannot issue, and reconvergence waits at the merge point — the "long scoreboard" stall. Occupancy cannot buy it back: 75% is 48 resident warps, but each is equally divergent. Fix: make the branch warp-uniform (sort or partition the data by side) — the hardware refuses to predict control flow by design (ch01's SIMT trade).</li>
+</ol>
+<p><strong>Part II</strong></p>
+<ol>
+<li><code>.x</code> sits at byte 12·tid: addresses 0..372, span 376 B → <strong>12 sectors, 3 transactions, 384 B touched, 128 B payload, 33%</strong>. SoA <code>xs[tid]</code> is <code>4·tid</code>: <strong>4 sectors, 1 transaction, 100%</strong> — a 3x traffic multiplier. The multiplier is span arithmetic, not struct-size / 4: a 12 B stride packs 2-3 threads per sector; the 16 B struct leaves two = 4x. Layout is a memory-hierarchy decision (ch02; module 01 ch06 at warp scale).</li>
+</ol>
+<ol>
+<li><strong>AI = 8 FLOP / 16 B = 0.5 FLOP/byte</strong> — far left of the 9.75 ridge (19.5 / 2.0). Attainable = 0.5 × 2.0 TB/s = <strong>1.0 TFLOP/s = 5.1% of peak</strong>: memory-bound, the FLOPs idle. 50% of peak needs AI = 9.75 / 2.0 = <strong>4.875 FLOP/byte</strong>. Halving the FLOP count buys nothing — the ceiling is bandwidth / bytes; halving the <em>bytes</em> doubles speed (ch02's triage division).</li>
+</ol>
+<ol>
+<li>Each warp instruction reads 32 addresses 16,384 B apart: each thread's 4 B in its own 32 B sector — <strong>32 sectors, 8 transactions, 1,024 B touched for 128 B payload = 12.5%</strong>, the stride table's worst row: 8x the row-sum's traffic, hence ~8x the time. Fix: stage coalesced — load contiguous row segments into shared memory (stride-1 warp loads), then accumulate columns from shared (ch02's tiling reflex).</li>
+</ol>
+<p><strong>Part III</strong></p>
+<ol>
+<li>(a) 8 MiB — already a 2 MiB multiple, large pool. (b) <strong>Exact size class:</strong> no 8 MiB block — the lists hold 4 MiB blocks. <strong>Best fit ≥ 8 MiB:</strong> largest hole is 4 MiB. <strong>Coalesce:</strong> every hole is fenced by live 6 MiB blocks — adjacent frees would merge; none are. <strong>Cross segments:</strong> never — separate VA reservations. <strong>New segment:</strong> a fresh 20 MiB cudaMalloc against a 60/60-reserved device, refused at the driver boundary. Free 24 ≥ request 8; contiguous, policy-satisfiable space: 0 — no byte was consumed; the bytes were stranded by geometry and the no-move promise (ch03; module 01 ch05). (c) With <code>expandable_segments:True</code>, each freed 4 MiB block <em>unmaps its 2 MiB pages</em> — physical returns to the driver (mapped: 60 → 36 MiB) — and the 8 MiB request maps fresh pages into a fresh contiguous VA run: contiguity becomes a VA choice (ch03).</li>
+</ol>
+<ol>
+<li><strong>Cause #1, fragmentation</strong> — the "3.1 GiB reserved but unallocated" line <em>is</em> the diagnosis; inactive splits 210 counts holes freed next to live blocks. <code>empty_cache()</code> releases only <em>entirely free</em> segments; at failure every segment holds a live block — which is what fenced the holes — so 0 MiB was structurally guaranteed. Fix ladder, cost order: steady tensor shapes (pad variable batches so block sizes repeat — free) → <code>PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True</code> (one env var) → smaller batch (throughput) → restart (last). Plan capacity by peak <em>reserved</em>, never the tensor sum (ch03).</li>
+</ol>
+<ol>
+<li>Raw <code>cudaMalloc</code>: the 2 MiB page is the smallest currency, so each 64 KiB tensor maps 2 MiB — 10,000 × 2 MiB = <strong>~20 GiB for 625 MiB of data, a 32x tax</strong> — plus 10,000 slow, sometimes-synchronizing driver calls. The caching allocator rounds to a 512 B multiple (64 KiB is one already — no tax), packs 32 tensors per 2 MiB small-pool segment, and serves repeats from size-class free lists: ~625 MiB allocated, ~626 MiB reserved, ~313 cudaMallocs. It is module 01 ch19's <strong>segregated-fit</strong> replayed at device scale, deleting the page-granularity tax and the per-call cost (ch03).</li>
+</ol>
+<p><strong>Part IV</strong></p>
+<ol>
+<li>A manager must decide, ahead of the data's arrival, what lives at its level — and its reaction time is bounded by its distance from the silicon. The compiler sees the whole program offline (registers); the kernel author stages tiles by hand (shared); hardware reacts in cycles (L2); the driver maps pages on faults in ~µs (HBM); the runtime/OS tiers cold pages to a CXL pool over ms; the application alone knows the semantics, so it owns RDMA placement. Each manager is too slow for the level above — so that level exists to absorb the latency the slower one cannot hide: a stack of progressively slower <em>managers</em>, each covering the one below (ch04's closing table — module 01 ch02's tower, fully grown).</li>
+</ol>
+<ol>
+<li>2 GiB / 2 MiB = <strong>1,024 pages</strong>, each faulting once as the kernel first touches it. Streaming the same bytes at ~25 GB/s costs 80 ms, so 786 − 80 ≈ 706 ms is pure overhead: <strong>~690 µs per fault</strong> — trap, pin, 2 MiB DMA over PCIe, GMMU page-table fixup, warp restart, paid 1,024 times — ~10x streaming: the convenience tax, measured. The mechanism is module 01 ch03's <strong>demand paging</strong> (the disk became a PCIe link). One-line fix: <code>cudaMemPrefetchAsync(p, bytes, device)</code> after host init — the same bytes at streaming speed, ~90 ms total, matching the explicit copy with less code. Better: have the data <em>born</em> on the device (initialize with a kernel) — nothing ever crosses the bus (ch04's birthplace rule).</li>
+</ol>
+<ol>
+<li>(a) No VRAM wall: one LPDDR pool, one fabric — no second per-device memory to exhaust. The limit is the system-wide <em>dirty footprint</em>, enforced by Jetsam bands on Mach VM (module 07 ch06; module 06 ch02): one number to budget, no "clear the GPU cache" button to hunt for. (b) CPU and GPU share the one LPDDR fabric — M4 Max ~546 GB/s — budgeted as one pipe, never two: concurrent CPU streaming takes the fraction a GPU-only benchmark assumed it owned — the 30-50% drop. (c) The M4 Max wins: 8 GiB / 546 GB/s ≈ <strong>14.7 ms</strong>; the A100 pays for the bridge the integrated design deleted — 8 GiB host-born crosses PCIe at ~25 GB/s (320 ms) plus 4 ms compute ≈ <strong>324 ms</strong>. Lower peak bandwidth wins because the <em>copy</em> dominated (ch04).</li>
+</ol>
+</details>
+<div class="post-footer"><p>Chapter list: <a href="index.html">Module 12</a>. Module 01 also has the <a href="../quiz.html">interactive quiz</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

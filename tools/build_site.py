@@ -51,18 +51,168 @@ CHAPTERS = [
 ]
 
 ROADMAP_MODULES = [
-    ('M02', 'Memory security &amp; exploitation', 'QUEUED', 'The dark mirror of module 01: canaries, tcache poisoning, ROP, MTE, Rowhammer — every design decision as attack surface.'),
-    ('M03', 'Software bugs: the taxonomy of failure', 'QUEUED', 'The bug classes senior engineers know by scar: memory, race, numeric, state — and how fuzzing and sanitizers actually find them.'),
-    ('M04', 'Decompilation &amp; reverse engineering', 'QUEUED', 'Reading what compilers leave behind: file formats from bytes up, calling conventions, vtable reconstruction, Ghidra/IDA.'),
-    ('M05', 'Android internals', 'QUEUED', 'Zygote and COW, ART object model and GC, Binder, lmkd, OTA — an OS designed by memory constraints.'),
-    ('M06', 'iOS internals', 'QUEUED', 'XNU VM, Jetsam bands, the compressor, Mach ports, DYLD shared cache, code signing as memory trust.'),
-    ('M07', 'Desktop OS internals', 'QUEUED', 'Windows (TEB/PEB, heap manager, LFH), Linux (ELF, vdso, slab, OOM), macOS (Mach VM, shared cache) — three concrete pagetable worlds.'),
-    ('M08', 'COBOL &amp; the mainframe world', 'QUEUED', 'The fixed-record universe deep dive: storage sections, PICTURE, CICS, AMODE — why the world\u2019s money runs on no heap.'),
-    ('M09', 'Concurrency &amp; distributed memory', 'QUEUED', 'From the hardware memory model to happens-before at scale: lock-free, RCU, CRDTs — memory and network converge.'),
-    ('M10', 'Compilers &amp; runtime internals', 'QUEUED', 'Where memory models are manufactured: register allocation, escape analysis, barrier insertion, layout choices.'),
-    ('M11', 'Database storage engines', 'QUEUED', 'The disk is the new heap: B-trees, LSM, buffer pools as hierarchy, MVCC as copy-on-write.'),
-    ('M12', 'GPU &amp; AI accelerator memory', 'QUEUED', 'HBM, the CUDA hierarchy, coalescing as cache lines, allocator arenas in training — a new level of the tower.'),
+    ('M02', 'Memory security &amp; exploitation', 'LIVE', 'The dark mirror of module 01: canaries, tcache poisoning, ROP, MTE, Rowhammer — every design decision as attack surface.'),
+    ('M03', 'Software bugs: the taxonomy of failure', 'LIVE', 'The bug classes senior engineers know by scar: memory, race, numeric, state — and how fuzzing and sanitizers actually find them.'),
+    ('M04', 'Decompilation &amp; reverse engineering', 'LIVE', 'Reading what compilers leave behind: file formats from bytes up, calling conventions, vtable reconstruction, Ghidra/IDA.'),
+    ('M05', 'Android internals', 'LIVE', 'Zygote and COW, ART object model and GC, Binder, lmkd, OTA — an OS designed by memory constraints.'),
+    ('M06', 'iOS internals', 'LIVE', 'XNU VM, Jetsam bands, the compressor, Mach ports, DYLD shared cache, code signing as memory trust.'),
+    ('M07', 'Desktop OS internals', 'LIVE', 'Windows (TEB/PEB, heap manager, LFH), Linux (ELF, vdso, slab, OOM), macOS (Mach VM, shared cache) — three concrete pagetable worlds.'),
+    ('M08', 'COBOL &amp; the mainframe world', 'LIVE', 'The fixed-record universe deep dive: storage sections, PICTURE, CICS, AMODE — why the world\u2019s money runs on no heap.'),
+    ('M09', 'Concurrency &amp; distributed memory', 'LIVE', 'From the hardware memory model to happens-before at scale: lock-free, RCU, CRDTs — memory and network converge.'),
+    ('M10', 'Compilers &amp; runtime internals', 'LIVE', 'Where memory models are manufactured: register allocation, escape analysis, barrier insertion, layout choices.'),
+    ('M11', 'Database storage engines', 'LIVE', 'The disk is the new heap: B-trees, LSM, buffer pools as hierarchy, MVCC as copy-on-write.'),
+    ('M12', 'GPU &amp; AI accelerator memory', 'LIVE', 'HBM, the CUDA hierarchy, coalescing as cache lines, allocator arenas in training — a new level of the tower.'),
 ]
+
+# modules 02-12: (id, dir-suffix, display title, short card line, section tag)
+MODULES_META = [
+    ('02', 'memory-security', 'Memory security &amp; exploitation', 'the dark mirror of module 01'),
+    ('03', 'software-bugs', 'Software bugs: the taxonomy of failure', 'the four families and the machinery that finds them'),
+    ('04', 'decompilation-re', 'Decompilation &amp; reverse engineering', 'reading what compilers leave behind'),
+    ('05', 'android-internals', 'Android internals', 'an OS designed by memory constraints'),
+    ('06', 'ios-internals', 'iOS internals', 'a memory-distrust machine'),
+    ('07', 'desktop-internals', 'Desktop OS internals', 'Windows, Linux, macOS side by side'),
+    ('08', 'cobol-mainframe', 'COBOL &amp; the mainframe world', 'the memory model with no heap'),
+    ('09', 'concurrency-distributed', 'Concurrency &amp; distributed memory', 'from MESI to consensus'),
+    ('10', 'compilers-runtimes', 'Compilers &amp; runtime internals', 'where memory models are manufactured'),
+    ('11', 'db-storage-engines', 'Database storage engines', 'the disk is the new heap'),
+    ('12', 'gpu-memory', 'GPU &amp; AI accelerator memory', 'the tower gets a new wing'),
+]
+
+ROW_RE = re.compile(r'^\|\s*(\d+)\s*\|\s*\[([^\]]+)\]\(chapters/([^)]+?)\.md\)\s*\|\s*(.+?)\s*\|\s*$')
+
+def parse_module_readme(mod_dir):
+    """Extract (num, slug, title, oneliner) per chapter from a module README table."""
+    rows = []
+    readme = os.path.join(BASE, 'modules', mod_dir, 'README.md')
+    if not os.path.exists(readme):
+        return rows
+    with open(readme, encoding='utf-8') as f:
+        for line in f:
+            m = ROW_RE.match(line.strip())
+            if m:
+                num, title, slug, oneliner = m.groups()
+                rows.append((int(num), slug, title, oneliner))
+    return rows
+
+
+def module_chapter_page(mid, title_disp, tag, num, body, words, prev_item, next_item):
+    """Chapter page for modules 02-12 (module 01 keeps its original builder)."""
+    mins = max(1, round(words / 220))
+    nav = ['<nav class="chapter-nav">']
+    if prev_item:
+        nav.append('<a class="prev" href="%s"><span class="cn-label">previous</span><span class="cn-title">%s</span></a>'
+                   % (prev_item[0], esc(prev_item[1])))
+    else:
+        nav.append('<span class="cn-only"></span>')
+    if next_item:
+        nav.append('<a class="next" href="%s"><span class="cn-label">next</span><span class="cn-title">%s</span></a>'
+                   % (next_item[0], esc(next_item[1])))
+    else:
+        nav.append('<a class="next" href="index.html"><span class="cn-label">next</span><span class="cn-title">Module index</span></a>')
+    nav.append('</nav>')
+    body = ('<main class="blog-main">\n<article class="post">\n'
+            '<div class="post-kicker">module %s &middot; %s</div>\n'
+            '<h1 class="post-title">%s</h1>\n'
+            '<div class="post-meta">chapter %02d &middot; ~%d min read &middot; deep-roots learning program</div>\n'
+            '%s\n'
+            '%s\n'
+            '<div class="post-footer"><p>This chapter is part of <a href="index.html">Module %s — %s</a>. '
+            'Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. '
+            'The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>\n'
+            '</article>\n</main>'
+            % (mid, tag, esc(title_disp), num, mins, body, '\n'.join(nav), mid, MODULES_META[[m[0] for m in MODULES_META].index(mid)][2]))
+    return page('%s — deep-roots' % title_disp,
+                'Chapter %02d of module %s: %s' % (num, mid, title_disp),
+                body, root='../', ogtype='article')
+
+
+def build_modules():
+    """Render modules 02-12: per-module chapter pages, module index, final exam.
+    Output: m02/ ... m12/ (module 01 keeps its legacy chapters/ URLs)."""
+    manifests = {}
+    for (mid, msuf, mtitle, tag) in MODULES_META:
+        mod_dir = '%s-%s' % (mid, msuf)
+        out_dir = os.path.join(BASE, 'm%s' % mid)
+        os.makedirs(out_dir, exist_ok=True)
+        rows = parse_module_readme(mod_dir)
+        manifest = []
+        for idx, (num, slug, rtitle, oneliner) in enumerate(rows):
+            src = os.path.join(BASE, 'modules', mod_dir, 'chapters', '%s.md' % slug)
+            if not os.path.exists(src):
+                print('  WARNING: missing %s' % src)
+                continue
+            md = read_md(src)
+            hm = re.match(r'^#\s+(.+)$', md.split('\n')[0])
+            title = hm.group(1).strip() if hm else 'Chapter %02d' % num
+            display = re.sub(r'^Chapter\s+\d+\s*[—-]\s*', '', title)
+            body = md_to_html(md)
+            words = len(re.sub(r'```.*?```', '', md, flags=re.S).split())
+            prev_item = None
+            if idx > 0:
+                p = rows[idx - 1]
+                prev_item = ('ch%02d.html' % p[0], 'Ch %02d' % p[0])
+            next_item = None
+            if idx < len(rows) - 1:
+                p = rows[idx + 1]
+                next_item = ('ch%02d.html' % p[0], 'Ch %02d' % p[0])
+            html_page = module_chapter_page(mid, display, tag, num, body, words, prev_item, next_item)
+            with open(os.path.join(out_dir, 'ch%02d.html' % num), 'w', encoding='utf-8') as f:
+                f.write(html_page)
+            manifest.append((num, slug, display, oneliner, words))
+            print('  module %s chapter %02d -> m%s/ch%02d.html (%d words)' % (mid, num, mid, num, words))
+        # module landing page
+        total_words = sum(w for _, _, _, _, w in manifest)
+        chapter_rows = ''.join(
+            '<div class="chapter-row">'
+            '<div class="cr-num">%02d</div>'
+            '<div class="cr-body"><h3><a href="ch%02d.html">%s</a></h3><p>%s</p></div>'
+            '<div class="cr-arrow">&rarr;</div></div>' % (num, num, esc(t), esc(ol))
+            for (num, slug, t, ol, w) in manifest)
+        exam_src = os.path.join(BASE, 'modules', mod_dir, 'quiz', 'final-exam.md')
+        exam_html = ''
+        if os.path.exists(exam_src):
+            exam_md = read_md(exam_src)
+            ebody = md_to_html(exam_md)
+            epage = ('<main class="blog-main">\n<article class="post">\n'
+                     '<div class="post-kicker">module %s &middot; %s &middot; final exam</div>\n'
+                     '<h1 class="post-title">Module %s final exam</h1>\n'
+                     '<div class="post-meta">every chapter &middot; worked answers behind the fold</div>\n'
+                     '%s\n'
+                     '<div class="post-footer"><p>Chapter list: <a href="index.html">Module %s</a>. '
+                     'Module 01 also has the <a href="../quiz.html">interactive quiz</a>.</p></div>\n'
+                     '</article>\n</main>' % (mid, tag, mid, ebody, mid))
+            with open(os.path.join(out_dir, 'final-exam.html'), 'w', encoding='utf-8') as f:
+                f.write(page('Module %s final exam — deep-roots' % mid,
+                             'Final exam for module %s (%s), with worked answers.' % (mid, tag),
+                             epage, root='../', ogtype='article'))
+            exam_html = ('<div class="arc-label">the exam</div>\n<div class="chapter-list">\n'
+                         '<div class="chapter-row"><div class="cr-num">fin</div>'
+                         '<div class="cr-body"><h3><a href="final-exam.html">Module %s final exam</a></h3>'
+                         '<p>Every chapter, worked answers behind the fold.</p></div>'
+                         '<div class="cr-arrow">&rarr;</div></div>\n</div>\n' % mid)
+            print('  module %s final exam -> m%s/final-exam.html' % (mid, mid))
+        landing = ('<main class="blog-main">\n<article class="post">\n'
+                   '<div class="post-kicker">deep-roots learning program &middot; module %s</div>\n'
+                   '<h1 class="post-title">Module %s — %s</h1>\n'
+                   '<div class="post-meta">%d chapters &middot; ~%dk words &middot; %s</div>\n'
+                   '<p class="section-intro">%s</p>\n'
+                   '%s%s\n'
+                   '<div class="post-footer"><p>Part of <a href="../index.html">deep-roots</a>. '
+                   'Prerequisite: <a href="../index.html#module-01">Module 01 — memory models</a>. '
+                   'Sources: <a href="https://github.com/srivtx/deep-roots/tree/main/modules/%s">modules/%s</a>.</p></div>\n'
+                   '</article>\n</main>'
+                   % (mid, mid, mtitle, len(manifest), total_words // 1000, tag,
+                      'Every chapter: first principles, What insiders know, a See it yourself lab, connections, and a quiz with worked answers.',
+                      '<div class="chapter-list">\n' + chapter_rows + '\n</div>\n', exam_html,
+                      mod_dir, mod_dir))
+        with open(os.path.join(out_dir, 'index.html'), 'w', encoding='utf-8') as f:
+            f.write(page('Module %s — %s — deep-roots' % (mid, mtitle),
+                         'Module %s of the deep-roots program: %s — %d chapters from first principles, with labs, quizzes, and a final exam.' % (mid, tag, len(manifest)),
+                         landing, root='../'))
+        manifests[mid] = manifest
+        print('  module %s index -> m%s/index.html (%d chapters, %d words)' % (mid, mid, len(manifest), total_words))
+    return manifests
 
 NO_FLASH = (
     "<script>(function(){try{var t=localStorage.getItem('roots-theme');"
@@ -92,7 +242,7 @@ HEAD = """<meta charset="UTF-8">
 HEADER = """<header class="site-header">
   <a class="brand" href="{root}index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
   <div class="header-right">
-    <nav><a href="{root}index.html#module-01">Module 01</a><a href="{root}quiz.html">Quiz</a><a href="{root}roadmap.html">Roadmap</a><a href="{root}index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <nav><a href="{root}index.html#module-01">Module 01</a><a href="{root}index.html#roadmap">Modules</a><a href="{root}quiz.html">Quiz</a><a href="{root}roadmap.html">Roadmap</a><a href="{root}index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
     <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
       <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -278,7 +428,10 @@ def md_to_html(md):
                 list_state['tag'] = tag
             parts = [m.group(3)]
             i += 1
-            while i < n and lines[i].strip() and not re.match(r'^\s{0,1}([-*]|\d+\.)\s+', lines[i]):
+            # stop continuation at any block-level construct (raw HTML tags,
+            # headings, quotes, hr, tables, fences) — not just blank lines
+            stop_cont = re.compile(r'^\s{0,1}([-*]|\d+\.)\s+|^#{1,6}\s+|^>|^-{3,}$|^\||^```|^<details|^</details|^<summary')
+            while i < n and lines[i].strip() and not stop_cont.match(lines[i]):
                 parts.append(lines[i].strip())
                 i += 1
             out.append('<li>' + inline(' '.join(parts)) + '</li>')
@@ -400,10 +553,13 @@ def build_chapters():
     return index_manifest
 
 
-def build_index(manifest):
+def build_index(manifest, mod_manifests):
+    total_chapters = len(manifest) + sum(len(m) for m in mod_manifests.values())
+    total_words = sum(w for _, _, _, _, w in manifest) + sum(
+        w for m in mod_manifests.values() for (_, _, _, _, w) in m)
     facts = [
-        ('23', 'chapters'), ('16', 'languages'), ('~%dk' % (sum(w for _, _, _, _, w in manifest) // 1000), 'words'),
-        ('30', 'final exam'),
+        ('%d' % total_chapters, 'chapters'), ('12', 'modules'), ('~%dk' % (total_words // 1000), 'words'),
+        ('12', 'final exams'),
     ]
     facts_html = ''.join('<div class="fact"><div class="n">%s</div><div class="l">%s</div></div>' % f for f in facts)
 
@@ -447,9 +603,9 @@ def build_index(manifest):
                     '<div class="cr-arrow">&rarr;</div></div>\n</div>\n')
 
     roadmap_cards = ''.join(
-        '<article class="module-card%s"><span class="mc-id">%s</span><h3>%s</h3><p>%s</p>'
+        '<article class="module-card live"><span class="mc-id">%s</span><h3><a href="m%s/index.html" style="color:inherit;text-decoration:none">%s</a></h3><p>%s</p>'
         '<span class="mc-status">%s</span></article>'
-        % (' live' if mid == 'M02' else '', mid, name, desc, status)
+        % (mid, mid[1:], name, desc, status)
         for mid, name, status, desc in ROADMAP_MODULES)
 
     body = """<section class="hero">
@@ -458,9 +614,10 @@ def build_index(manifest):
   <p class="lede">
     Every technical field has a root layer its practitioners know and everyone else waves away.
     deep-roots goes down and stays there: each module rebuilds one field from the physics up,
-    so that what others memorize, we <strong>derive</strong>. Module 01 — live now — is the root of
-    them all: the memory models of programming languages, from silicon to GC, C to COBOL,
-    stack frames to heap exploits. <strong>What insiders know, written down.</strong>
+    so that what others memorize, we <strong>derive</strong>. Module 01 — the memory models of
+    programming languages — is the root of them all, and eleven more modules are now live:
+    security, bugs, decompilation, Android, iOS, desktop kernels, COBOL, concurrency,
+    compilers, databases, GPUs. <strong>What insiders know, written down.</strong>
   </p>
   <div class="hero-facts">__FACTS__</div>
 </section>
@@ -477,12 +634,13 @@ def build_index(manifest):
 </section>
 
 <section class="section" id="roadmap">
-  <div class="section-head"><h2>The roadmap</h2><div class="rule"></div></div>
+  <div class="section-head"><h2>The other eleven fields — all live</h2><div class="rule"></div></div>
   <p class="section-intro">
     Memory first because everything else is a consequence: security bugs are memory bugs,
     decompilation reads stack frames and vtables, mobile OSes are memory-driven schedulers,
-    COBOL is a memory model, distributed consistency is the memory model at scale.
-    Eleven more modules are specified on <a href="roadmap.html">the roadmap page</a>.
+    COBOL is a memory model, distributed consistency is the memory model at scale, and
+    compilers, databases, and GPUs are the factory, the disk-scale, and the new wing of the
+    same tower. Every module below is fully written, quizzed, and final-examined.
   </p>
   <div class="module-grid">
 __ROADMAP__
@@ -554,11 +712,16 @@ def build_roadmap():
     print('  roadmap.html')
 
 
-def build_misc():
+def build_misc(mod_manifests):
     urls = [SITE + '/', SITE + '/index.html', SITE + '/quiz.html', SITE + '/roadmap.html',
             SITE + '/chapters/final-exam.html']
     for (num, slug, _oneliner) in CHAPTERS:
         urls.append(SITE + '/chapters/ch%02d.html' % num)
+    for mid, mrows in mod_manifests.items():
+        urls.append(SITE + '/m%s/index.html' % mid)
+        urls.append(SITE + '/m%s/final-exam.html' % mid)
+        for (num, slug, _t, _ol, _w) in mrows:
+            urls.append(SITE + '/m%s/ch%02d.html' % (mid, num))
     urls = sorted(set(urls))
     today = BUILD_DATE
     sm = ('<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -619,12 +782,15 @@ def build_og():
 def main():
     print('building deep-roots site ->', BASE)
     manifest = build_chapters()
-    build_index(manifest)
+    mod_manifests = build_modules()
+    build_index(manifest, mod_manifests)
     build_roadmap()
-    build_misc()
+    build_misc(mod_manifests)
     build_og()
-    total_words = sum(w for _, _, _, _, w in manifest)
-    print('DONE: %d chapters, %d words total' % (len(manifest), total_words))
+    total_words = sum(w for _, _, _, _, w in manifest) + sum(
+        w for m in mod_manifests.values() for (_, _, _, _, w) in m)
+    print('DONE: %d module-01 chapters + %d module pages, %d words total'
+          % (len(manifest), sum(len(m) for m in mod_manifests.values()), total_words))
 
 
 if __name__ == '__main__':

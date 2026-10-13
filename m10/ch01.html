@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The pipeline — deep-roots</title>
+<meta name="description" content="Chapter 01 of module 10: The pipeline">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The pipeline — deep-roots">
+<meta property="og:description" content="Chapter 01 of module 10: The pipeline">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The pipeline — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of module 10: The pipeline">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 10 &middot; where memory models are manufactured</div>
+<h1 class="post-title">The pipeline</h1>
+<div class="post-meta">chapter 01 &middot; ~13 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A compiler is a relay race between representations. Text becomes tokens (no memory meaning), tokens become a tree (shape, no addresses), the tree becomes an <em>intermediate representation</em> where names turn into values or explicit memory operations, and codegen picks registers and stack slots and emits the prologue — the exact moment module 01 ch04's stack frame comes into existence. "-O2 ate my variable" is promotion, not deletion: a pass turns locals into single-assignment values that need no memory.</blockquote>
+<h2 id="from-text-to-graph-why-the-stages-exist">From text to graph: why the stages exist</h2>
+<p>Nobody writes text-to-machine-code in one step. The input is unstructured, context-sensitive text; the output is a register machine — structured, finite, address-based. One transformation would be untestable, so the journey is split — text, tokens, tree, graph (the IR), machine — one stage per question:</p>
+<ul>
+<li><strong>Lexer</strong> — bytes to tokens. <code>int</code> is 3 characters that become one keyword token; the stream for <code>int x = 0;</code> knows nothing about storage. <em>No memory semantics at this stage</em> — and almost no state.</li>
+<li><strong>Parser</strong> — tokens to a tree, via <em>recursive descent</em>: one function per grammar rule. The hard question is precedence: in <code>a + b * c</code>, who owns <code>b</code>? A <em>Pratt parser</em> answers with a table: each operator gets a numeric binding power; the expression loop parses a left operand, peeks the next operator, and recurses only when the peeked power is higher. C's 15 precedence levels (C17) become one ~20-line loop plus a table. The AST has scope <em>syntax</em> — but no addresses: a "block" is a tree node, not a stack region.</li>
+</ul>
+<p>Memory ideas first appear only past the parser; before the IR boundary it is string and tree surgery — which is why beginner bugs (syntax errors, precedence surprises) never touch this module's memory story.</p>
+<h2 id="the-ir-n-m-economics-and-a-typed-goto-form">The IR: N×M economics and a typed GOTO form</h2>
+<p>Front ends need linguists; back ends need hardware engineers. Straight compilation from every language to every target costs N×M complete compilers — for N = 6 front ends and M = 5 targets, 30 pairings, each demanding both expertises. One shared IR, and you write N front ends + M back ends: 11 components — why Rust, Swift, and Julia rent LLVM's back ends instead of writing their own.</p>
+<p>LLVM IR is the concrete contract:</p>
+<ul>
+<li><strong>Typed</strong>: every value carries a first-class type (<code>i32</code>, <code>ptr</code>, <code>float</code>).</li>
+<li><strong>GOTO form</strong>: a function is a list of <em>basic blocks</em> — maximal straight-line sequences — each ending in exactly one <em>terminator</em> (<code>br</code>, <code>ret</code>, <code>switch</code>). Jumps target block labels, never a block's middle — control flow is an explicit graph.</li>
+<li><strong>Infinite virtual registers</strong>: <code>%0</code>, <code>%1</code>, … — "only 16 registers" is deliberately not the IR's problem, but codegen's (ch03).</li>
+<li><strong>Memory is explicit</strong>: there are no "variables": a stack local is an <code>alloca</code> ("claim N bytes on my frame") plus <code>load</code>/<code>store</code>, and every memory access is a visible instruction.</li>
+</ul>
+<pre><code class="language-llvm">; LLVM IR shape (LLVM 19 LangRef syntax; illustrative, not a dump)
+define i32 @classify_sum(ptr readonly %a, i32 %n, i32 %limit) {
+entry:
+  %a.addr = alloca ptr                  ; at -O0 locals live in IR-visible memory
+  store ptr %a, ptr %a.addr
+  br label %loop.header                 ; blocks end in terminators...
+loop.header:
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %body.merge ]   ; ...and merge in phis
+}</code></pre>
+<p>The AST is <em>lowered</em> into this, not translated — sugar dies here. <code>for</code> and <code>while</code> become the same loop skeleton, <code>x += 1</code> and <code>x = x + 1</code> the same add, and many languages' constructs collapse into one ~50-instruction vocabulary, so every optimizer pass is written once. GCC makes the same decisions in different clothes: its IR is <strong>GIMPLE</strong> (three-address code, basic blocks, gotos), which you dump below.</p>
+<h2 id="ssa-and-the-phi-node-variables-become-values">SSA and the phi node: variables become values</h2>
+<p>Optimizations ask <em>where was this defined, and who reads it?</em> — mutation makes that hard: the lab's <code>acc</code> has three assignments, so uses have three reaching definitions. <strong>SSA — static single assignment — kills the problem at the root: each assignment creates a new name.</strong> <code>acc</code> becomes <code>acc_8</code>, then <code>acc_17</code>, <code>acc_18</code>, <code>acc_19</code>; every use has exactly one definition, so def→use edges become single arrows a pass can walk blindly. Renaming is free — except at control-flow <em>merges</em>, where two names both hold "the current acc." SSA's answer: a new instruction, the <strong>phi node</strong> — this sentence made executable:</p>
+<blockquote>At this merge point, the value is <strong>x</strong> if you arrived on this edge, <strong>y</strong> if you arrived on that edge.</blockquote>
+<p>A phi is a register-merger at a control-flow join — a programmable mux. The lab function's loop, as the CFG the IR contains:</p>
+<pre><code class="language-text">                  entry  (bb 2)
+                  acc_8 = 0;  i_9 = 0
+                        |
+                        |  value of acc on this edge: acc_8 (= 0)
+                        v
+        +--------------------------------+
+        |  loop header (bb 10)           |&lt;-----------------+
+        |                                |                   |
+        |  # acc_5 = PHI &lt;acc_8(2),      |   value of acc on |
+        |                 acc_4(9)&gt;      |   THIS back edge: |
+        |  # i_6   = PHI &lt;i_9(2),        |   acc_4 (updated) |
+        |                 i_20(9)&gt;       |                   |
+        +----------------+---------------+                   |
+                         | i_6 &lt; n ?                         |
+              +---- no ---+--- yes ----+                     |
+              v                         v                    |
+        return acc_5              loop body (bb 4)            |
+                                   v_15 = a[i_6]             |
+                                   if (v_15 &lt; 0)             |
+                              yes /          \ no            |
+                                 v            v              |
+                     acc_19 = acc_5+v_15   acc_17 =          |
+                     (v negative)           acc_5 + v_15     |
+                                 |            |              |
+                                 +-----+------+              |
+                                       v                     |
+                              merge block (bb 9)            |
+                        # acc_4 = PHI &lt;acc_19(5),            |
+                                        acc_17(8)&gt;           |
+                        i_20 = i_6 + 1                       |
+                                       |                     |
+                                       +---------------------+
+              </code></pre>
+<p>GCC spells this <code># acc_4 = PHI &lt;acc_19(5), acc_17(8)&gt;</code>; LLVM: <code>%m = phi i32 [ %a, %then ], [ %b, %else ]</code>.</p>
+<p>Two subtleties. First, <strong>the phi is a fiction</strong>: no CPU has a phi instruction; codegen lowers it into register pairs plus a conditional move — in the lab, the three-way merge phi becomes a single <code>cmovl</code>. Second, the pass connecting SSA to <em>your variables</em>: at -O0, IR locals are memory (<code>alloca</code> + load/store in LLVM; GIMPLE names for stack slots in GCC). The <strong>mem2reg</strong> pass (LLVM) / SSA construction (GCC) promotes each load/store pattern to an SSA value — the moment "a variable" becomes "a value" and -O2 locals stop existing as memory. When mem2reg succeeds, nothing is left for the stack frame to hold.</p>
+<h2 id="passes-analysis-vs-transform-o2-as-function-composition">Passes: analysis vs transform, <code>-O2</code> as function composition</h2>
+<p>"Optimizing" means running functions over the IR. Two kinds: <strong>transforms</strong> rewrite IR (inline a call, delete a dead store, hoist an invariant); <strong>analyses</strong> compute facts (dominators, liveness) and never appear in the output file — they only license transforms. Analyses are cached and <em>invalidated</em>: a transform that edits the CFG burns the dominance cache, and the next consumer recomputes.</p>
+<p>An optimization level is a fixed <em>pipeline</em> — a function composition: <code>-O2</code> is fₙ ∘ ⋯ ∘ f₁, and <code>opt -O2 &lt; in.ll &gt; out.ll</code> is literally that function application. GCC runs the same idea: for the lab function, GCC 14.2 executes <strong>140 tree-level passes at -O2 versus 29 at -O0</strong> (counted via <code>-fdump-tree-all</code>; the -O0 passes are mostly <em>lowering</em>, not optimization). "No optimization" means fewer passes, never no pipeline. What -O2 passes buy, beyond speed, is <em>canonicalization</em> — one standard shape per construct, so later passes match patterns instead of spellings.</p>
+<h2 id="codegen-selection-scheduling-allocation-the-birth-of-the-frame">Codegen: selection, scheduling, allocation — the birth of the frame</h2>
+<p>Codegen has three sub-problems. <strong>Instruction selection</strong> matches IR patterns to machine instructions — <code>a[i]</code> with i32 elements becomes the addressing mode <code>(%rdi,%rax,4)</code>; add-plus-shift collapses into <code>lea</code>. <strong>Scheduling</strong> orders instructions to hide latency and reorders blocks. <strong>Register allocation</strong> maps infinite virtual registers onto x86-64's 16 GPRs (14 usable); the losers become <strong>spill slots</strong> — ch03's whole subject.</p>
+<p>Then this module's moment. <strong>Prologue/epilogue emission</strong> — GCC's <code>pro_and_epilogue</code> pass, LLVM's <code>PrologEpilogInserter</code> — is where module 01 ch04's stack frame comes into existence: after allocation has counted the spills, the pass emits <code>push rbp / mov rbp, rsp / sub $N, rsp</code>, and N is the spill count, which no earlier stage could know. The frame you memorized in module 01 is <em>decided</em> here — and if allocation needs nothing and the function is a leaf, it is born with size zero; the lab function at -O2 has exactly that non-frame.</p>
+<h2 id="lto-and-the-debugging-knobs">LTO and the debugging knobs</h2>
+<p>The pipeline runs per <em>translation unit</em> — C's model — so it stops at file boundaries: you cannot inline across files without their IR. <strong>LTO</strong> serializes the IR into the object: <code>gcc -flto</code> wraps GIMPLE bytecode into <code>gnu.lto_*</code> ELF sections (an LTO object has <em>no <code>.text</code> at all</em>); <code>clang -flto</code> embeds bitcode (<code>.llvm.lto</code> in clang 15+, <code>__llvm.lto</code> before). At link time the linker plugin hands the <em>merged, whole-program IR</em> back to the compiler, and the same pipeline runs again. The binary thus ships the compiler's blueprints; LTO links need a plugin-aware linker and a matching compiler version — the linker is now a compiler, and linking gets slower.</p>
+<p>The knobs that make every stage observable (versions matter):</p>
+<ul>
+<li><code>clang -S -emit-llvm</code> / <code>llvm-dis</code>: IR as text — GCC twin <code>-fdump-tree-gimple</code>.</li>
+<li><code>opt -S -passes='default&lt;O2&gt;' -debug-pass-manager</code>: prints each pass as it runs — the <code>-debug-pass=Executions</code> flag from pre-2020 blog posts died with LLVM's legacy pass manager; new-PM flags work in LLVM 15+ — GCC twins <code>-fdump-tree-all</code> and <code>-fopt-info-all</code>.</li>
+<li><code>-fverbose-asm</code>: assembly annotated with source lines and IR names (clang, GCC).</li>
+<li><code>gcc -fdump-rtl-*</code>: the codegen stages, including <code>pro_and_epilogue</code>.</li>
+</ul>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The diamond is measured in person-years.</strong> 30 full compilers versus 11 components is why rustc, Swift, and Julia all sit on LLVM. The tax: your semantics must fit the shared IR — Rust's borrow checker emits metadata LLVM ignores; Go built its own compiler to keep escape analysis in-house.</li>
+<li><strong>mem2reg runs before anything you think of as optimization.</strong> In opt's <code>default&lt;O1&gt;</code>+ pipelines it sits in the first canonicalization round, so every later pass sees clean SSA — "-O0 has variables, -O2 doesn't" is decided in the pipeline's first minutes. GCC's twins: SSA construction (<code>022t.ssa</code>) and the SRA family (<code>038t.esra</code>); GCC 14.2 even builds SSA at -O0, then immediately releases it (<code>056t.release_ssa</code>).</li>
+<li><strong>The frame decision is almost the last thing that happens.</strong> Spill slots are assigned during register allocation (GCC's IRA/LRA, LLVM's greedy allocator); only then does <code>pro_and_epilogue</code> / <code>PrologEpilogInserter</code> fix the frame size. Ask "how big is this frame?" at the AST: the compiler doesn't know yet.</li>
+<li><strong>Pass-pipeline debug flags are a version trap.</strong> LLVM: <code>-debug-pass-manager</code> with <code>-passes='default&lt;O2&gt;'</code> (LLVM 15+); legacy <code>-debug-pass=Executions</code> is gone. GCC: <code>-fdump-tree-all</code> — dump filenames embed the pass index (<code>pipeline.c.022t.ssa</code>); the <em>name</em> is stable, the index moves with flags.</li>
+<li><strong>LTO objects are IR wearing an ELF hat.</strong> <code>gcc -flto</code> output contains <code>gnu.lto_.symc</code> / <code>gnu.lto_.main</code> sections and no code; <code>nm</code> without the plugin shows nothing useful. <code>lto-dump</code> (GCC) and <code>llvm-dis</code> on extracted bitcode read it back — an object's optimization potential sits in IR until final link.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>No clang on this machine, so the lab runs the GCC twins — every fragment is real, <strong>GCC 14.2.0 (Debian 14.2.0-19), x86-64 Linux</strong>. The function:</p>
+<pre><code class="language-c">/* pipeline.c — 20 lines, four locals, three merge points */
+int classify_sum(const int *a, int n, int limit) {
+    int acc = 0;                      /* local 1: accumulator   */
+    int i = 0;                        /* local 2: loop counter  */
+    if (n &lt;= 0) {                     /* early out: 1 merge     */
+        return 0;
+    }
+    while (i &lt; n) {                   /* back edge -&gt; phis      */
+        int v = a[i];                 /* local 3: load          */
+        if (v &lt; 0) {                  /* merge 1: if/else       */
+            acc = acc + v;
+        } else if (v &gt; limit) {       /* merge 2                */
+            acc = acc + limit;
+        } else {
+            acc = acc + v;
+        }
+        i = i + 1;
+    }
+    int result = acc;                 /* local 4: pure rename   */
+    return result;
+}</code></pre>
+<p><strong>Step 1 — the IR at -O0: locals are names, control is gotos.</strong></p>
+<pre><code class="language-sh">gcc -O0 -fdump-tree-gimple -c pipeline.c    # -&gt; pipeline.c.006t.gimple</code></pre>
+<pre><code class="language-text">;; pipeline.c.006t.gimple (excerpt)
+int classify_sum (const int * a, int n, int limit)
+{
+  int D.2783;  int acc;  int i;  int result;    &lt;- every local DECLARED
+  if (n &lt;= 0) goto &lt;D.2781&gt;; else goto &lt;D.2782&gt;;  &lt;- while already lowered to
+  &lt;D.2779&gt;:                                          labels + gotos
+    v = *(a + (long unsigned) i * 4);             &lt;- the load is explicit</code></pre>
+<p><strong>Step 2 — SSA at -O2: the phis appear.</strong></p>
+<pre><code class="language-sh">gcc -O2 -fdump-tree-ssa -c pipeline.c     # -&gt; pipeline.c.022t.ssa</code></pre>
+<pre><code class="language-text">;; pipeline.c.022t.ssa (excerpt)
+&lt;bb 10&gt; :
+  # acc_5 = PHI &lt;acc_8(2), acc_4(9)&gt;    &lt;- acc is acc_8 on the entry edge,
+  # i_6   = PHI &lt;i_9(2), i_20(9)&gt;       acc_4 on the back edge
+&lt;bb 9&gt; :
+  # acc_4 = PHI &lt;acc_19(5), acc_18(7), acc_17(8)&gt;  &lt;- the 3-way merge phi
+  i_20 = i_6 + 1;</code></pre>
+<p><strong>Step 3 — after the pipeline: the locals vanish.</strong></p>
+<pre><code class="language-sh">gcc -O2 -fdump-tree-optimized -c pipeline.c  # -&gt; pipeline.c.265t.optimized</code></pre>
+<pre><code class="language-text">;; pipeline.c.265t.optimized (excerpt)
+  &lt;bb 4&gt; :
+  # acc_28 = PHI &lt;0(3), acc_37(9)&gt;             &lt;- "acc = 0" folded INTO the phi
+  # ivtmp.8_43 = PHI &lt;ivtmp.8_20(3), ivtmp.8_27(9)&gt;   &lt;- i became a pointer walk
+  v_33 = MEM[(const int *)_19];                &lt;- v is a VALUE now, not a slot</code></pre>
+<p><code>i</code> and <code>result</code> no longer exist as variables: <code>i</code> became <code>ivtmp.8</code> (a pointer advancing 4 bytes per iteration), <code>result</code> folded into the return merge.</p>
+<p><strong>Step 4 — the memory contrast.</strong></p>
+<pre><code class="language-sh">gcc -O0 -S -fverbose-asm -o O0.s pipeline.c
+gcc -O2 -S -fverbose-asm -o O2.s pipeline.c</code></pre>
+<p>At -O0 the prologue is <code>pushq %rbp; movq %rsp, %rbp</code> — no <code>subq</code>, because a leaf parks its five slots in the 128-byte red zone below <code>rsp</code> (x86-64 SysV) — then spills every local: <code>movq %rdi, -24(%rbp) # a</code>, <code>movl $0, -4(%rbp) # acc</code>, <code>i</code>/<code>v</code>/<code>result</code> at -8/-16/-12.</p>
+<pre><code class="language-asm">;; O2.s: no frame — locals live in registers
+classify_sum:
+        leaq    (%rdi,%rsi,4), %r8      # loop end = a + n*4
+.L6:
+        movl    (%rdi), %ecx    # v
+.L3:
+        leal    (%rax,%rdx), %esi       # acc+limit
+        addl    %ecx, %eax      # v
+        cmpl    %ecx, %edx      # v, limit
+        cmovl   %esi, %eax      # &lt;- the 3-way merge phi: ONE conditional move
+        addq    $4, %rdi        # ivtmp.8: i is gone, the pointer walks
+        cmpq    %rdi, %r8
+        jne     .L6
+.L1:
+        ret                                  ; no popq, no leave: frame never existed</code></pre>
+<p><strong>Step 5 — the frame decision (RTL).</strong></p>
+<pre><code class="language-sh">gcc -O0 -fdump-rtl-pro_and_epilogue -c pipeline.c  # -&gt; pipeline.c.322r.pro_and_epilogue</code></pre>
+<pre><code class="language-text">;; pipeline.c.322r.pro_and_epilogue (excerpt)
+(insn/f 84 ... (set (mem:DI (pre_dec:DI (reg/f:DI 7 sp)))  ; rsp -= 8, THEN
+        (reg/f:DI 6 bp)) "pipeline.c":1                    ; store rbp: PUSH rbp
+(insn/f 85 ... (set (reg/f:DI 6 bp) (reg/f:DI 7 sp)))      ; rbp = rsp```
+
+That `pre_dec` is the frame's first 8 bytes being born as a side effect of a
+store. Add a call to make it non-leaf and you get the classic `pushq
+%rbp; movq %rsp, %rbp; subq $32, %rsp` — 32, not 24, to keep `rsp` 16-byte
+aligned (verified, same compiler).
+
+**With clang instead** (documented equivalents, not run here): `clang -S
+-emit-llvm -O0 pipeline.c` yields `pipeline.ll` with an `alloca`/`store` per
+local, phis at `-O2`; `llvm-dis pipeline.bc` turns bitcode into text; `opt -S
+-passes='default&lt;O2&gt;' -debug-pass-manager pipeline.ll` prints every pass.
+
+## How to use this knowledge
+
+- **When gdb says `value has been optimized out`**: mem2reg promoted the local
+  and regalloc put it in a register or folded it away. Rebuild with `-Og`, GCC's
+  debug-friendly level, or read `-fverbose-asm` to find the carrying register.
+- **Reading production disassembly** (module 04 ch03's game): fingerprint code —
+  `push rbp/mov rbp,rsp` with no `sub` means red-zone leaf, not "inlined"; a `cmov`
+  cluster means a merge phi was if-converted; a pointer stepping `addq $4` with no
+  counter means induction-variable replacement ran.
+- **Performance decisions**: cross-file inlining needs LTO, not hope; "-O3"
+  just appends passes (unrolling, vectorization); a loop that spills at -O3 but
+  fits at -O2 points at ch03.
+
+
+## Connections
+
+- **Module 01 ch04 (the stack)** — the frame diagram there is *emitted* by this
+  chapter's `pro_and_epilogue` pass; its size is the spill count from one stage
+  earlier.
+- **Module 01 ch07 (assembly)** — the lab's artifacts (`cmovl`, addressing modes, the zero-frame leaf) are that chapter's instruction set, chosen by selection.
+- **Module 04 ch03 (reading disassembly)** — its compiler fingerprints are this
+  chapter's outputs read backwards.
+- **Module 10 ch02** — SROA, DSE, LICM, alias analysis: the transforms that
+  run in this pipeline.
+- **Module 10 ch03** — register allocation: the stage whose spill count sizes the
+  frame this chapter's prologue emits.
+- **Module 10 ch04** — escape analysis, write barriers, safepoints are passes inserted into this same pipeline.
+- **Module 10 ch05** — ABI and layout: the contracts codegen honors.
+- **Module 11 (database storage engines)** — none: a B-tree does not care about SSA.
+
+## Quiz
+
+1. Your team maintains 6 DSL front ends and must target 5 architectures. With a
+   shared IR, how many compiler *components* do you write instead of 30, and what
+   two costs do you pay?
+2. The pass computing "which definitions reach this use" — analysis or
+   transform? Why can its result never appear in the output file, and what happens after a
+   transform edits the CFG?
+3. Predict the IR. Given `int x = 0; if (c) x = 1; else x = 2; return x;` — how
+   many inputs does the merge-point phi for `x` have, does `c` get a phi, and what
+   changes if the `else` arm is deleted?
+4. Predict the number. A non-leaf `-O0` GCC 14.2 (x86-64) function shows
+   `pushq %rbp; movq %rsp, %rbp; subq $32, %rsp` — 32, though its slots need only
+   24 bytes. Why exactly 32?
+5. Bug diagnosis: at `-O2`, gdb reports `acc` as "value has been optimized
+   out," and your colleague files "the optimizer deleted my variable." Name the
+   pass, say what actually happened, and give two recoveries.
+6. Bug diagnosis: stepping through the lab function at `-O2`, a breakpoint on
+   line 12 (`acc = acc + limit;`) never fires, yet the limit branch provably
+   executes. What did the pipeline do to line 12?
+7. Cross-chapter (module 01 ch04): at which pipeline stage does the stack frame come into existence, why not one stage earlier, and why does the lab function at `-O2` get a frame of zero bytes?
+8. Bug diagnosis: `nm foo.o` on a `-flto` object shows almost nothing, and an
+   old linker rejects it outright. What is inside `foo.o`, and what does a
+   working link require?
+
+&lt;details&gt;
+&lt;summary&gt;Answers&lt;/summary&gt;
+
+1. **11 components** (6 front ends + 5 back ends), not 30 compilers.
+   Cost (a): the IR is a *common denominator* — every language's semantics must
+   fit it, so language-specific wins (Rust's aliasing, Go's escape analysis) leak
+   away unless the language owns its compiler. Cost (b): the IR becomes a stability contract — changing it is a coordinated
+   event, not a refactor.
+2. **Analysis.** It consumes IR and produces facts (def→use, dominance) and has
+   no write path to the output file — it only licenses transforms.
+   A CFG-editing transform **invalidates** the cached analysis — dominance is no
+   longer trustworthy — so it is recomputed for the next consumer.
+3. **Two inputs**: `x_4 = PHI &lt;x_1(then), x_2(else)&gt;`. `c` gets no phi — it is
+   assigned once (a parameter); SSA mints names only for assignments. Delete the `else` arm and the phi survives with one value and one *constant*,
+   `PHI &lt;x_1, 0&gt;` — the fall-through's `x = 0` folds into the phi as a literal.
+4. **16-byte stack alignment.** At entry `rsp` is 8 mod 16 (return address);
+   after `push rbp`, 0 mod 16. `subq $24` would leave it 8 mod 16 — misaligned
+   for the 16-byte SSE accesses the ABI promises at calls. 24 rounds up to 32 (SysV AMD64, GCC 14.2).
+5. **Promotion, not deletion.** mem2reg/SSA construction converted `acc`'s
+   load/store pattern into SSA values — virtual registers, folded into `%eax`
+   (the lab). Nothing is missing; there is just no *storage* to print.
+   Recoveries: rebuild with `-Og` (or `-O0`), or find the carrying register via
+   `-fverbose-asm` and `info registers`.
+6. **If-conversion plus phi lowering.** The three-way merge phi became register
+   arithmetic guarded by one `cmovl`: both arms compute their candidates
+   unconditionally and the conditional move picks. Line 12 no longer exists as a branch — the choice is a data dependency now,
+   so no line-12 breakpoint can fire.
+7. **At prologue/epilogue emission** — GCC's `pro_and_epilogue`, LLVM's
+   `PrologEpilogInserter`. Not earlier because the frame size *is* the spill
+   count, register allocation's output. At `-O2` the lab function needs zero
+   spills and is a leaf, so nothing is emitted: the only frame bytes are the
+   8-byte return address the *caller's* `call` pushed — module 01 ch04's minimal
+   frame.
+8. **IR wearing an ELF hat.** `foo.o` holds serialized compiler IR in `gnu.lto_*`
+   sections (GCC) or bitcode in `.llvm.lto` (clang 15+) — and no `.text`, so `nm`
+   lists no code symbols. A working link needs a plugin-aware linker and a
+   matching IR version: the link step *is* a compile of the merged whole-program
+   IR.
+
+&lt;/details&gt;
+</code></pre>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 10 — Compilers &amp; runtime internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

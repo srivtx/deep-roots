@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How bugs are found — deep-roots</title>
+<meta name="description" content="Chapter 05 of module 03: How bugs are found">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="How bugs are found — deep-roots">
+<meta property="og:description" content="Chapter 05 of module 03: How bugs are found">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="How bugs are found — deep-roots">
+<meta name="twitter:description" content="Chapter 05 of module 03: How bugs are found">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 03 &middot; the four families and the machinery that finds them</div>
+<h1 class="post-title">How bugs are found</h1>
+<div class="post-meta">chapter 05 &middot; ~15 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Bugs hide because input space grows exponentially while tests cover a linear slice (ch01). Fuzzing turns bug-finding into an <em>optimizer</em>: generate inputs, keep the ones that reach new edges, mutate them, repeat. A sanitizer is the <em>oracle</em> — it flags a memory-safety violation even when nothing crashes, because Heartbleed never crashed. When a bug ships anyway, <code>git bisect</code> finds the committing moment in log(N) questions.</blockquote>
+<h2 id="1-the-search-problem-inverted">1. The search problem, inverted</h2>
+<p>Chapter 01 derived the coverage gap: paths multiply as 2^branches — a parser with 30 decision points has ~10^9 paths — while tests sample a linear slice. The inversion defining modern bug finding: stop enumerating inputs, start <em>searching</em>. A search needs a <strong>generator</strong> (random bytes, mutations, grammar synthesis) and an <strong>oracle</strong> (crash, sanitizer report, hang).</p>
+<p>Pure random generation fails for a derivable reason. A decoder guarding its deepest branch behind the 4-byte header <code>AA 55 10 80</code> is hit by a blind generator with probability (1/256)^4 = 2^-32 ≈ 1 in 4.3 billion — five days at 10,000 inputs/second — and real protocols stack magic numbers, lengths, and checksums, compounding the odds. The fix is not a better random generator. The fix is feedback.</p>
+<h2 id="2-the-feedback-loop-fuzzing-as-an-optimizer">2. The feedback loop: fuzzing as an optimizer</h2>
+<p>Take a seed corpus, run it, record which <em>edges</em> of the control-flow graph it reaches. Mutate. If the mutant reaches an edge no corpus entry owns, keep it — a stepping stone. Otherwise discard.</p>
+<pre><code>        seed corpus
+            |
+            v
+   +------------------+      candidate input
+   |  mutate / splice |----------------------+
+   +------------------+                      |
+            ^                                 v
+            |                     +-----------------------+
+   retained: reached              |   execute the target   |
+   a new edge                  +--&gt;|   (in-process, fast)  |
+            |                  |   +-----------------------+
+   +---------+----------+     |        |            |
+   | corpus (coverage-  |     |   new edge?       crash / sanitizer
+   | deduped, minimized)|&lt;----+        |           report?
+   +--------------------+      no -&gt; discard     yes -&gt; save input, stop</code></pre>
+<p>This is hill-climbing (a (1+1) evolutionary strategy): fitness = new edges, population = corpus, operators = bit flips, splices, block repeats. The magic header costing 2^32 blind trials now costs hundreds: the corpus retains the input that found <code>0xAA</code>, so the next mutation only needs <code>0x55</code> next to it. Each byte is discovered once and never lost — that is the whole trick.</p>
+<p><strong>Why edges, not statements.</strong> Two derivations:</p>
+<ul>
+<li><em>Granularity.</em> In <code>if (magic == 0xAA &amp;&amp; version == 2) { open_session(); }</code>, <code>&amp;&amp;</code> short-circuits: with wrong magic, <code>version</code> is never evaluated. Statement coverage counts the <code>if</code> line as covered either way — wrong-magic and wrong-version inputs are indistinguishable to it. The compiler emits separate basic blocks for the two tests, so the edge census distinguishes three outcomes: first failed; first passed, second failed; both passed.</li>
+<li><em>Saturation.</em> Statement coverage saturates after one valid input — fitness maxed, no gradient left, the optimizer degenerates to blind search. Edge coverage keeps distinguishing <em>how</em> control flowed: loop exit by condition, by <code>break</code>, by <code>return</code> — three separate edges.</li>
+</ul>
+<p><strong>Three species of generator.</strong> <em>Mutational</em> (AFL, libFuzzer): mutate a corpus — best when valid inputs exist. <em>Generative</em>: synthesize from a model — best when the format rejects nearly everything random. <em>Grammar-aware</em> (libprotobuf-mutator, Fuzzilli for JavaScript): the operator itself moves subtrees and adjusts length fields consistently with the bytes they describe.</p>
+<h2 id="3-the-two-engines-libfuzzer-and-afl-afl">3. The two engines: libFuzzer and AFL/AFL++</h2>
+<p><strong>libFuzzer</strong> runs the target in the fuzzer's own process. You write one function — the fuzz-target contract:</p>
+<pre><code class="language-c">// fuzz_target.cc — the entire contract
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    // deterministic: same input, same behavior; no globals left dirty
+    // never exit() on success; a bug must be observable (crash or sanitizer)
+    if (size &lt; 4) return 0;          // tolerate all sizes, including 0
+    consume_packet(data, size);      // the code under test
+    return 0;
+}</code></pre>
+<p>Build: <code>clang -g -O1 -fsanitize=fuzzer,address fuzz_target.cc parser.cc</code>. No fork or exec per input, so small targets reach 10^4–10^6+ execs/second (order of magnitude; small C++ parser, 2023-era x86-64 laptop) — at the price of isolation, since one corrupted heap can corrupt the fuzzer itself (libFuzzer answers with per-input malloc accounting and an exit-time LeakSanitizer pass). Coverage comes from compiler instrumentation: a counter per edge, plus <em>value profile</em> — <code>__sanitizer_cov_trace_cmp</code> hooks record the constants your code compares input bytes against, and libFuzzer mutates toward those values. That is how it <em>synthesizes</em> <code>AA 55</code> magic instead of waiting 2^32 trials.</p>
+<p><strong>AFL/AFL++</strong> run out-of-process. Instrumented binaries (<code>afl-clang-fast</code>) give each basic block a random ID <code>cur</code> and increment <code>shared_map[cur ^ prev]</code> per taken edge, with <code>prev = cur &gt;&gt; 1</code> — a 64 KiB (2^16) bitmap with logarithmic hit-count buckets (1,000 vs 1,005 loop iterations is the <em>same</em> signal). The forkserver is the cost trick: the target execs once, stops after dynamic linking but before <code>main()</code>, then forks per input — a fork (~0.1–1 ms) is 10–100x cheaper than exec plus relocation for a big binary. Typical throughput 10^2–10^4 execs/second: slower than libFuzzer, but a crashing child cannot kill the fuzzer, and it handles targets whose state cannot be reset.</p>
+<p><strong>Corpus hygiene</strong> — dedupe by coverage (<code>afl-cmin</code>, libFuzzer <code>-merge=1</code>); an input adding no new edge is dead weight; minimize keepers; re-merge after code changes, because which input covers which edge <em>shifts</em> as branches are added; a 10-entry corpus that walks the grammar beats 10,000 random blobs. <strong>Dictionaries</strong> (AFL <code>-x dict.txt</code>, libFuzzer <code>-dict=</code>) inject format tokens into mutations — grammar knowledge at a flat cost.</p>
+<h2 id="4-the-oracle-sanitizers-from-the-inside">4. The oracle: sanitizers from the inside</h2>
+<p>A crash is a weak oracle. An out-of-bounds <em>read</em> doesn't crash — it hands adjacent memory to whoever asked (Heartbleed); an OOB <em>write</em> into padding doesn't either; races almost never crash on demand. Sanitizers observe the <em>mechanism</em>, not the symptom: the compiler rewrites each memory access or arithmetic operation into "operation plus check", turning latent corruption into an immediate, attributed report.</p>
+<p><strong>ASan (AddressSanitizer).</strong> The insight: you cannot cheaply check <em>bounds</em>, but you can cheaply check <em>poisoning</em>. Reserve a shadow copy of the address space where 1 shadow byte describes 8 application bytes — a 1:8 mapping (scale 3, because 2^3 = 8). Classic static x86-64 Linux layout:</p>
+<pre><code> shadow(addr) = (addr &gt;&gt; 3) + 0x7fff8000
+
+ app       0x7f1234567890
+ addr&gt;&gt;3   0x 0FE2468ACF12       (divide by 8: 1 shadow byte per 8 bytes)
+ +offset   0x FE2C68A4F12        (the shadow byte describing this address)
+
+ app    [0x00007fff8000...0x00008fff6fff shadows low app memory]
+        [0x02008fff7000...0x10007fff7fff shadows high app memory]</code></pre>
+<p>Why this shape? Application space is 47 bits (128 TiB, x86-64 Linux), so one-eighth of it — 16 TiB of shadow — must live <em>inside</em> the same address space; the offset makes one linear formula cover both app segments, and the unmapped gap between them catches wild pointers. (Modern 57-bit-VA kernels force a runtime-relocated shadow — gcc 14.2 on this box picked 0x6f4351fa0000 — but the <code>&gt;&gt; 3</code> scale never changes.)</p>
+<p>Each instrumented access costs two extra instructions: compute the shadow address, load its byte, compare. <code>0x00</code> = all 8 bytes addressable; <code>0x01–0x07</code> = first k only; <code>0xf1/0xf3</code> stack left/right redzones; <code>0xfa/0xfb</code> heap redzones; <code>0xfd</code> freed memory. The allocator and compiler poison the zones around every object — redzones flanking each buffer, freed chunks quarantined (~256 MB default, x86-64, clang 18-era) before reuse. So when <code>strcpy</code> writes byte 9 of an 8-byte buffer, the next store loads <code>0xf3</code> and aborts <em>at the faulting line</em> — not three functions later when the corruption detonates — and a use-after-free hits <code>0xfd</code> while the chunk is still quarantined. Budget, per the sanitizer docs: ~2x slowdown, ~3x memory — the <em>cheap</em> one.</p>
+<p><strong>UBSan (UndefinedBehaviorSanitizer).</strong> No shadow; a check per operation: shift count &lt; bit width, no signed-overflow, float→int conversion in range, null/alignment checks. ~1.1–1.3x slowdown; integer checks near-free. This is the runtime mirror of module 10 ch02: the optimizer's UB license, checked one operation at a time. Ariane 5 (module 03 ch04) died on a 64-bit float→16-bit int overflow; UBSan's <code>float-cast-overflow</code> is exactly that line.</p>
+<p><strong>TSan (ThreadSanitizer).</strong> Detects races by computing <em>happens-before</em>. Each thread carries a vector clock (one epoch per thread); mutexes, atomics, and thread create/join merge clocks into happens-before edges. Every 8-byte word gets 4 shadow slots recording which (thread, epoch) last read and wrote it. A race = two accesses to one word, at least one a write, with <strong>no happens-before path between them</strong> — module 01 ch20's "it looks sequential" lie, mechanically checked. Cost ~5–15x slowdown, 5–10x memory (64-bit, clang docs). TSan cannot combine with ASan — both claim the shadow.</p>
+<p><strong>MSan (MemorySanitizer).</strong> Tracks <em>uninitialized bits</em>: 1 shadow bit per data bit (1:1). Copies propagate shadow; arithmetic ORs input shadows; branching on dirty shadow reports. Hence MSan demands <em>fully instrumented builds including libc++</em>: an uninstrumented <code>memcpy</code> moves bytes but not shadow, so the destination's shadow becomes a lie in either direction (false "clean" → missed bug; stale dirt → false report). ASan tolerates partial instrumentation; MSan does not.</p>
+<p><strong>Static analysis</strong> completes the toolbox, with a tradeoff derived from Rice's theorem: no tool can be sound (miss nothing) <em>and</em> precise (report only real bugs). Coverity, CodeQL, Infer, and clang-tidy choose precision — "no false positives" — which by the theorem means they silently miss bugs. Use it for shapes cheap to express syntactically, sanitizers for what only manifests at runtime, fuzzing for what nobody wrote a rule for.</p>
+<h2 id="5-locating-the-regression-git-bisect">5. Locating the regression: git bisect</h2>
+<p>Given a failing input: which commit introduced it? Each test run on one checkout answers one yes/no question — one bit — so identifying one commit among N suspects takes ceil(log2(N)) runs: 12 commits → at most 4; 1,000 → 10; 100,000 → 17. Mechanics: <code>git bisect start</code>, mark a bad and a good endpoint; git checks out the midpoint; you answer <code>git bisect good</code> or <code>bad</code>; the range halves. <code>git bisect run ./test.sh</code> automates it. Two assumptions are load-bearing: the predicate is <em>monotone</em> (bug introduced once, never self-healed, intermediate commits build) and the test is deterministic — a flaky test turns bisection into a random walk.</p>
+<h2 id="6-the-post-mortem-reading-list">6. The post-mortem reading list</h2>
+<ul>
+<li><strong>Therac-25 (1985–87; Leveson &amp; Turner, IEEE Computer 1993).</strong> A race between the keyboard handler and the treatment table could fire the electron beam at full current with the table mispositioned. The software came from earlier Therac models, whose <em>hardware</em> interlocks had masked these same latent races; removing the interlocks without re-validating the software un-masked them. Lesson: field experience does not transfer when you remove the layer that was hiding the fault (ch03).</li>
+<li><strong>Ariane 5 flight 501 (June 4, 1996; Lion inquiry).</strong> A 64-bit float→16-bit signed int conversion of horizontal bias overflowed; the unhandled Ada exception halted the inertial reference, and the <em>identical</em> software on the redundant unit failed identically — common-mode defeat of redundancy. The code was inherited from Ariane 4 without re-validating its input domain. Lesson: reuse without re-deriving assumptions is a bet (ch04; UBSan catches the class in one run).</li>
+<li><strong>Heartbleed (CVE-2014-0160, April 2014).</strong> The memory picture:</li>
+</ul>
+<pre><code>  heartbeat request buffer (heap)        response (heap)
+  +--------+--------+-------+---+        allocated as 1+2+N bytes:
+  | type=1 | len=N  | 16 B  | ? |        sized by the SAME attacker claim N
+  +--------+--------+-------+---+              |
+   actual payload: 16 bytes                    |
+                      `--- memcpy(dst, src, N) --&gt; reads N bytes from a
+                           19-byte allocation: 64,519 bytes past the end</code></pre>
+<p>OpenSSL trusted the claimed length N (up to 64 KiB) over the received length; since the destination was allocated from the same N, the <em>write</em> stayed in bounds — no corruption, no crash, just an OOB <em>read</em> leaking heap neighbors: session keys, private-key material. Lesson: a crash-only oracle is blind to the most profitable bug class in history; this bug is why OSS-Fuzz exists (Google, 2016–; ~36,000 bugs and ~8,900 security issues across ~550 projects by its 2021 five-year retrospective).</p>
+<ul>
+<li><strong>CVE-2023-4863 — libwebp, September 2023.</strong> Heap OOB <em>write</em> in the WebP Huffman-table builder, exploited in the wild (BLASTPASS iMessage chain, per Citizen Lab/Google TAG reporting) before the fix in libwebp 1.3.2 / Chrome 116.0.5845.187. The vulnerable shape, visible in fix commit webmproject/libwebp 902bc91: a fixed stack table <code>HuffmanCode table[1 &lt;&lt; LENGTHS_TABLE_BITS]</code> filled to a size derived from the file — ch02's bounds-overflow shape in the most-deployed image codec on earth, and the same "validate first, then allocate exactly" fix as this chapter's lab. Lesson: a transitive dependency is only as fuzzed as its least-fuzzed leaf.</li>
+</ul>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The shadow formula</strong> is <code>(addr &gt;&gt; 3) + 0x7fff8000</code> (classic static x86-64 Linux); the 1:8 scale is invariant, the offset is not — 57-bit-VA kernels force a runtime-relocated shadow. Compute one by hand and you can read any report's "shadow bytes around" block, bracket <code>[f3]</code> included.</li>
+<li><strong>Slowdown budgets (sanitizer docs, 64-bit, clang/gcc 2024-era):</strong> ASan ~2x, ~3x memory; UBSan ~1.1–1.3x (integer subset near-free); TSan ~5–15x, 5–10x memory; MSan ~3x. The fuzzing default is <code>-fsanitize=fuzzer,address,undefined</code>; TSan is a separate build (shadow conflict).</li>
+<li><strong>Corpus hygiene rules that bite:</strong> merge and dedupe on every significant code change (the edge-to-input mapping drifts); a corpus is an optimizer's <em>population</em>, not an archive — an entry that owns no edge is deleted; and re-run old crashing inputs against new builds before celebrating a fix.</li>
+<li><strong>Why MSan needs full instrumentation:</strong> shadow propagation is a global dataflow property; one uninstrumented memcpy or libc++ call drops or fabricates shadow bits — false negatives <em>and</em> false positives, hence the pre-built MSan-instrumented libc++ distributions.</li>
+<li><strong>Throughput ladder (orders of magnitude, small C++ targets, 2023 laptop):</strong> exec-per-input ~10–10^2/s; AFL forkserver ~10^2–10^4/s; libFuzzer in-process 10^4–10^6/s. Pick isolation when state cannot reset, speed otherwise.</li>
+<li><strong>The interview trap:</strong> "we have 100% coverage" — of what? Statements saturate at one input; SQLite's team (sqlite.org docs) pursues 100% MC/DC <em>branch</em> coverage because statement coverage is a vanity metric for a fuzzer's fitness function.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Labs ran on this box: gcc 14.2.0 (Debian), Python 3.12, git 2.47. clang/libFuzzer was unavailable, so Lab 1 uses the Python equivalent. Each condition sits on its own line because <code>sys.settrace</code> reports line events only — line coverage with branch-level resolution.</p>
+<p><strong>Lab 1 — a 45-line coverage-guided fuzzer catching a real bug.</strong> The target has the CVE-2023-4863 shape: a trusted length leading to an unchecked read.</p>
+<pre><code class="language-python"># fuzz.py — coverage-guided fuzzer
+import random, sys
+
+def decode(buf):                    # packet = magic(2) tag(1) len(1) payload
+    if len(buf) &lt; 4:
+        return None
+    if buf[0] != 0xAA:
+        return None
+    if buf[1] != 0x55:
+        return None
+    tag = buf[2]
+    n = buf[3]
+    if tag == 0x10:
+        if n == 0x80:
+            # BUG: trusts n; the payload may be empty
+            return buf[4 + 2]       # IndexError when payload &lt; 3 bytes
+    return None
+
+covered = set()
+def tracer(frame, event, arg):
+    if event == "line" and frame.f_code.co_name == "decode":
+        covered.add(frame.f_lineno)         # our edge proxy: lines
+    return tracer
+
+def mutate(b):
+    b = bytearray(b); op = random.randrange(3)
+    if op == 0 and b:                       # bit flip
+        b[random.randrange(len(b))] ^= 1 &lt;&lt; random.randrange(8)
+    elif op == 1:                           # insert a byte
+        b[random.randrange(len(b) + 1):0] = bytes([random.randrange(256)])
+    elif b:                                 # truncate
+        del b[random.randrange(len(b)):]
+    return bytes(b)
+
+random.seed(7)
+corpus = [bytes([0xAA, 0x55, 0x00, 0x00]), b"\x00" * 8]   # 2 seeds
+corpus_cov = [frozenset()]; execs = 0
+sys.settrace(tracer)
+while True:
+    execs += 1
+    cand = mutate(corpus[random.randrange(len(corpus))])
+    covered.clear()
+    try:
+        decode(cand)
+    except Exception as e:
+        sys.settrace(None)
+        print(f"CRASH after {execs} execs: {type(e).__name__}: {e}")
+        print(f"crashing input: {cand.hex()}")
+        print(f"corpus size at crash: {len(corpus)} (started with 2)")
+        print(f"lines covered: {sorted(covered)}")
+        break
+    key = frozenset(covered)
+    if key and key not in corpus_cov:       # keep inputs with new coverage
+        corpus.append(cand); corpus_cov.append(key)</code></pre>
+<pre><code class="language-text">$ python3 fuzz.py
+CRASH after 1245 execs: IndexError: index out of range
+crashing input: aa551080
+corpus size at crash: 7 (started with 2)
+lines covered: [5, 7, 9, 11, 12, 13, 14, 16]</code></pre>
+<p>The crashing input is exactly the 4 magic bytes — blind chance is 2^-32 ≈ 4.3 billion; the loop paid 1,245. The corpus grew 2 → 7, one entry per newly discovered line, and <code>lines covered</code> is the path to the bug. A blind variant (fresh random bytes, no retention, same seed) ran 1,000,000 execs: no crash. With clang, the contract is <code>LLVMFuzzerTestOneInput</code> and <code>clang -g -O1 -fsanitize=fuzzer,address</code> replaces the whole harness.</p>
+<p><strong>Lab 2 — the redzone report.</strong></p>
+<pre><code class="language-c">/* oob.c */
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+int main(int argc, char **argv) {
+    char name[8];
+    strcpy(name, argv[1]);   /* writes strlen+1 bytes; name owns 8 */
+    printf("hello %s\n", name);
+    return 0;
+}</code></pre>
+<pre><code class="language-text">$ gcc -g -O0 -fsanitize=address -o oob oob.c &amp;&amp; ./oob 0123456789ABCDEF
+==24870==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7f285db00028
+WRITE of size 17 at 0x7f285db00028 thread T0
+    #1 0x5557ed90b25d in main /tmp/buglab/oob.c:5
+  This frame has 1 object(s):
+    [32, 40) 'name' (line 4) &lt;== Memory access at offset 40 overflows this variable
+Shadow bytes around the buggy address:
+=&gt;0x7f285db00000: f1 f1 f1 f1 00[f3]f3 f3 00 00 00 00 00 00 00 00</code></pre>
+<p>Read the shadow row as a map: <code>f1</code> left redzone, <code>00</code> the 8 owned bytes of <code>name</code>, <code>f3</code> right redzone — the bracketed <code>f3</code> is the first shadow byte <code>strcpy</code> touched past the end ("WRITE of size 17" = 16 chars + NUL).</p>
+<p><strong>Lab 3 — git bisect, log(N) in the flesh.</strong> Twelve commits; <code>scale.py</code> works until commit 6 introduces a division by zero; <code>test.sh</code> runs it and exits 0/1.</p>
+<pre><code class="language-text">$ git bisect start
+$ git bisect bad HEAD
+$ git bisect good $(git rev-list --max-parents=0 HEAD)
+$ git bisect run ./test.sh
+bisect found first bad commit
+$ git bisect log
+# bad:  [87f37f23] commit 12
+# good: [4ea45e64] commit 1
+# bad:  [6e17af2f] commit 6
+# good: [094811ea] commit 3
+# good: [47010537] commit 5
+# first bad commit: [6e17af2f] commit 6</code></pre>
+<p>The run checked out commits 6, 3, and 5 — three questions for twelve commits (ceil(log2 12) = 4 would be the worst case). <code>git bisect reset</code> to exit.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Choose the detector by family:</strong> memory bugs → ASan + libFuzzer; races → TSan under a load generator that actually interleaves (ch03); numeric traps → UBSan; formats → grammar-aware fuzzing; unwritten rules → corpus-guided fuzzing with the sanitizer stack as oracle.</li>
+<li><strong>Reproduce before you debug:</strong> rebuild with <code>-fsanitize=address,undefined</code> and rerun the failing input — converting distant corruption into an at-the-line report routinely saves hours.</li>
+<li><strong>Triage "we fuzz" claims:</strong> what oracle (crash-only misses Heartbleed-class bugs), what coverage metric (statement vs edge vs MC/DC), is the corpus deduped and re-merged?</li>
+<li><strong>Incident order:</strong> capture the input, reproduce under sanitizers, bisect to the commit, <em>then</em> form theories — log(N) questions beat any hypothesis.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch21</strong> — ASan's redzones and MSan's shadow exist to observe the four primitive memory failures; the mitigation ladder detects at runtime, sanitizers at test time.</li>
+<li><strong>Module 02 ch04–05</strong> — an ASan report is the heap-exploitation chapters' bug from the defender's side, caught before allocator grooming begins.</li>
+<li><strong>Module 03 ch02–04</strong> — this chapter opened the detectors those chapters named: ch02's shapes → ASan/MSan, ch03's races → TSan, ch04's traps → UBSan.</li>
+<li><strong>Module 04 ch06</strong> — binary-only targets have nowhere to insert coverage counters; that is why packed binaries starve fuzzers of feedback.</li>
+<li><strong>Module 10 ch02</strong> — UB as the optimizer's license; UBSan is that license checked at runtime, one operation at a time.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><em>(concept)</em> Derive why edge coverage beats statement coverage as a fuzzer's fitness function, using <code>if (magic == 0xAA &amp;&amp; version == 2)</code> as the example. What does the optimizer lose when fitness saturates?</li>
+<li><em>(concept)</em> Why is "crash" an insufficient oracle, and what property of CVE-2014-0160 makes it the canonical proof? Which sanitizer property closes the gap?</li>
+<li><em>(predict)</em> On the classic static x86-64 ASan layout, what is the shadow address of application address 0x7f1234567890? Which shadow byte marks a stack right redzone, and what does 0x03 mean?</li>
+<li><em>(predict)</em> A regression lies among 1,024 commits between known-good and known-bad endpoints. How many test runs does bisection need at most, and which two properties must the test have?</li>
+<li><em>(diagnose)</em> Your fuzz target crashes reliably under <code>-fsanitize=fuzzer,address</code>, but the plain <code>-O2</code> build runs the same input for hours without visible failure. Give two mechanisms, and say which build you report.</li>
+<li><em>(diagnose)</em> An MSan build reports a use of uninitialized value that traces into a third-party static library linked unmodified. Is the report trustworthy? Derive why MSan — unlike ASan — cannot tolerate partial instrumentation.</li>
+<li><em>(cross-chapter)</em> Connect module 03 ch04's Ariane 5 post-mortem to this chapter: which UBSan check, at which operation, would have caught it, and why did hardware redundancy not count as an oracle?</li>
+<li><em>(predict)</em> Lab 1's fuzzer found <code>aa551080</code> in 1,245 execs. Derive the blind fuzzer's expected exec count, explain the gap via corpus retention, and map the covered line numbers to the stepping stones.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Short-circuit granularity + saturation.</strong> <code>&amp;&amp;</code> compiles to two basic blocks: with wrong magic, <code>version</code> is never evaluated, yet the <code>if</code> <em>statement</em> still counts as covered — the two inputs are indistinguishable to statement coverage, while the edge census sees three outcomes (first failed; first passed, second failed; both passed). Once one input touches every statement, statement fitness is maxed: zero gradient, blind search. Edges keep a gradient — loop exit by condition vs <code>break</code> vs <code>return</code> are distinct edges.</li>
+<li><strong>OOB reads are silent.</strong> Heartbleed's destination was allocated from the same attacker-controlled N as the copy, so the write stayed in bounds — no crash; the <em>read</em> ran ~64 KB past a 19-byte allocation, leaking secrets. ASan observes the mechanism, not the symptom: poisoned redzones abort on the OOB read with the address and stack.</li>
+<li><strong>shadow = (0x7f1234567890 &gt;&gt; 3) + 0x7fff8000 = 0xfe2468acf12 + 0x7fff8000 = 0xfe2c68a4f12.</strong> Stack right redzone = <code>0xf3</code> (left <code>0xf1</code>, heap <code>0xfa/0xfb</code>, freed <code>0xfd</code>). <code>0x03</code> = only the first 3 of the 8 application bytes mapped by that shadow byte are addressable.</li>
+<li><strong>10 runs.</strong> Each run yields one bit; one of 1,024 = 2^10 commits needs ceil(log2 1024) = 10. The test must be (a) monotone — every commit after the regression fails, none before (single introduction, never self-healed, intermediate commits build) — and (b) deterministic; a flaky predicate turns the halving into a random walk.</li>
+<li><strong>Two mechanisms.</strong> (a) The bug is an OOB read or a write into padding — silent at <code>-O2</code>, fatal against ASan's poisoned redzones (Heartbleed's shape). (b) The instrumented allocator's redzones and free-quarantine turn silent UAF or double-free corruption into <code>0xfd</code>/<code>0xfa</code> aborts. Report the sanitizer build: it makes the corruption deterministic and at-the-line; the plain build's "no failure" means <em>not observed</em>, not <em>absent</em>.</li>
+<li><strong>Not trustworthy as-is.</strong> MSan's 1:1 bit-level shadow must propagate through every load, store, copy, and arithmetic op; an uninstrumented library moves bytes without moving shadow — its output's shadow is stale (false reports, as here) and dirt passed in is dropped (false negatives). ASan degrades gracefully (it checks only instrumented accesses); MSan is a global dataflow property — build the library with MSan, or use pre-built MSan libc++.</li>
+<li><strong><code>float-cast-overflow</code>.</strong> The failing operation: 64-bit float→16-bit signed int of horizontal bias (a value near 32768 exceeding 32767); UBSan instruments that exact conversion and reports at the line on the first run. Redundancy was not an oracle because both SRIs ran <em>identical</em> software — a common-mode fault fails every replica on the same input; replication adds fault tolerance, never fault <em>detection</em>.</li>
+<li><strong>~2^32 ≈ 4.3 billion</strong> — the blind generator must emit <code>AA 55 10 80</code> as the first four bytes, (1/256)^4. The gap is retention: once an input passes the <code>buf[0] != 0xAA</code> test (line 7's branch), partial progress is never lost, so each magic byte costs a few hundred mutations instead of a fresh compounded 1/256. The stepping stones are the covered lines [5, 7, 9, 11, 12, 13, 14, 16]: length check (5), magic bytes (7, 9), tag load (11), len load (12), tag match (13), the rare extended-length branch (14), and the unchecked read (16) — the bug's own line.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch04.html"><span class="cn-label">previous</span><span class="cn-title">Ch 04</span></a>
+<a class="next" href="index.html"><span class="cn-label">next</span><span class="cn-title">Module index</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 03 — Software bugs: the taxonomy of failure</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

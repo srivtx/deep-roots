@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PICTURE &amp; layout arithmetic — deep-roots</title>
+<meta name="description" content="Chapter 03 of module 08: PICTURE &amp; layout arithmetic">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="PICTURE &amp; layout arithmetic — deep-roots">
+<meta property="og:description" content="Chapter 03 of module 08: PICTURE &amp; layout arithmetic">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="PICTURE &amp; layout arithmetic — deep-roots">
+<meta name="twitter:description" content="Chapter 03 of module 08: PICTURE &amp; layout arithmetic">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 08 &middot; the memory model with no heap</div>
+<h1 class="post-title">PICTURE &amp; layout arithmetic</h1>
+<div class="post-meta">chapter 03 &middot; ~12 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Every PICTURE clause is a purchase order for bytes, signed at compile time: DISPLAY buys one byte per character; COMP buys 2, 4, or 8 bytes by a derivable grid; COMP-3 buys <code>digits / 2 + 1</code> bytes of packed decimal with a sign nibble; REDEFINES buys nothing — it renames bytes already bought; OCCURS multiplies the bill; 88-levels cost zero. You will compute every offset and size by hand, then prove it with a program that prints addresses.</blockquote>
+<h2 id="a-type-system-that-bills-by-the-byte">A type system that bills by the byte</h2>
+<p>COBOL 1959 predates hidden layouts: the declaration <em>is</em> the memory map, and every PICTURE symbol has a byte price. <code>PIC 9(8)</code> is not a format string; it is a contract for exactly 8 bytes, fixed at compile time. Two symbols cost nothing: <code>V</code> (the implied point in <code>S9(3)V9</code>) exists only in the compiler's arithmetic — a rule for interpreting digits, never a byte — and <code>S</code> rides in a byte you already paid for. So <code>PIC S9(3)V9</code> is 4 digits, 4 bytes, point included in neither.</p>
+<p>Default <code>USAGE IS DISPLAY</code> buys one byte per character; on z/OS the characters are EBCDIC, digits <code>0xF0</code>–<code>0xF9</code> — a <strong>zone</strong> nibble <code>F</code> over the digit. A signed DISPLAY number overpunches the sign into the zone of the <em>last</em> byte:</p>
+<pre><code class="language-text">PIC S999 DISPLAY, value -123, z/OS EBCDIC:
+
+   byte 0     byte 1     byte 2
+  +---------+ +---------+ +---------+
+  | 1 | 0 | | | 2 | 0 | | | 3 | 1 | |   nibble pairs: zone / digit
+  +---------+ +---------+ +---------+
+    F   1       F   2       D   3     &lt;- last byte's zone IS the sign
+
+  sign nibbles:  C = +,  D = - (debit),  F = unsigned
+  +123 = F1 F2 C3    -123 = F1 F2 D3    unsigned 123 = F1 F2 F3</code></pre>
+<p>Read <code>F1 F2 C3</code> as a raw integer and you get 0xF1F2C3 = 15,856,323, not 123: the zones are pollution. So <code>ADD</code>/<code>COMPUTE</code> on zoned data must strip zones and decode the sign first — on z/OS, <code>PACK</code> in, packed arithmetic, <code>ED</code>/<code>EDMK</code> out — a hidden translation tax that makes DISPLAY the slowest numeric usage. Bypass the compiler (raw bytes through a REDEFINES) and the abend is <code>S0C7</code>, <em>data exception</em>: a decimal instruction handed a non-digit.</p>
+<h2 id="the-binary-packing-grid">The binary packing grid</h2>
+<p><code>COMP</code> (BINARY) stores a base-2 integer. The rule everyone memorizes — 1–4 digits → 2 bytes, 5–9 → 4, 10–18 → 8 — is the smallest binary size that <em>covers</em> the decimal digit count, top bit reserved for <code>S</code>:</p>
+<div class="table-wrap"><table><thead><tr><th>PICTURE digits</th><th>COMP bytes</th><th>Why</th></tr></thead><tbody><tr><td>1–4</td><td>2</td><td>2^15 − 1 = 32,767 covers 9,999; it does not cover 99,999</td></tr><tr><td>5–9</td><td>4</td><td>2^31 − 1 = 2,147,483,647 covers 999,999,999; not 9,999,999,999</td></tr><tr><td>10–18</td><td>8</td><td>2^63 − 1 ≈ 9.22 × 10^18 covers 10^18 − 1</td></tr></tbody></table></div>
+<p>A minimal-covering grid, nothing arbitrary. z/OS Enterprise COBOL 6.x and GnuCOBOL 3.2 (x86-64 Linux, default <code>binary-size 1-2-4-8</code>) agree on all three rows; below 3 digits they diverge, GnuCOBOL's default spending 1 byte on a 1–2-digit item.</p>
+<p>Binary arithmetic is native — one instruction — but alignment costs. <code>SYNC</code> asks for the item's natural boundary (halfword/fullword/doubleword for 2/4/8 bytes), and z/OS honors it by inserting <strong>slack bytes</strong> <em>before</em> the item, which count toward the group's size:</p>
+<pre><code class="language-cobol">05  HDR-TAG  PIC X(3).              *&gt; offset 0, 3 bytes
+05  HDR-NUM  PIC S9(9) COMP SYNC.   *&gt; offset 3 -&gt; 1 slack byte -&gt; offset 4, 4 bytes
+*&gt; group = 8 bytes: one byte exists only because of SYNC, invisible in source</code></pre>
+<p>That pad byte is the classic hand-computation error: your table says 3, the machine says 4. z/OS always pads; x86 builds may skip it (unaligned access is legal there) — same copybook, two layouts. The lab measures what your compiler did.</p>
+<h2 id="two-digits-per-byte-why-money-is-packed">Two digits per byte: why money is packed</h2>
+<p>A digit 0–9 needs 4 bits — half a byte — and <strong>COMP-3</strong> (packed decimal) spends both halves: two digits per byte plus the sign — same C/D/F conventions — in the final nibble:</p>
+<pre><code class="language-text">PIC S9(7) COMP-3, value +0123456, exactly 4 bytes:
+
+ +--------+ +--------+ +--------+ +--------+
+ | 0 | 1 | | 2 | 3 | | 4 | 5 | | 6 | C |   7 digits + 1 sign nibble
+ +--------+ +--------+ +--------+ +--------+   = 8 nibbles = 4 bytes exactly
+
+ -0123456 ends ...6D;  unsigned 0123456 ends ...6F</code></pre>
+<p>The formula falls out: <em>d</em> digits + one sign nibble = <em>d</em> + 1 nibbles, so bytes = <code>floor(d / 2) + 1</code>. <code>S9(9)V99 COMP-3</code> has 11 digits (<code>V</code> free): <code>floor(11/2) + 1 = 6</code> bytes for what zoned spells across 11.</p>
+<p>Why did banking standardize on this and never leave? COMP-3 is decimal, not binary-fractional. Module 03 chapter 04 showed <code>0.1 + 0.2 == 0.3</code> is <code>False</code> in every IEEE-754 float64 — 0.1 is an infinite binary fraction — while a <code>V99</code> field stores exact cents that add to the penny across decades of nightly batch. COBOL was specified in 1959 with decimal as a <em>native</em> type — the float money bug class was solved before computing had a name for it — and S/360 (1964) shipped the hardware (<code>ZAP</code>/<code>AP</code>/<code>SP</code>/ <code>CP</code>, still executing on z/Architecture). 11 digits in 6 bytes is also near half the storage and I/O of zoned at billions of records.</p>
+<p><code>COMP-1</code>/<code>COMP-2</code> are native float — 4 and 8 bytes — rare in banking for that drift reason, and a portability landmine: z/OS formats them as hexadecimal float (HFP), GnuCOBOL/x86 as IEEE-754 — same PICTURE, <em>different bits</em>. Rule zero: floats never ride in legacy record layouts.</p>
+<h2 id="redefines-two-names-for-the-same-bytes">REDEFINES: two names for the same bytes</h2>
+<p>One address, two interpretations — a union, except COBOL had it in 1959 and no tag bit ever accompanies it:</p>
+<pre><code class="language-cobol">05  TXN-AMT    PIC S9(9)V99 COMP-3.        *&gt; 6 bytes at offset 20
+05  TXN-AMT-X  REDEFINES TXN-AMT PIC X(6). *&gt; the SAME 6 bytes, a byte view</code></pre>
+<p>The redefining item starts at the subject's offset and does <strong>not</strong> advance the record — no bytes are bought. Rules: no <code>VALUE</code> on the redefining item (<code>88</code>-levels under it are the one exception); below 01 it may not be <em>longer</em> than its subject; no variable-size (ODO) items may participate — the window must be fixed; only condition names and FILLER may sit between subject and redefiner.</p>
+<p>The insight: which view is <em>live</em> — amount or message? — exists nowhere in storage, only in the code paths that touched it. Forty years of REDEFINES leaves data with no self-describing schema — every byte's meaning lives in code and microfiche. Automated translation cannot recover which view was live: the root of chapter 05's migration trap.</p>
+<h2 id="occurs-the-moving-wall-and-the-88-that-owns-no-bytes">OCCURS, the moving wall, and the 88 that owns no bytes</h2>
+<p><code>OCCURS n TIMES</code> is a fixed table: element size × count, billed once at compile time. <code>X(2) OCCURS 5</code> is a 10-byte block with 2-byte stride — <code>TXN-CODES(3)</code> is one address add at run time, zero allocation, zero pointer chasing.</p>
+<p><code>OCCURS ... DEPENDING ON</code> (ODO) is the variable-length record mechanism: the count is <em>read from a field in the same record</em> —</p>
+<pre><code class="language-cobol">01  BATCH-RECORD.
+    05  BATCH-ID      PIC 9(6).        *&gt; offset 0, 6 bytes
+    05  BATCH-CNT     PIC 9(3).        *&gt; offset 6, 3 bytes - the count lives IN the data
+    05  BATCH-ENTRY   PIC X(40) OCCURS 1 TO 250 TIMES
+                    DEPENDING ON BATCH-CNT.   *&gt; offset 9, 40 x cnt bytes
+    05  BATCH-TRAILER PIC X(8).        *&gt; offset 9 + 40*cnt - THE TRAILER MOVES</code></pre>
+<p>Everything <em>after</em> an ODO table shifts with the count: <code>BATCH-CNT = 3</code> puts the trailer at 9 + 120 = 129 and the record at 137 bytes; 7 puts them at 289 and 297. The count is a serialization header — the record describes its own length, 1959-style.</p>
+<p>But the wall moves only because the program moves it. WORKING-STORAGE allocates the <em>maximum</em> — 10,017 bytes regardless of the count — and nothing enforces <code>cnt ≤ 250</code>: subscript checking is off by default on z/OS, and counts arrive from untrusted input. <code>cnt = 251</code> walks entries past the record into the next WORKING-STORAGE item — module 01 chapter 08's unchecked array, reborn with opt-in guardrails. The file side is equally manual: the FD must say <code>RECORD VARYING</code>, and the WRITE length is what you compute. Every length check around ODO is hand-written — the overflow surface of the mainframe world.</p>
+<p>Last clause, zero bytes: the 88-level condition name.</p>
+<pre><code class="language-cobol">05  TXN-STATUS  PIC X.
+    88  STATUS-OK       VALUE "0".
+    88  STATUS-DISPUTED VALUE "1" "D".</code></pre>
+<p><code>IF STATUS-DISPUTED</code> compiles to a comparison of <code>TXN-STATUS</code> against those literals — no storage, no dispatch. An 88 adds zero bytes (module 08 chapter 02 proved it with addresses): the poor man's enum, and the only place a name and value can legally meet inside a union.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The COMP grid is a minimal-covering grid</strong>: 2 bytes because 9,999 &lt; 32,767 = 2^15 − 1; 4 because 999,999,999 &lt; 2^31 − 1; 8 because 10^18 − 1 &lt; 2^63 − 1. Deriving it live is the fastest credibility signal in a legacy interview.</li>
+<li><strong>Zoned sign nibbles on sight</strong>: C = plus, D = minus, F = unsigned — and F is <em>not</em> zero; comparisons treat it as positive. GnuCOBOL 3.x ASCII builds mirror the scheme with zones 3/7: <code>−123</code> in <code>PIC S999</code> is hex <code>31 32 73</code> — why ASCII dumps of negative data look like typos.</li>
+<li><strong>The REDEFINES VALUE rule</strong>: no VALUE on the redefining item (88s excepted), and below 01 no redefiner longer than its subject — one of the few spots COBOL hard-rejects at compile time instead of corrupting at run time.</li>
+<li><strong>ODO shifts, storage does not</strong>: the area is allocated at the declared maximum (10,017 bytes in the lab record) while the <em>record</em> is only as long as the count says; <code>FUNCTION LENGTH</code> of an ODO group returns different things on different compilers — why production code tracks record length by hand.</li>
+<li><strong>Why banking loves COMP-3, four countable ways</strong>: exact decimal arithmetic (no 0.1 + 0.2 drift), 2 digits per byte ≈ half the I/O of zoned, one-instruction (<code>UNPK</code>) conversion to display, and native hardware (<code>AP</code>/<code>ZAP</code>) since S/360 in 1964. <code>V99</code> is the industry's default money scale.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>The core skill: a 15-field record, every offset and size by hand, then verified with GnuCOBOL — rules applied visibly, offsets accumulated left to right, REDEFINES sharing an offset without advancing:</p>
+<pre><code class="language-text">byte   0 +------------+ TXN-ID      9(8)   =  8 B                  [0-7]
+byte   8 +------------+ TXN-ACCT    9(10)  = 10 B                 8+10=18
+byte  18 +------------+ TXN-TYPE    X(2)   =  2 B                18+2=20
+byte  20 +------------+ TXN-AMT     S9(9)V99 COMP-3: floor(11/2)+1 = 6 B
+  (same 20)            TXN-AMT-X    REDEFINES: 0 new bytes, no advance
+byte  26 +------------+ TXN-BAL     S9(11)V99 COMP-3: floor(13/2)+1 = 7 B
+byte  33 +------------+ TXN-FEE     S9(3)V9 COMP-3: floor(4/2)+1 = 3 B
+byte  36 +------------+ TXN-SEQ     S9(4)  COMP: 1-4 digits -&gt; 2 B
+byte  38 +------------+ TXN-BRANCH  S9(5)  COMP: 5-9 digits -&gt; 4 B
+byte  42 +------------+ TXN-CNT     S9(9)  COMP: 5-9 digits -&gt; 4 B
+byte  46 +------------+ TXN-STATUS  X(1)   =  1 B                 46+1=47
+byte  47 +------------+ TXN-ENTRY   S9(4)V999 COMP-3: floor(7/2)+1 = 4 B
+byte  51 +------------+ TXN-DATE    9(8)   =  8 B                 51+8=59
+byte  59 +------------+ TXN-DESC    X(12)  = 12 B                59+12=71
+byte  71 +------------+ TXN-CODES   X(2) OCCURS 5 = 2 B x 5 = 10 B
+byte  81 +------------+ total: 71 + 10 = 81 bytes</code></pre>
+<p>81 bytes, one overlap, no slack (no SYNC). The verifier re-declares the same record — save as <code>layoutlab.cob</code> (GnuCOBOL 3.x, 64-bit, free format):</p>
+<pre><code class="language-cobol">identification division.
+program-id. layoutlab.
+data division.
+working-storage section.
+01 txn-record.
+   05 txn-id     pic 9(8).
+   05 txn-acct   pic 9(10).
+   05 txn-type   pic x(2).
+   05 txn-amt    pic s9(9)v99 comp-3.
+   05 txn-amt-x  redefines txn-amt pic x(6).
+   05 txn-bal    pic s9(11)v99 comp-3.
+   05 txn-fee    pic s9(3)v9 comp-3.
+   05 txn-seq    pic s9(4) comp.
+   05 txn-branch pic s9(5) comp.
+   05 txn-cnt    pic s9(9) comp.
+   05 txn-status pic x.
+   05 txn-entry  pic s9(4)v999 comp-3.
+   05 txn-date   pic 9(8).
+   05 txn-desc   pic x(12).
+   05 txn-codes  pic x(2) occurs 5 times.
+01 batch-record.
+   05 batch-id   pic 9(6).
+   05 batch-cnt  pic 9(3).
+   05 batch-entry pic x(40) occurs 1 to 250 times
+                 depending on batch-cnt.
+   05 batch-trailer pic x(8).
+01 base-ptr usage pointer.
+01 base-num redefines base-ptr pic 9(18) comp-5.
+01 fld-ptr  usage pointer.
+01 fld-num  redefines fld-ptr  pic 9(18) comp-5.
+01 off      pic zzz9.
+01 running  pic zzz9.
+procedure division.
+main.
+   display "TXN-RECORD total bytes: " function length(txn-record)
+   move 0 to running
+   display "TXN-ID     " running " " function length(txn-id)
+   add function length(txn-id) to running
+   display "TXN-ACCT   " running " " function length(txn-acct)
+   add function length(txn-acct) to running
+   display "TXN-TYPE   " running " " function length(txn-type)
+   add function length(txn-type) to running
+   display "TXN-AMT    " running " " function length(txn-amt)
+   display "TXN-AMT-X  " running " " function length(txn-amt-x)
+   add function length(txn-amt) to running
+   display "TXN-BAL    " running " " function length(txn-bal)
+   add function length(txn-bal) to running
+   display "TXN-FEE    " running " " function length(txn-fee)
+   add function length(txn-fee) to running
+   display "TXN-SEQ    " running " " function length(txn-seq)
+   add function length(txn-seq) to running
+   display "TXN-BRANCH " running " " function length(txn-branch)
+   add function length(txn-branch) to running
+   display "TXN-CNT    " running " " function length(txn-cnt)
+   add function length(txn-cnt) to running
+   display "TXN-STATUS " running " " function length(txn-status)
+   add function length(txn-status) to running
+   display "TXN-ENTRY  " running " " function length(txn-entry)
+   add function length(txn-entry) to running
+   display "TXN-DATE   " running " " function length(txn-date)
+   add function length(txn-date) to running
+   display "TXN-DESC   " running " " function length(txn-desc)
+   add function length(txn-desc) to running
+   display "TXN-CODES  " running " " function length(txn-codes)
+   add function length(txn-codes) to running
+   *&gt; independent check: real addresses, not accumulation
+   set base-ptr to address of txn-record
+   set fld-ptr  to address of txn-amt
+   compute off = fld-num - base-num
+   display "ADDRESS-OF check: TXN-AMT offset " off
+   display "BATCH-RECORD: fields after an ODO table shift"
+   set base-ptr to address of batch-record
+   move 3 to batch-cnt
+   set fld-ptr to address of batch-trailer
+   compute off = fld-num - base-num
+   display "batch-cnt = 3 -&gt; trailer offset " off
+   move 7 to batch-cnt
+   set fld-ptr to address of batch-trailer
+   compute off = fld-num - base-num
+   display "batch-cnt = 7 -&gt; trailer offset " off
+   display "length(batch-record) now: " function length(batch-record)
+   stop run.</code></pre>
+<pre><code class="language-bash">cobc -x -free -o layoutlab layoutlab.cob &amp;&amp; ./layoutlab</code></pre>
+<p>Expected output fragments (hand-derived; see the status note):</p>
+<pre><code class="language-text">TXN-RECORD total bytes: 81
+TXN-AMT     20 6
+TXN-AMT-X   20 6
+...
+ADDRESS-OF check: TXN-AMT offset 20
+BATCH-RECORD: fields after an ODO table shift
+batch-cnt = 3 -&gt; trailer offset 129
+batch-cnt = 7 -&gt; trailer offset 289</code></pre>
+<p><strong>Status note:</strong> written where <code>cobc</code> was not installed — the fragments are hand-computed expectations, not captured output; every number follows the rules above and was re-derived on paper. Run it and diff. (<code>ADDRESS OF</code> on a subordinate item is a GnuCOBOL extension — 85 restricts it to 01/77; if your compiler objects, the walk still verifies every size.)</p>
+<p>What to notice:</p>
+<ul>
+<li>The accumulation walk and the <code>ADDRESS OF</code> subtraction are two independent measurements of TXN-AMT's offset — when both say 20, your rules match your compiler.</li>
+<li>Trailer offsets 129/289 = <code>9 + 40 × cnt</code> — the moving wall, live: the record "grows" 160 bytes while its allocation never changes, and the final line (current 137 or allocated 10,017, by compiler) is why production code never trusts LENGTH on ODO groups. Add <code>SYNC</code> to <code>TXN-CNT</code> and recompute by hand first: if your build honors alignment, offsets from 42 shift — your table, not the program, must change.</li>
+</ul>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Byte-map any copybook in minutes.</strong> Given a 40-year-old record description, produce the offset/size table by hand — where data-migration archaeology starts. "The posting date is the 8 bytes at offset 51" is when an extract script becomes writable.</li>
+<li><strong>Read record dumps by eye.</strong> <code>01 23 45 6C</code> is +0123456 packed; <code>F1 F2 D3</code> is −123 zoned; a <code>D</code> where you expected <code>C</code> means a sign convention was lost between systems — the number-one partner-feed bug, visible in hex.</li>
+<li><strong>Catch layout drift before it corrupts.</strong> SYNC slack here but not there, <code>binary-size</code> configs, HFP-vs-IEEE COMP-1: same PICTURE, different bytes — any cross-platform move of raw records needs the hand table on both sides.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 chapter 06</strong> — object layout: the same byte-box discipline; SYNC slack is COBOL's struct padding.</li>
+<li><strong>Module 01 chapter 08</strong> — unchecked C arrays: ODO overflow and default-off subscript checking, same bug class.</li>
+<li><strong>Module 01 chapter 17</strong> — COBOL's no-heap model: this chapter is its PICTURE arithmetic at working depth.</li>
+<li><strong>Module 03 chapter 04</strong> — 0.1 + 0.2 ≠ 0.3 is the disease; COMP-3 with <code>V</code> is the 1959 cure banking adopted.</li>
+<li><strong>Module 08 chapter 02</strong> — storage sections: where these records live, why 88s own zero bytes, and the FILLER slack these offsets expose.</li>
+<li><strong>Module 08 chapter 04</strong> — CICS: records travel through GETMAIN'd buffers; manual record lengths meet storage protection keys.</li>
+<li><strong>Module 08 chapter 05</strong> — REDEFINES-without-tags is why the schema is gone; ODO is why layouts resist naive export.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Compute the full layout by hand (no SYNC): <code>05 A PIC X(3). 05 B PIC S9(5) COMP. 05 C PIC S9(7)V9 COMP-3. 05 D PIC 9(4).</code> — every offset, every size, the total.</li>
+</ol>
+<ol>
+<li>Same record, but <code>05 B PIC S9(5) COMP SYNC.</code> on z/OS Enterprise COBOL. What changes in the layout, and why does the total grow by exactly one byte?</li>
+</ol>
+<ol>
+<li>Derive — don't recall — why <code>PIC S9(7) COMP-3</code> is exactly 4 bytes and why <code>PIC S9(8) COMP-3</code> needs 5.</li>
+</ol>
+<ol>
+<li>Module 03 chapter 04 showed <code>0.1 + 0.2 == 0.3</code> is <code>False</code> in IEEE-754 float64. Why can <code>PIC S9(3)V9 COMP-3</code> arithmetic never produce that error class, and what does it give up versus a float?</li>
+</ol>
+<ol>
+<li>A writer lays out <code>BATCH-RECORD</code> (6 + 3 + 40 × cnt + 8) with the count = 8; the reader's spec says 3, so it computes the trailer for 3. What does the checksum validation actually see, and why does the OCCURS raise no error?</li>
+</ol>
+<ol>
+<li>A partner feed's amount field arrives as EBCDIC <code>F1 F2 D3</code>. Your program declared it <code>PIC 999</code> (unsigned) and compares it <code>&gt; 100</code>; the business swears it was negative. What is the true value, what does the unsigned compare likely do with the D zone, and what is the correct declaration?</li>
+</ol>
+<ol>
+<li>A job abends <code>S0C7</code> (data exception) at <code>COMPUTE X = WS-FLAGS-NUM * 2</code>. The dump shows <code>WS-FLAGS = C1 40 40 40</code>, where <code>05 WS-FLAGS PIC X(4)</code> and <code>05 WS-FLAGS-NUM REDEFINES WS-FLAGS PIC 9(4)</code>. Give the chain from the causing MOVE to the abend.</li>
+</ol>
+<ol>
+<li><code>88 STATUS-DISPUTED VALUE "1" "D"</code> sits under <code>TXN-STATUS PIC X</code>. How many bytes does the 88 add, what does <code>IF STATUS-DISPUTED</code> expand to, and which earlier chapter in this module proved that storage answer with addresses?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>A:</strong> offset 0, 3 bytes. <strong>B:</strong> offset 3, 5 digits → 4 bytes COMP (5–9 row), 3+4=7. <strong>C:</strong> offset 7, S9(7)V9 = 8 digits (<code>V</code> free), floor(8/2)+1 = 5 bytes, 7+5=12. <strong>D:</strong> offset 12, 4 bytes DISPLAY. <strong>Total = 16 bytes.</strong></li>
+</ol>
+<ol>
+<li>B is 4-byte binary; SYNC demands fullword alignment: 1 slack byte puts B at offset 4 [4–7], C at 8 [8–12], D at 13 [13–16]. Total = 16 + 1 = <strong>17 bytes</strong> — the slack byte exists only in the machine, never in the source. (z/OS always honors SYNC; x86 builds may not.)</li>
+</ol>
+<ol>
+<li>S9(7): 7 digits + 1 sign nibble = 8 nibbles = <strong>exactly 4 bytes</strong>, no padding. S9(8): 8 + 1 = 9 nibbles — odd — so floor(8/2)+1 = <strong>5 bytes</strong>, with one pad nibble wasted. Odd digit counts pack perfectly; even counts force the extra byte.</li>
+</ol>
+<ol>
+<li>COMP-3 stores exact decimal digits: 0.1 is the digits "1" at scale 1, and addition is digit-wise with carries — so 0.1 + 0.2 = 0.3 exactly. The float error exists because 0.1 is an infinite binary <em>fraction</em>; packed decimal never converts to binary fractions. It gives up range per byte and speed without decimal hardware.</li>
+</ol>
+<ol>
+<li>The reader validates 8 bytes at 9 + 40×3 = 129, but the writer's cnt = 8 puts entries 4–8 at [129–328] and the true trailer at 329: the "checksum" is really bytes 129–136 of entry 4 — arbitrary data — so it fails (or matches by luck). The OCCURS raises nothing: count/subscript checking is off by default, so the language trusts the count field — why ODO length checks are hand-written.</li>
+</ol>
+<ol>
+<li>True value: the D zone on the last byte means <strong>−123</strong>. Declared unsigned, the compare typically ignores the zone and evaluates the magnitude — 123 &gt; 100 → true — silently flipping a negative to a positive. Correct declaration: <code>PIC S999</code>, so the D zone is honored.</li>
+</ol>
+<ol>
+<li>Someone ran <code>MOVE "A" TO WS-FLAGS</code> — legal; C1 40 40 40 is EBCDIC "A" plus spaces. WS-FLAGS-NUM redefines those bytes as a DISPLAY number, and C1/40 are not digit bytes: COMPUTE drives decimal instructions over non-decimal data, so z/OS traps S0C7. REDEFINES bought no tag byte, so nothing knows which view is live; fix = a <code>NUMERIC</code> test first.</li>
+</ol>
+<ol>
+<li>Zero bytes — an 88 is a compile-time comparison, not storage. <code>IF STATUS-DISPUTED</code> expands to <code>IF TXN-STATUS = "1" OR TXN-STATUS = "D"</code>. Module 08 chapter 02 proved it by printing addresses of items with and without 88s.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch02.html"><span class="cn-label">previous</span><span class="cn-title">Ch 02</span></a>
+<a class="next" href="ch04.html"><span class="cn-label">next</span><span class="cn-title">Ch 04</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 08 — COBOL &amp; the mainframe world</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

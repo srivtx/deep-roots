@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 05 final exam — deep-roots</title>
+<meta name="description" content="Final exam for module 05 (an OS designed by memory constraints), with worked answers.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 05 final exam — deep-roots">
+<meta property="og:description" content="Final exam for module 05 (an OS designed by memory constraints), with worked answers.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 05 final exam — deep-roots">
+<meta name="twitter:description" content="Final exam for module 05 (an OS designed by memory constraints), with worked answers.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 05 &middot; an OS designed by memory constraints &middot; final exam</div>
+<h1 class="post-title">Module 05 final exam</h1>
+<div class="post-meta">every chapter &middot; worked answers behind the fold</div>
+<p>Twelve questions across all six chapters. Closed book; answers are worked, not stated — the explanations are the point. Scoring: 11+ = you own this module; 8-10 = solid, revisit the flagged chapters; &lt;8 = the chapter quizzes are the study path.</p>
+<p><strong>Part I — boot &amp; ART (chapters 01-02)</strong></p>
+<ol>
+<li><em>(derive, cross-module 01 ch03)</em> Zygote's preloaded framework footprint is F = 128 MB; 24 forked apps each dirty d = 2 MB of private COW copies. Compute total physical RAM for the naive JVM-per-app design and the zygote design. A change then makes a 16 MB preloaded region write-hot; per-app dirty memory rises to 14 MB. Recompute, name the broken invariant, and give the <code>dumpsys meminfo</code> column that shows the damage.</li>
+</ol>
+<ol>
+<li><em>(concept)</em> AMS triggers every app fork through <code>/dev/socket/zygote</code>, a plain UNIX socket init created — not through Binder. Give two independent reasons: bootstrap ordering, and what <code>fork()</code> does to multi-threaded IPC state.</li>
+</ol>
+<ol>
+<li><em>(derive, cross-module 01 ch12)</em> A class has two reference fields and one int. Compute per-object size and the footprint of one million instances with ART's compressed references on and off. State the decode formula, why ART has no 32 GB cliff where HotSpot does, and the header arithmetic behind 8 vs HotSpot's 12 bytes.</li>
+</ol>
+<ol>
+<li><em>(diagnosis)</em> A news app throws <code>OutOfMemoryError</code> after 20 minutes of image-heavy scrolling. The profiler shows large-object space growing monotonically, allocation space flat, GC pauses sub-ms. What is leaking, why can compaction never reclaim it, what would an object-graph leak show instead, and what is the fix class?</li>
+</ol>
+<p><strong>Part II — talking &amp; dying (chapters 03-04)</strong></p>
+<ol>
+<li><em>(derive)</em> (a) An AIDL method takes one <code>String</code> of 2,000 ASCII chars, marshalled with <code>writeString</code> (String16, 64-bit): how many bytes on the wire? (b) A lone oneway call carrying a 600 KB byte array, nothing else in flight — does it succeed? (c) Three concurrent synchronous calls of 350 KB each into one service: how many land?</li>
+</ol>
+<ol>
+<li><em>(diagnosis)</em> A client queries a service whose reply is 1,350,213 bytes. The client crashes with <code>TransactionTooLargeException</code> in <code>IQueryService$Stub$Proxy</code>; the <em>service</em> logs <code>!!! FAILED BINDER TRANSACTION !!! (parcel size = 1350213)</code>. The team argues the client has 400 MB free. Explain whose pool and budget failed, why the crash lands in the client's stack, and the fix.</li>
+</ol>
+<ol>
+<li><em>(diagnosis)</em> An ANR trace shows the main thread and all 15 <code>(binder)</code> threads parked in <code>transactNative</code>; the peer's binder threads are each parked in an outbound synchronous <code>transact</code> back into the ANR'd app. What is everyone waiting for, why can't the driver fix it, and what design rule keeps the framework out of this shape?</li>
+</ol>
+<ol>
+<li><em>(derive)</em> lmkd must free memory now. Candidates: P (adj 935, RSS 120 MB), Q (adj 906, RSS 400 MB), R (adj 200, RSS 500 MB, foreground music service), S (adj 912, RSS 90 MB). Give the kill order, explain why R's 500 MB never enters the arithmetic, and state the refinement newer builds add.</li>
+</ol>
+<ol>
+<li><em>(diagnosis)</em> A messaging app runs its file-sync on a plain background thread. Logcat shows <code>ActivityManager: Killing 5112:com.msg/u0a37 (adj 906): cached #17</code>. (a) Why was an actively working process at adj 906? (b) Which kill path fired, and what would the other path log? (c) Give the two-part fix and the ch01 fact that makes the kill cheap to recover from.</li>
+</ol>
+<p><strong>Part III — walls &amp; shipping (chapters 05-06)</strong></p>
+<ol>
+<li><em>(concept)</em> An attacker has full RCE in app A (uid 10145, <code>untrusted_app</code>). Three attempts: (a) read app B's private file, accidentally <code>chmod 0644</code> — the uid wall failed open; (b) call <code>userfaultfd</code> to groom the kernel heap; (c) <code>ptrace</code> app C's process. For each: which wall answers, with what verdict?</li>
+</ol>
+<ol>
+<li><em>(derive)</em> Your dex has 65,400 method-id references. A feature adds 180 call sites to already-referenced methods and 140 references to new ones. Does the build succeed? If not, what exactly does d8 report, why do the 180 call sites cost nothing, and what are the two standard ways out?</li>
+</ol>
+<ol>
+<li><em>(concept, cross-chapter)</em> (a) How does Android update the system it is running from — the slots, and where the "inactive slot" lives on a Virtual A/B device? (b) Power is pulled mid-update: what boots next, and why? (c) Why does the OTA pipeline need Puffin instead of plain bsdiff? (d) Where do the APK verifier's keys live, and what keeps those bytes from changing after boot?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<p><strong>Part I</strong></p>
+<ol>
+<li>Naive: every app pays a private warm JVM: <strong>N × F = 24 × 128 = 3,072 MB</strong>. Zygote: <code>fork()</code> copies page tables, not pages — <strong>F + N·d = 128 + 48 = 176 MB</strong>, ~17× (ch01 §3; module 01 ch03). Write-hot region: <strong>128 + 24 × 14 = 464 MB</strong> — the ratio collapses to ~6.6×. The broken invariant is the <em>read-mostly discipline</em>: apps must write few framework pages — ART allocates post-fork objects away from the preloaded heap for this reason (ch02). The damage shows as <strong>Private Dirty</strong> — the COW copies; shared pages stay dirty-0 (ch01).</li>
+</ol>
+<ol>
+<li><strong>Ordering:</strong> AMS lives in system_server, zygote's <em>first fork</em> — the fork client cannot exist before zygote does; the trigger must predate the IPC universe it populates. <strong>Fork safety:</strong> binder state is process-global and multi-threaded (thread pool, mmap'd pool, handle tables), and <code>fork()</code> clones only the calling thread: forking mid-binder hands the child locks whose owners don't exist there (ch01 §4). Hence an init-created socket (mode 660 root:system), a single-threaded zygote in <code>accept()</code>, binder joining the child only after fork+specialize (ch03).</li>
+</ol>
+<ol>
+<li>On: 8-byte header + 2 × 4-byte refs + 4-byte int = 20 → <strong>24 bytes</strong> (8-byte alignment). Off: 8 + 2 × 8 + 4 = 28 → <strong>32 bytes</strong>; a million instances: <strong>24 MB vs 32 MB (25% saved)</strong>. ART reserves one 4 GB-aligned window and stores each reference's <strong>low 32 bits</strong> — decode <code>window_base | stored32</code>, no shift. HotSpot stores <code>address &gt;&gt; 3</code>, buying 32 GB of reach, hence its cliff where references widen to 8 bytes; ART's <code>heapgrowthlimit</code> caps heaps in the hundreds of MB, so the window never binds (ch02; module 01 ch12). Header: <strong>class 4 + lock 4 = 8 bytes</strong> — the lock word does quadruple duty (thin lock, fat lock, identity hash, GC forwarding); HotSpot pays 12.</li>
+</ol>
+<ol>
+<li><strong>Large primitive arrays retained in large-object space</strong> — <code>byte[]</code> decode/serialization buffers. LOS admits only reference-free primitive arrays ≥ 12 KB (<code>kLargeObjectThreshold = 3 × 4 KB</code>); LOS objects are page-mapped and <strong>never moved or compacted</strong> (freed only by unmap), so retention is permanent page-granular cost no collection fixes. An object-graph leak would show <strong>allocation-space growth with LOS flat</strong>; the space split is the first-pass classifier (ch02; module 01 ch19). Fix: downsample, stream, and reuse the big buffers.</li>
+</ol>
+<p><strong>Part II</strong></p>
+<ol>
+<li><strong>(a)</strong> int32 length prefix (4, in UTF-16 units) + 2,000 × 2 = 4,000 UTF-16LE bytes + 16-bit NUL (2) = 4,006, padded → <strong>4,008 bytes</strong>. <strong>(b)</strong> No: oneway transactions together may not exceed <strong>pool/2 = 520,192 B</strong>; 600 KB = 614,400 exceeds it even with the pool empty; the budget protects sync callers from oneway starvation. <strong>(c)</strong> Two: 3 × 350 KB = 1,075,200 B &gt; <strong>BINDER_VM_SIZE = 1,040,384 B</strong> (1 MiB − 2 pages). The pool is per-process, the <em>receiver's</em>, shared by all in flight; the third fails though each call alone fits (ch03).</li>
+</ol>
+<ol>
+<li>The reply is itself a binder transaction whose receiver is the <em>client</em>: it must fit the <strong>client's own 1 MiB mmap'd pool</strong>; 1,350,213 &gt; 1,040,384 → <code>BR_FAILED_REPLY</code>. The service's log marks its failed reply; the exception surfaces in the client's proxy — code the service's author never wrote (ch03). Free RAM is irrelevant: the limit is per-process buffer geometry. Fix: paginate the query, or ship bytes via <code>SharedMemory</code> — only a 24-byte <code>BINDER_TYPE_FD</code> rides the parcel; the payload never crosses Binder (ch03).</li>
+</ol>
+<ol>
+<li><strong>Sixteenth-thread starvation.</strong> A synchronous call consumes its calling thread until the reply. All 15 pool threads (<code>DEFAULT_MAX_BINDER_THREADS = 15</code>) plus main are parked in <code>transactNative</code>, each waiting on a reply that needs the peer to call <em>back into</em> the app — which needs a 16th looped thread. The driver would spawn one (<code>BR_SPAWN_LOOPER</code>), but 15 is a hard cap: everyone waits on a delivery the kernel cannot make. Main parked in a binder ioctl past input dispatch is the ANR. The rule: <strong>no nested synchronous IPC</strong> — framework callbacks are oneway (ch03).</li>
+</ol>
+<ol>
+<li><strong>P (935), then S (912), then Q (906).</strong> adj first, RSS as tie-breaker: importance dominates, so S's 90 MB dies before Q's 400 MB. <strong>R never enters the arithmetic:</strong> adj 200 is the perceptible band, below the 900 cached cliff — a foreground service anchors importance independently of RSS; the system won't trade audible playback for 500 MB (ch04). No heap, CPU, or age appears: lmkd executes the ranking AMS wrote. Newer refinement (Android 12+): per-process zram swap-in cost — a large <em>cold</em> process can out-rank a slightly higher-adj small one.</li>
+</ol>
+<ol>
+<li><strong>(a)</strong> adj comes from lifecycle <em>components</em> (visible activity, foreground service, bound service), never CPU or threads: a bare <code>Thread</code> registers no importance, so <code>onStop</code> demoted it to the cached band (900–999, slot 906). <strong>(b)</strong> The budget path: <code>(adj 906): cached #17</code> is AMS evicting the LRU cached process past <code>DEFAULT_MAX_CACHED_PROCESSES = 32</code>; the pressure path logs under the <code>lowmemorykiller</code> tag — <code>Killing ... to free NkB rss</code> — after a PSI trigger (70 ms some-stall/s). <strong>(c)</strong> Fix 1: a typed foreground service while syncing (adj ~200, below the cliff, freezer-exempt). Fix 2: design for death — WorkManager plus persisted progress. Relaunch is cheap: a zygote fork over resident COW-shared pages (ch01); state survives only if serialized (ch04).</li>
+</ol>
+<p><strong>Part III</strong></p>
+<ol>
+<li><strong>(a) SELinux MLS categories.</strong> Labels come from <code>seapp_contexts</code> (<code>levelFrom=all</code>): A runs <code>s0:c23,c256</code>, B's file carries <code>s0:c7,c257</code>; the category constraint requires matching sets, checked at the kernel's SELinux hook: <code>avc: denied { read } ... permissive=0</code>. <strong>(b) seccomp-BPF, verdict ERRNO → EPERM</strong>, at syscall entry, before the kernel touches the subsystem: <code>userfaultfd</code> is on the app deny list; filters are a one-way ratchet, inherited across fork, only intersectable with stricter. <strong>(c) The uid wall first:</strong> ptrace of a foreign uid dies <code>EPERM</code> in the owner check (SELinux denies it for <code>untrusted_app</code> besides). What survives all three: the binder surface, the map's soft part (ch05).</li>
+</ol>
+<ol>
+<li><strong>Fails: 65,400 + 140 = 65,540 &gt; 65,536</strong>; d8 reports <code>Too many method references: 65540; max is 65536</code>. The 180 call sites cost nothing because <code>invoke-virtual {v0, v1}, method@BBBB</code> carries a <strong>16-bit index into the method_ids table</strong>; new call sites reuse existing entries, ids dedupe. New <em>references</em> consume the u16 address space (2^16 = 65,536), counting every referenced framework method, not just yours (ch06 §2). Ways out: <strong>R8</strong> (deleting unreferenced methods deletes their ids) or <strong>multidex</strong>: <code>classes.dex</code> keeps startup classes, <code>classes2.dex</code> the rest (native in ART since 5.0).</li>
+</ol>
+<ol>
+<li><strong>(a)</strong> A/B doubles the system partitions (<code>_a</code>/<code>_b</code>); the running slot is never written — <code>update_engine</code> streams the new image into the inactive slot, then flips the boot flag in <code>misc</code> (retry count 7; unhealthy slots fall back). Virtual A/B (Android 11+) drops the physical second slot: the diff applies into a <strong>copy-on-write snapshot on /data</strong> (ch01's fork trick at partition scale), merged by device-mapper once healthy. <strong>(b)</strong> The old slot: never written, so it boots; half-applied snapshot data is discarded — power loss mid-update is a non-event. <strong>(c)</strong> bsdiff works on uncompressed bytes; deflate streams avalanche under small input changes. Puffin "puffs" each stream to a canonical bit-level form, diffs <em>those</em>, re-deflates deterministically — the patched file is bit-identical, manifest hashes match. <strong>(d)</strong> The platform cert store on <code>/system</code>; <strong>dm-verity</strong> — a Merkle tree over its 4 KiB blocks, root hash signed in <code>vbmeta</code> via AVB, chained to the ROM — checks blocks <em>as they are paged in</em>; the store cannot rot at runtime (ch06 §4, ch01 §1). ROM → AVB → dm-verity → certs → APK → fork: hash the next thing before you trust it.</li>
+</ol>
+</details>
+<div class="post-footer"><p>Chapter list: <a href="index.html">Module 05</a>. Module 01 also has the <a href="../quiz.html">interactive quiz</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macOS &amp; the grand comparison — deep-roots</title>
+<meta name="description" content="Chapter 06 of module 07: macOS &amp; the grand comparison">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="macOS &amp; the grand comparison — deep-roots">
+<meta property="og:description" content="Chapter 06 of module 07: macOS &amp; the grand comparison">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="macOS &amp; the grand comparison — deep-roots">
+<meta name="twitter:description" content="Chapter 06 of module 07: macOS &amp; the grand comparison">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 07 &middot; Windows, Linux, macOS side by side</div>
+<h1 class="post-title">macOS &amp; the grand comparison</h1>
+<div class="post-meta">chapter 06 &middot; ~13 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> macOS runs iOS's XNU kernel with desktop physics: a disk exists, so pressure walks a longer ladder before anyone dies — drop clean file pages, drop <em>volatile purgeable</em> pages, compress cold dirty pages, write compressed pages to on-demand swapfiles, and only then kill the largest-footprint process. The Mach vm map, the purgeable contract, and the dyld shared cache are module 06's machinery reused at desktop scale. The new thing is unified memory on Apple Silicon: CPU and GPU share one LPDDR pool and one bandwidth number (~68 GB/s on an M1), so the copy tax vanishes but a contention rule appears — and the "VRAM is full" failure class is replaced by footprint and wired limits. It ends with the three-kernel comparison table.</blockquote>
+<h2 id="1-the-mach-vm-map-desktop-edition">1. The Mach vm map, desktop edition</h2>
+<p>Module 06 ch01 derived XNU's picture; nothing here re-derives it: a Mach <strong>task</strong> (one vm map, one port space, N threads) wearing a BSD <strong>proc</strong>; the vm map is a tree of <strong>vm_map_entry</strong> policy records; the <strong>pmap</strong> — module 01 ch03's page tables — is a cache of the map's decisions, which is why <code>vmmap</code> can print the map while page tables stay invisible. The desktop deltas:</p>
+<ul>
+<li><strong>Page size.</strong> 16,384 B on Apple Silicon (native), 4,096 B on Intel Macs and in Rosetta (module 06 ch01) — check the slice before page math.</li>
+<li><strong>The pager mix.</strong> Each VM object names a pager: the <strong>vnode pager</strong> (file-backed, re-faultable), the <strong>compressor pager</strong> (cold dirty pages compressed in RAM), and swap for what the compressor gives up. iOS ships the first two and forbids the third (module 06 ch02's flash-wear and joules argument); a desktop is wall-powered with a bigger SSD budget, so macOS ships all three.</li>
+<li><strong>fork() exists.</strong> The iOS sandbox denies it to apps; macOS allows it — module 01 ch03's COW shadow objects are live on the desktop.</li>
+</ul>
+<h2 id="2-purgeable-memory-a-contract-not-a-state">2. Purgeable memory: a contract, not a state</h2>
+<p>Module 01 ch03's page ledger: every page is file-backed (re-creatable) or anonymous (RAM-only). A decoded thumbnail is anonymous <em>and</em> re-creatable — dirty by content, clean by promise. No ledger column covers that, so the kernel adds one: mark a range <strong>purgeable</strong> — "discard this instead of compressing or swapping it." <code>NSPurgeableData</code> wraps the Mach trap <code>mach_vm_purgable_control</code> on a <code>vm_allocate</code>'d range with <code>VM_FLAGS_PURGABLE</code>. Three access states:</p>
+<pre><code class="language-text">  NONVOLATILE --mark volatile--&gt; VOLATILE --kernel pressure--&gt; EMPTY
+  charged to                     zero footprint charge;      object discarded;
+  phys_footprint                 ages through 8 groups       next fault delivers
+  (purgeable_nonvolatile)        (oldest dropped first)      fresh ZERO pages</code></pre>
+<p>The API semantics:</p>
+<ul>
+<li><strong>Volatile</strong> pages are reclaim candidates <em>now</em>: no signal, no swap-out, no second chance — the bottom rung of the volatility ladder, the most-volatile purgeable tier (the L4 tier in Apple's docs).</li>
+<li><strong>Empty</strong> is the state <em>after</em> a purge. Accessing an emptied range neither crashes nor restores data: faults deliver zero-filled pages — 500 MB of cache becomes 500 MB of zeros with no warning.</li>
+<li><strong>Nonvolatile</strong> is the locked state: charged to phys_footprint, protected like ordinary dirty memory. The transitions carry the loss-detection contract — re-marking tells you whether the kernel purged meanwhile.</li>
+</ul>
+<pre><code class="language-objc">// Objective-C, macOS 13: the contract in five lines
+NSPurgeableData *thumbs = [NSPurgeableData dataWithLength:1 &lt;&lt; 20]; // 1 MiB
+fill(thumbs.mutableBytes);          // contents valid now (nonvolatile)
+[thumbs endContentAccess];          // VOLATILE: free footprint, at risk
+// ... hours later, maybe after pressure events ...
+if (![thumbs beginContentAccess])   // NO = kernel discarded it (EMPTY)
+    refill(thumbs.mutableBytes);   // must regenerate before reading</code></pre>
+<p><code>beginContentAccess</code> returning <code>NO</code> is the <em>only</em> notification you get. XNU keeps volatile pages in 8 age groups (<code>NUM_VOLATILE_GROUPS = 8</code>, <code>osfmk/vm/vm_purgeable.c</code>), oldest dropped first (module 06 ch02): purge order roughly LRU, reclaim cost zero.</p>
+<h2 id="3-the-pressure-ladder-wired-compress-swap-kill">3. The pressure ladder: wired, compress, swap, kill</h2>
+<p>The ladder, ordered by what each valve costs:</p>
+<ol>
+<li><strong>Drop clean file pages</strong> — free; the next access re-faults from file.</li>
+<li><strong>Drop volatile purgeable pages</strong> — free; the contract pre-authorized the loss.</li>
+<li><strong>Compress cold dirty pages</strong> — CPU for RAM: 16 KB → ~4 KB frees 12 KB for microseconds.</li>
+<li><strong>Swap compressed pages to disk</strong> — I/O: milliseconds on the fault-back path.</li>
+<li><strong>Kill</strong> — memorystatus picks a victim: the "out of application memory" dialog, then a SIGKILL to the largest-footprint process. Same memorystatus code as iOS Jetsam (module 06 ch02) with a longer ladder in front.</li>
+</ol>
+<p><strong>Wired memory is absent from the ladder by definition.</strong> Kernel data structures, IOKit mappings, DMA buffers, page tables — pages whose physical addresses are baked into something the kernel or a device holds — can never fault, so they can never be compressed or swapped. <code>vm_stat</code>'s "pages wired down" is the irreducible floor. XNU caps <em>user</em> wiring with two sysctls, <code>vm.user_wire_limit</code> (per task) and <code>vm.global_user_wire_limit</code> (system-wide, a fraction of RAM by default): mlock past the global limit fails with <code>ENOMEM</code> even with free memory showing.</p>
+<p><strong>The swap machinery.</strong> Through macOS 10.14 a user-space <code>dynamic_pager</code> daemon owned the swapfiles; the work moved into the kernel across 10.15–11, and modern macOS has no <code>dynamic_pager</code> process. Swapfiles materialize on demand under <code>/System/Volumes/VM/</code> (<code>/private/var/vm/</code> pre-Catalina): <code>swapfile0</code> in the 1 GB class on macOS 13 Apple Silicon (older releases started at 64 MB and doubled), then <code>swapfile1</code>, … while pressure persists, each ≥ the last. No swap partition — swap costs disk only while it exists, and files are deleted as pressure fades. A nearly-full disk blocks swapfile growth: one way a Mac runs "out of application memory" with RAM to spare.</p>
+<p><strong>phys_footprint on the desktop.</strong> The ledger is unchanged from module 06 ch02: internal + internal_compressed + purgeable_nonvolatile + iokit mapped + page tables. On iOS it decides every Jetsam kill; on macOS no per-app cap exists — it decides only the last-resort victim — but it is still the honest number: RSS double-counts the shared cache's resident pages in <em>every</em> process that links it.</p>
+<h2 id="4-the-shared-cache-at-desktop-scale">4. The shared cache at desktop scale</h2>
+<p>Module 06 ch04 derived why the cache exists (100+ system dylibs per app; per-launch resolution is CPU, per-process fixed-up data pages is RAM; link once at OS-build time, map copy-on-write) and how (chained fixups, launch closures). Reuse it; the desktop deltas:</p>
+<ul>
+<li><strong>Apps link the cache <em>and</em> load their own dylibs.</strong> An iOS app's every dependency is in the cache; a macOS app additionally has embedded <code>.framework</code> bundles, plugins, and homebrew libraries — dyld does real per-launch work for those: map, verify signature, process fixups, outside the cache's precomputed plan.</li>
+<li><strong>On Apple Silicon (macOS 11+) all code must be signed</strong>, ad-hoc at minimum — unlike Intel Macs.</li>
+<li><strong>Two slices can be resident.</strong> The cache is per-architecture: Rosetta processes map the x86_64 slice while native processes hold arm64e. On macOS 11+ the cache lives in the cryptex: <code>/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/</code>.</li>
+</ul>
+<h2 id="5-unified-memory-one-number-one-pipe">5. Unified memory: one number, one pipe</h2>
+<p>The discrete-GPU arrangement (deep dive in module 12 ch04): CPU RAM here, GPU VRAM there, joined by PCIe (~32 GB/s for 4.0 x16); every upload and readback is a <em>copy</em>, and VRAM exhaustion is its own failure class — the CUDA "out of memory" error while RAM remains. Apple Silicon removes the split — a two-line diff:</p>
+<pre><code class="language-text">DISCRETE                                UNIFIED (Apple Silicon, M-series)
++------+   PCIe 4.0 x16 ~32 GB/s       +------+
+| CPU  |&lt;----------&gt;+-------+           | CPU  +---+
++------+  copies    |VRAM 8-|           +------+   |    one fabric
+  DDR 64-100+ GB/s  |  24 GB|           | GPU  +---+-------------&gt; LPDDR pool
+  (CPU only)        +-------+           +------+   |              ~68.2 GB/s (M1)
+                                     | NE    +---+   CPU+GPU+NE CONTEND
+                                     +------+         for the SAME bandwidth</code></pre>
+<p>Consequences:</p>
+<ul>
+<li><strong>The copy tax vanishes.</strong> CPU and GPU address the same memory; a Metal buffer or <code>IOSurface</code> serves both with no staging upload.</li>
+<li><strong>Total bandwidth is shared — the contention rule.</strong> The M1's LPDDR4X gives ~68.2 GB/s (128-bit at 4266 MT/s; Apple spec sheet, 2020) and everything draws from it: CPU, GPU, Neural Engine, display. A GPU streaming 55 GB/s leaves the CPU 13 GB/s — memory <em>latency</em> degrades though memory <em>size</em> is fine. Later chips raise the number (M2 ~100, M1 Max ~400, M1 Ultra ~800, M4 base ~120 GB/s; launch specs), but the rule is invariant: budget <em>bandwidth</em> like a second capacity.</li>
+<li><strong>Memory size is one number.</strong> No "16 GB RAM + 8 GB VRAM" split to misallocate; the GPU borrows what the CPU doesn't use.</li>
+<li><strong>The VRAM-OOM class disappears — a different OOM takes over.</strong> No allocation fails because "video memory" is full, since there is none; instead the footprint limit, the wired limit, and the memorystatus kill — section 3's ladder. Failure moves from "allocation error" to "SIGKILL" (module 12 ch04: CUDA vs Metal).</li>
+</ul>
+<h2 id="6-the-grand-comparison">6. The grand comparison</h2>
+<p>The payoff — same physics (module 01 ch03), three dialects:</p>
+<pre><code class="language-text">+--------------+---------------------------+----------------------------+------------------------------+
+|              | Windows (NT)              | Linux                      | macOS (XNU + dyld)           |
++--------------+---------------------------+----------------------------+------------------------------+
+| process      | object-manager objects +  | task_struct; a thread is a | Mach task (vm map + ports +  |
+| model        | handle tables; job        | task sharing CLONE_VM;     | threads) in a BSD proc (mod  |
+|              | objects (ch01)            | namespaces + cgroups       | 06 ch01)                     |
++--------------+---------------------------+----------------------------+------------------------------+
+| handle / fd  | handle: index into        | fd: pointer to open-file   | BSD fds for files; Mach port |
+|              | process-local table of    | description; inherited by  | rights for IPC; ports never  |
+|              | kernel objects; not       | fork unless FD_CLOEXEC     | inherited across fork (ch01) |
+|              | inherited by default      | (ch01)                     |                              |
++--------------+---------------------------+----------------------------+------------------------------+
+| loader       | kernel + ntdll: PE,       | ld.so: ELF, PT_INTERP,     | dyld: Mach-O, shared cache,  |
+|              | known-DLLs, LoaderLock    | vDSO, LD_PRELOAD (ch04)    | closures; plus per-app       |
+|              | (ch02)                    |                            | dylibs (sec 4)               |
++--------------+---------------------------+----------------------------+------------------------------+
+| default heap | NT heap: 1 MB segments,   | glibc malloc: brk + mmap,  | libmalloc zones:             |
+|              | encoded headers, LFH      | tcache + arenas (mod 01    | nano/tiny/small/large        |
+|              | buckets (ch03)            | ch19)                      | magazines over vm_allocate   |
++--------------+---------------------------+----------------------------+------------------------------+
+| allocator    | LFH front end; Segment    | ptmalloc default;          | magazine allocator; nano     |
+|              | Heap opt-in (ch03)        | mimalloc/jemalloc opt-in   | allocator &lt;= 255 B on Apple  |
+|              |                           |                            | Silicon                      |
++--------------+---------------------------+----------------------------+------------------------------+
+| OOM policy   | no killer: commit limit   | OOM killer: badness score  | memorystatus kill when swap  |
+|              | fails the malloc          | -&gt; SIGKILL at alloc        | can't grow; largest          |
+|              | (ERROR_COMMITMENT_LIMIT,  | failure; cgroup variant    | footprint dies; dialog first |
+|              | ch01)                     | (ch05)                     | (sec 3)                      |
++--------------+---------------------------+----------------------------+------------------------------+
+| swap         | pagefile.sys backs        | swap partition/file +      | on-demand swapfiles under    |
+|              | commit; growable,         | zram; swappiness (ch05)    | /System/Volumes/VM; never    |
+|              | disableable               |                            | preallocated; compressor     |
+|              |                           |                            | first; deleted when pressure |
+|              |                           |                            | eases                        |
++--------------+---------------------------+----------------------------+------------------------------+
+| signatures   | Authenticode optional for | none at exec by default;   | all arm64 code must be       |
+|              | user code, required for   | signed kernel modules;     | signed (ad-hoc counts);      |
+|              | drivers; VBS/HVCI (mod 02 | SELinux + KASLR (mod 02    | notarized if downloaded; SIP |
+|              | ch06)                     | ch06)                      | + PAC (mod 02 ch06)          |
++--------------+---------------------------+----------------------------+------------------------------+</code></pre>
+<p><strong>Which OS is which mitigation</strong> (module 02 ch06's ladder): Windows bets on the hypervisor — VBS/HVCI keep code integrity above a compromised kernel; Linux on policy plus randomness — SELinux confines, KASLR hides; macOS on hardware binding — SIP makes system files immutable even to root, and PAC (arm64e) puts an authentication code on every function pointer, so code-reuse needs a leak <em>and</em> a forgery. Same ladder, different rungs.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>Purgeable tiers by the numbers</strong>: 8 age groups (<code>NUM_VOLATILE_GROUPS = 8</code>, <code>osfmk/vm/vm_purgeable.c</code>), oldest dropped first; volatile costs zero footprint, <code>purgeable_nonvolatile</code> is fully charged; post-purge reads fault <em>zero</em> pages — silence, not signal.</li>
+<li><strong>The wired limits are sysctls</strong>: <code>vm.user_wire_limit</code> (per task) and <code>vm.global_user_wire_limit</code> (system-wide, a fraction of RAM by default). mlock of 15 GB on a 16 GB Mac fails with ENOMEM despite free RAM — check the sysctl first.</li>
+<li><strong>The shared-bandwidth contention rule</strong>: CPU, GPU, and Neural Engine draw from one number (M1 ~68.2, M1 Max ~400, M1 Ultra ~800 GB/s; launch specs) — a GPU at 90% of the budget visibly degrades CPU memory latency. Budget bandwidth as a second capacity.</li>
+<li><strong>Swapfile behavior</strong>: no <code>dynamic_pager</code> on modern macOS (gone since 10.15–11); swapfiles appear under <code>/System/Volumes/VM/</code> only under pressure, each ≥ the last, <em>deleted</em> when pressure fades — a full data volume blocks growth and produces the "out of application memory" dialog with RAM free.</li>
+<li><strong>phys_footprint exists on the desktop</strong>: <code>/usr/bin/footprint</code> prints it per process, but with no per-app cap it decides only the last-resort victim; RSS overcounts by gigabytes — every process includes the shared cache's resident pages.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>This sandbox has no Mac: the fragments below are documented shapes for macOS 13 (Ventura), Apple Silicon, 16 GB — exact numbers are illustrative. Linux equivalents from chapter 05 follow each lab.</p>
+<p><strong>1. Your address space, region by region</strong> (the vm map of section 1):</p>
+<pre><code class="language-text">$ vmmap $$ | head -30        # $$ = the shell's pid
+__TEXT            0000000104a6c000-... [  96K] r-x ...
+__DATA            0000000104a84000-... [  16K] rw- ...
+====&gt; shared cache &lt;====
+__TEXT            0000000180000000-... [~404M] r-x ... dyld_shared_cache_arm64e
+__DATA            ...
+MALLOC            0000000104c00000-... [  2M] rw- ... DefaultMallocZone
+VM_ALLOCATE       0000000106c40000-... [  4K] rw- ... (large malloc tier)</code></pre>
+<p>The shared-cache rows dwarf the binary's own sections; <code>MALLOC*</code> regions are libmalloc's zones; there is no <code>[heap]</code> line — an ELF-ism. Linux contrast: <code>/proc/self/maps</code> labels file/vdso/heap/stack (ch04's lab).</p>
+<p><strong>2. RSS versus footprint:</strong></p>
+<pre><code class="language-text">$ footprint $$ | head
+    Phys footprint:        118.3 MB
+    Rss:                   402.7 MB        &lt;- shared cache counted again
+$ memory_pressure
+    The system has 2097152 pages (16 GB) ...
+    ... free ... wired ... purgeable ... compressed ...
+$ sysctl vm.user_wire_limit vm.global_user_wire_limit vm.compressor_mode
+$ ls -lh /System/Volumes/VM/     # swapfiles appear only under pressure</code></pre>
+<p>The Rss-vs-footprint gap is the shared cache working — the macOS twin of PSS-vs-RSS from ch05's <code>smaps_rollup</code> (Private_Dirty + swap = footprint's "internal" ledger).</p>
+<p><strong>3. Watch a purge</strong> (needs a Mac): mark an <code>NSPurgeableData</code> volatile, run a memory hog — the next <code>beginContentAccess</code> returns NO, the data zeros. Linux contrast: anonymous pages go to swap or zram (ch05), never to zero; purgeable is a contract Linux offers only for <em>file</em> pages.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Diagnose the "out of application memory" dialog</strong>: compressor + swap exhausted, or swapfile growth blocked by a full disk — and why malloc never returned NULL: the kill is the failure mode.</li>
+<li><strong>Port caching code correctly</strong>: a Linux LRU cache or Android's <code>onTrimMemory</code> pattern maps to <code>NSPurgeableData</code> — let the kernel drop the oldest of 8 age groups instead of shipping an eviction heuristic blind to pressure.</li>
+<li><strong>Plan GPU workloads by bandwidth, not bytes</strong>: the single ~68-400 GB/s number must cover CPU + GPU + Neural Engine; tile the working set rather than assuming a separate VRAM pipe.</li>
+<li><strong>Read a Mac's memory honestly</strong>: <code>footprint</code> over RSS; <code>vm_stat</code>'s wired line as the floor; swapfile count as the pressure gauge — and answer "commit vs RSS vs footprint" (ch01's table) with the macOS twist: the number only bites at kill time.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 07 ch01</strong> — the commit/RSS/footprint frame and the handles-vs-fds-vs-ports comparison.</li>
+<li><strong>Module 07 ch02-03, ch04-05</strong> — the Windows and Linux pairs: the table's left and middle columns, plus the lab's smaps contrast.</li>
+<li><strong>Module 06 ch02</strong> — jetsam and the compressor derivation, reused: the purgeable economy and footprint ledger.</li>
+<li><strong>Module 06 ch04</strong> — the shared-cache arithmetic and closures, reused; this chapter adds only the desktop deltas.</li>
+<li><strong>Module 01 ch02-03</strong> — the bandwidth hierarchy behind the contention rule; the page ledgers and COW every valve manipulates.</li>
+<li><strong>Module 02 ch06</strong> — the mitigation ladder per platform (VBS/HVCI, SELinux/KASLR, SIP/PAC).</li>
+<li><strong>Module 12 ch04</strong> — unified memory deep dive: GPU MMUs, residency, CUDA-vs-Metal failure classes.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>A photo app keeps a 400 MB cache of decoded thumbnails in <code>NSPurgeableData</code>, marked volatile. Overnight the Mac hits memory pressure twice; in the morning the app calls <code>beginContentAccess</code> — what does it return in the two possible worlds, and what does the memory contain in each?</li>
+</ol>
+<ol>
+<li>Concept: why can wired memory never be a valve in the pressure ladder, while even the compressor and the swapfile are? What physically distinguishes the pages?</li>
+</ol>
+<ol>
+<li>Predict: an M1 MacBook (8 GB, ~68.2 GB/s) runs a Metal shader streaming ~55 GB/s while its CPU threads want ~30 GB/s. Footprint stays modest — what happens, and why doesn't free RAM fix it?</li>
+</ol>
+<ol>
+<li>Predict: a 16 GB macOS 14 machine with 5 GB free touches 30 GB of dirty pages in a loop. Walk the ladder — which valves engage, what appears in <code>/System/Volumes/VM/</code>, and what does the user see last?</li>
+</ol>
+<ol>
+<li>Bug diagnosis: an image tool switched its tile cache to <code>NSPurgeableData</code>; customers report "random black tiles" after the Mac sleeps; the code reads <code>mutableBytes</code> after <code>endContentAccess</code>. What is the bug and the two-line fix?</li>
+</ol>
+<ol>
+<li>Bug diagnosis: a Linux benchmark port mlocks a 15 GB file mapping on a 16 GB Mac. <code>mlock</code> fails with ENOMEM while Activity Monitor shows 10 GB free. Give the reason and the sysctl that proves it.</li>
+</ol>
+<ol>
+<li>Bug diagnosis (cross-chapter): a cross-platform C++ app vendors its own runtime dylib on macOS while linking system frameworks from the shared cache. Users see intermittent <code>dynamic_cast</code> failures and ODR crashes that never occur on Linux. Why does macOS produce <em>two</em> runtimes where Linux produces one? (Ch04's loader row; module 04 ch02.)</li>
+</ol>
+<ol>
+<li>Concept (cross-chapter): match each mitigation to its platform and mechanism — VBS/HVCI, SELinux, KASLR, SIP, PAC — then explain why PAC is the odd one out: what does it change that the other four do not? (Module 02 ch06.)</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Two worlds, one return each.</strong> If the kernel never reclaimed: YES, data intact. If it did: the object entered EMPTY — the call returns NO and the memory contains <strong>zeros</strong> (faults deliver fresh zero pages). The return value is the <em>only</em> notification. Check NO, regenerate before any read.</li>
+</ol>
+<ol>
+<li><strong>Wired pages have their physical addresses baked in.</strong> Kernel data structures, IOKit/DMA mappings, and page tables are referenced by physical address by code or hardware that cannot take a fault — and moving a page requires faulting it back elsewhere. Every other page is addressed <em>virtually</em> through the pmap, a rebuildable cache of the vm map (module 06 ch01).</li>
+</ol>
+<ol>
+<li><strong>Bandwidth contention, not capacity.</strong> Both draw from the same ~68.2 GB/s LPDDR: 55 + 30 = 85 GB/s of demand against ~68 of supply. Neither side fails an allocation; both get <em>slower</em> — GPU throughput sags, CPU memory latency rises as requests queue behind GPU traffic. Free RAM is irrelevant: the pipe is the scarce resource (module 12 ch04).</li>
+</ol>
+<ol>
+<li><strong>The ladder in order</strong>: clean file pages drop; volatile purgeable drops; the compressor takes cold dirty pages; swapfiles appear under <code>/System/Volumes/VM/</code> and grow — but only ~5 GB is free, so growth stalls well before absorbing 30 GB. Compressor and swap exhausted → memorystatus SIGKILLs the largest-footprint process and the user sees the "out of application memory" dialog. malloc never returned NULL: the kill <em>is</em> the OOM policy.</li>
+</ol>
+<ol>
+<li><strong>Reading volatile memory without locking it.</strong> <code>endContentAccess</code> left the cache volatile; pressure (sleep is a classic trigger) let the kernel discard it to EMPTY. The code read <code>mutableBytes</code> directly — post-purge faults deliver zeros, which decode as black tiles. Fix: gate every access on <code>beginContentAccess</code> (regenerate on NO), re-mark volatile only when done.</li>
+</ol>
+<ol>
+<li><strong>The global user-wire limit.</strong> XNU caps user-wireable pages system-wide: <code>vm.global_user_wire_limit</code> defaults to a fraction of RAM (~14-15 GB here), and mlock past it returns ENOMEM <em>while free RAM exists</em> — free pages aren't the constraint; the ceiling is. <code>sysctl vm.global_user_wire_limit</code> prints it.</li>
+</ol>
+<ol>
+<li><strong>The cache plus your own copy = two type hierarchies.</strong> On Linux the vendored runtime and the system's resolve into one symbol namespace (module 07 ch04) — one <code>typeinfo</code> per class. On macOS the system runtime is pre-linked in the shared cache while the vendored dylib loads separately (section 4's delta): two runtimes, each with its own <code>typeinfo</code> for the "same" class, so <code>dynamic_cast</code> and exception matching across the boundary fail — an ODR violation the ABI cannot see. Don't vendor a runtime the cache provides.</li>
+</ol>
+<ol>
+<li><strong>The mapping</strong>: VBS/HVCI — Windows, hypervisor-protected code integrity; SELinux — Linux, mandatory access control; KASLR — Linux, address-space randomization; SIP — macOS, system-file immutability even to root; PAC — macOS arm64e, pointer authentication. <strong>PAC is the odd one out</strong>: the other four are software-enforced policy or layout; PAC changes the <em>pointer format itself</em> — every code pointer carries a cryptographic signature keyed to its address, so an attacker needs a leak <em>and</em> a forgery. It hardens the ABI, not the policy.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch05.html"><span class="cn-label">previous</span><span class="cn-title">Ch 05</span></a>
+<a class="next" href="index.html"><span class="cn-label">next</span><span class="cn-title">Module index</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 07 — Desktop OS internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

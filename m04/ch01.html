@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Binary formats from bytes up — deep-roots</title>
+<meta name="description" content="Chapter 01 of module 04: Binary formats from bytes up">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Binary formats from bytes up — deep-roots">
+<meta property="og:description" content="Chapter 01 of module 04: Binary formats from bytes up">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Binary formats from bytes up — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of module 04: Binary formats from bytes up">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 04 &middot; reading what compilers leave behind</div>
+<h1 class="post-title">Binary formats from bytes up</h1>
+<div class="post-meta">chapter 01 &middot; ~12 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> An executable is a structured file with <strong>two audiences</strong>. The loader reads <em>program headers</em>: "map these ranges at these addresses, with these permissions, then jump." Linkers and analysis tools read <em>section headers</em> — named innards (<code>.text</code>, <code>.data</code>, <code>.symtab</code>). The loader never needs the names; the linker never mmaps. ELF, PE, and Mach-O are three dialects of one idea: magic bytes announce the format; a memory map serves the loader; a table of contents, the tools.</blockquote>
+<h2 id="the-first-sixteen-bytes-decide-everything">The first sixteen bytes decide everything</h2>
+<p>A loader handed an arbitrary file must decide, cheaply, whether and how to run it. That forces a fixed <strong>signature</strong> at a fixed offset: <code>7f 45 4c 46</code> — <code>\x7fELF</code>. The next 12 bytes (<code>e_ident</code>) fix <em>how to parse everything after</em>:</p>
+<pre><code class="language-text">offset:   0    1    2    3    4    5    6    7         8 .. 15
+        +----+----+----+----+----+----+----+----+----------------------+
+bytes:  | 7f | 45 | 4c | 46 | 02 | 01 | 01 | 00 | 00 00 00 00 00 00 00 |
+        +----+----+----+----+----+----+----+----+----------------------+
+          \x7f   E    L    F   class data ver  OSABI     padding
+                                  64    LE  v1  SysV</code></pre>
+<ul>
+<li><strong>Byte 4, class</strong> (<code>02</code> = ELF64): fixes every later field's size — 8-byte addresses, 56-byte program headers, 64-byte section headers.</li>
+<li><strong>Byte 5, data</strong> (<code>01</code> = little-endian): byte order of every multi-byte integer.</li>
+<li><strong>Byte 7, OSABI</strong> — <code>00</code> = System V. Linux toolchains emit 0 and the kernel ignores it; FreeBSD "brands" foreign binaries here.</li>
+</ul>
+<p>Then the header proper: <code>e_type</code> (2 = EXEC, fixed base; 3 = DYN, position-independent — modern Linux builds), <code>e_machine</code> (0x3e = x86-64), and <strong><code>e_entry</code></strong> — the virtual address the kernel jumps to once the image is mapped. Here <code>e_entry = 0x1050</code> — <em>not</em> <code>main</code> but <code>_start</code>, the libc bootstrap that calls <code>__libc_start_main(main, argc, argv, ...)</code> (chapter 03 makes this a recipe for finding <code>main</code>). Two offsets finish: <code>e_phoff</code> (64, right after this 64-byte header) and <code>e_shoff</code> (15104, near the file's end) — the layout encodes who matters more to the loader.</p>
+<h2 id="two-tables-one-file">Two tables, one file</h2>
+<p>Two programs consume this file:</p>
+<ul>
+<li>The <strong>loader</strong> (kernel + <code>ld.so</code>) thinks in pages: "map <code>[vaddr, vaddr+memsz)</code> from file bytes <code>[off, off+sz)</code>, with these permissions." It wants few, coarse, page-aligned ranges — <strong>program headers</strong> (segments).</li>
+<li>The <strong>linker</strong> — and strip, gdb, readelf, Ghidra — thinks in <em>named</em> chunks: resolve against <code>.symtab</code>, relocate <code>.data</code>/<code>.got</code>, set <code>.debug_info</code> aside. It wants many, small, labeled ranges — <strong>section headers</strong>.</li>
+</ul>
+<p>Same bytes, two tables — the load-bearing insight of this module:</p>
+<pre><code class="language-text">                    ONE FILE on disk (PIE ELF64, gcc 14.2.0, x86-64)
++--------------------------------------------------------------------------+
+| 0x0000: ELF header (e_phoff=64, e_shoff=15104, e_entry=0x1050)           |
+| 0x0040: PROGRAM HEADERS  &lt;- loader's view: what to mmap                  |
+|         ...file bytes...                                                 |
+| 0x3b00: SECTION HEADERS &lt;- linker's view: named innards                  |
++--------------------------------------------------------------------------+
+
+   PROGRAM HEADERS (loader)                SECTION HEADERS (linker/tools)
+   "map this, these perms"                 "these are the named parts"
+
+   PT_INTERP  "/lib64/ld-linux-x86-64.so.2"   .interp
+   PT_LOAD #1  R    vaddr 0x0000  filesz 0x628
+                                       &lt;- .gnu.hash .dynsym .dynstr .rela.*
+   PT_LOAD #2  R E  vaddr 0x1000  filesz 0x19d
+                                       &lt;- .init .plt .text .fini
+   PT_LOAD #3  R    vaddr 0x2000  filesz 0x12c
+                                       &lt;- .rodata .eh_frame
+   PT_LOAD #4  RW   vaddr 0x3dd0  filesz 0x24c  memsz 0x370
+                                       &lt;- .init_array .dynamic .got
+                                          .got.plt .data .bss
+          ^-- memsz &gt; filesz = .bss: zero file bytes; the loader
+             zero-fills the tail (it never touches disk)
+   PT_DYNAMIC      vaddr 0x3de0       &lt;- .dynamic (ld.so's to-do list)
+
+   .symtab .strtab .debug_* .comment   &lt;- no segment: never loaded,
+                                          linker/tools only</code></pre>
+<p>Three consequences:</p>
+<p><strong>Segments are permission boundaries.</strong> Four <code>PT_LOAD</code>s = four <code>mmap</code> calls = the four <code>/proc/PID/maps</code> lines from module 01 ch03 (<code>r--p</code>, <code>r-xp</code>, <code>r--p</code>, <code>rw-p</code>). A segment holds many sections, but sections with different permissions cannot share one — that is why <code>.text</code> (R E) and <code>.rodata</code> (R) sit in different <code>PT_LOAD</code>s, aligned to 0x1000 (note <code>0x2dd0 → 0x3dd0</code>: offset and address agree modulo the page size).</p>
+<p><strong><code>.bss</code> is a lie the file never tells.</strong> <code>.bss</code> has type <code>SHT_NOBITS</code> and appears in <code>PT_LOAD #4</code> as <code>memsz &gt; filesz</code>: 288 bytes of <code>zeroed[64]</code> occupy <em>zero file bytes</em> — the loader maps the tail anonymous-and-zero. BSS is free on disk, and its first write is a page fault (module 01 ch03).</p>
+<p><strong>Section headers are optional — really.</strong> The kernel and <code>ld.so</code> read only the ELF header and program headers. Delete the section table (<code>sstrip</code> does exactly that) and the binary still runs — it just mystifies readelf. A "broken" section table in a file that executes fine is not corruption; it is a hint.</p>
+<h2 id="symbols-the-names-that-almost-survive">Symbols: the names that almost survive</h2>
+<p>Every name in a binary lives in a symbol table as fixed-size records. ELF64's <code>Elf64_Sym</code> is 24 bytes:</p>
+<pre><code class="language-text">+---------+---------+---------+---------+---------------+---------------+
+| st_name | st_info | st_other| st_shndx|   st_value    |    st_size    |
+|  4 B    |  1 B    |  1 B    |  2 B    |     8 B       |     8 B       |
++---------+---------+---------+---------+---------------+---------------+
+  offset into    bind&lt;&lt;4     visibility owning    address (0 for UND)
+  .strtab       | type                          section
+              LOCAL/GLOBAL/WEAK, OBJECT/FUNC/SECTION</code></pre>
+<p>From the real build: <code>counter</code> (LOCAL, OBJECT, <code>0x4018</code>, <code>.data</code>), <code>main</code> (GLOBAL, FUNC, <code>.text</code>), <code>printf</code> (GLOBAL, FUNC, <code>UND</code>, value 0 — defined by libc). Binding says who may see it; type says code or data; value is the address (0 for imports). <code>WEAK</code> (2) — "override me if a strong definition appears" — is what makes interposition possible.</p>
+<p>There are <em>two</em> symbol tables:</p>
+<ul>
+<li><strong><code>.dynsym</code></strong> — imports and exports, the minimum dynamic linking needs; the loader reads it at startup, so it can never be removed. Ours has two entries: <code>printf</code> and <code>__libc_start_main</code>.</li>
+<li><strong><code>.symtab</code></strong> — everything the linker knew: all globals, all <code>static</code> symbols, plus <code>.strtab</code> and the DWARF <code>.debug_*</code> sections.</li>
+</ul>
+<p><code>strip</code> deletes <code>.symtab</code>, <code>.strtab</code>, <code>.debug_*</code> — <em>nothing</em> the loader maps, so <em>nothing</em> that runs. Real numbers (binutils 2.44, this build): 17,472 → 14,472 bytes (−17%), 37 sections → 29. But <code>strings</code> still shows every string literal (<code>.rodata</code> stays), and <code>.dynsym</code> still names <code>printf</code>. Stripped means "local names and debug info gone" — never "anonymous".</p>
+<h2 id="pe-a-dos-fossil-with-a-windows-engine">PE: a DOS fossil with a Windows engine</h2>
+<p>Windows executables still start with a 16-bit 1981 DOS header: bytes <code>4d 5a</code> — "MZ", Mark Zbikowski's initials. It survives because Windows NT shipped in 1993 into a DOS-and-Windows-3.x world: run from DOS, it should print the stub's message ("This program cannot be run in DOS mode") rather than execute garbage. The MZ signature doubles as the executable marker every tool checks first; <code>e_lfanew</code> at offset <code>0x3C</code> is the escape hatch to the real header.</p>
+<p>At <code>e_lfanew</code> sits <code>PE\0\0</code>, then a 20-byte COFF header (<code>Machine</code> <code>0x8664</code> = AMD64), then the "optional" header — mandatory for images. PE32+ magic <code>0x20B</code>; fields that matter: <code>AddressOfEntryPoint</code> (an <strong>RVA</strong>, not a file offset), <code>ImageBase</code> (<code>0x140000000</code> typical for x64), <code>SectionAlignment = 0x1000</code> (pages), <code>FileAlignment = 0x200</code> (512 — sector heritage), and the 16-entry <strong>DataDirectory</strong> array (8 bytes each: RVA + size) indexing exports, imports, the IAT. Sections follow in a 40-byte-per-entry table like ELF's — but only <em>one</em>: loader and linker share the same rows.</p>
+<p>An <strong>RVA</strong> (relative virtual address) is "address minus <code>ImageBase</code>" — where the byte sits <em>after</em> the loader maps the module (which may rebase it). RVA-to-file-offset is the one piece of PE arithmetic you must do by hand:</p>
+<pre><code class="language-text">section table (typical MSVC x64 build):
+  name    VirtAddr  VirtSize  RawSize  RawPtr
+  .text   0x1000    0x5A48    0x5C00   0x400
+  .rdata  0x7000    0x2A80    0x2C00   0x6400
+  .data   0xA000    0x1530    0x1600   0x9000
+
+RVA 0x1234  →  falls in .text (0x1000 &lt;= 0x1234 &lt; 0x1000+0x5A48)
+file offset = RawPtr + (RVA - VirtAddr)
+            = 0x400 + (0x1234 - 0x1000) = 0x400 + 0x234 = 0x634</code></pre>
+<p>(If <code>VirtSize &gt; RawSize</code>, the tail has no file backing — the loader zero-fills it: PE's <code>.bss</code>.) The lab proves this math on a real file.</p>
+<p><strong>Imports (IAT)</strong>: one descriptor per DLL, each with two parallel thunk arrays — one listing function-name RVAs, one being the <strong>Import Address Table</strong>. On disk both hold names; at load time the loader overwrites the IAT slots with real function addresses, and every call goes through those slots — which is why packed malware must reconstruct a fake IAT (chapter 06). <strong>Exports (EAT)</strong>: the mirror image — a names array, an ordinals array, a function-RVA array; look up by name, index by ordinal. Kernel32's exports are mostly <em>forwarders</em> into ntdll.</p>
+<h2 id="mach-o-the-same-physics-in-apple-s-dialect">Mach-O: the same physics in Apple's dialect</h2>
+<p>macOS files start with <code>0xFEEDFACF</code> (<code>MH_MAGIC_64</code>) — but in the file the bytes read <code>cf fa ed fe</code>, little-endian — read the bytes, not the constant. The header gives <code>cputype</code>, <code>filetype</code> (2 = executable, 6 = dylib), <code>ncmds</code>, <code>sizeofcmds</code> — then a <em>list of load commands</em> instead of ELF's two tables. There is only one view: an <code>LC_SEGMENT_64</code> carries its mapping info (<code>vmaddr</code>, <code>vmsize</code>, <code>fileoff</code>, <code>filesize</code>) <em>and</em> its sections inline — the linker's names live inside the loader's structures. Three segments cover a typical executable:</p>
+<pre><code class="language-text">__TEXT      R X   code, stubs, string literals (__TEXT,__text / __cstring)
+__DATA      R W   globals (__DATA,__data), zero-fill (__DATA,__bss, filesize 0),
+                  pointer fixups (__DATA_CONST on modern builds)
+__LINKEDIT  R     the junk drawer: symbol table, string table, code signature,
+                  rebase/bind opcodes — all addressed by file offset</code></pre>
+<p><code>__LINKEDIT</code> is the insight: Mach-O parks <em>everything</em> symbolic in one never-executed segment, addressed by offsets named in other load commands (<code>LC_SYMTAB</code> etc.). The entry point is a load command too — <code>LC_MAIN</code> carries <code>entryoff</code>, a <strong>file offset</strong>, where ELF's <code>e_entry</code> is a virtual address.</p>
+<p><strong>Universal ("fat") binaries</strong> glue several Mach-Os into one file: a big-endian header with magic <code>0xCAFEBABE</code> and a count, then 20-byte <code>fat_arch</code> records (<code>cputype</code>, <code>cpusubtype</code>, <code>offset</code>, <code>size</code>, <code>align</code>) — one per architecture, and big-endian <em>regardless of target</em>. dyld scans for the host's <code>cputype</code>, or picks the x86_64 slice for Rosetta on Apple Silicon.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The <code>e_ident</code> bytes insiders actually check</strong>: byte 4 (class) and byte 5 (endianness) decide every subsequent parse. Byte 7 (OSABI) is almost always <code>00</code> on Linux builds because the kernel ignores it; FreeBSD "brands" binaries there (9 = FreeBSD) and rejects mismatches.</li>
+<li><strong><code>strip</code> arithmetic</strong> (binutils 2.44, this build): 17,472 → 14,472 bytes, 37 → 29 sections, <code>size</code> output byte-identical. It removes <code>.symtab</code>/<code>.strtab</code>/<code>.debug_*</code> only — it <em>cannot</em> remove anything the loader maps: <code>.dynsym</code>, <code>.rela</code>, <code>.got</code>, or any <code>.rodata</code> string. Stripped is not anonymous.</li>
+<li><strong>A running binary does not need its section headers.</strong> <code>sstrip</code>-style tools zero <code>e_shoff</code> and the file still executes. "readelf complains, program runs" is the classic packed-binary signature, not corruption.</li>
+<li><strong>Why the DOS header survives</strong> in PE: 1993 deployment grace — a PE run from DOS prints "This program cannot be run in DOS mode" instead of executing garbage, and <code>e_lfanew</code> (offset <code>0x3C</code>) lets MZ and PE coexist. <code>FileAlignment = 0x200</code> leaves zero padding around raw section data — a standard malware stash.</li>
+<li><strong><code>readelf</code>'s "Section to Segment mapping" is computed, not stored</strong> — derived by intersecting each section's <code>[addr, addr+size)</code> with each segment's; the file itself has no arrows.</li>
+<li><strong>Magic numbers worth memorizing</strong>: <code>7f 45 4c 46</code> (ELF), <code>4d 5a</code> "MZ" + <code>PE\0\0</code>, <code>cf fa ed fe</code> (Mach-O 64), <code>ca fe ba be</code> (fat header, big-endian — shared with Java class files; <code>file</code> disambiguates).</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>All output is real (binutils 2.44, gcc 14.2.0, x86-64, Debian). Build the specimen — it touches <code>.data</code>, <code>.bss</code>, <code>.rodata</code> on purpose:</p>
+<pre><code class="language-c">static int counter = 7;         /* .data: initialized, writable   */
+static int zeroed[64];          /* .bss:  no file bytes at all    */
+static const char msg[] = "hi"; /* .rodata: read-only             */
+int helper(int x) { return x + counter; }
+int main(void) { printf("%s\n", msg, helper(3)); zeroed[0] = 1; return 0; }</code></pre>
+<pre><code class="language-console">$ gcc -O0 -g tiny.c -o tiny
+$ xxd tiny | head -1     # (no xxd? od -A x -t x1z tiny | head -1)
+00000000: 7f45 4c46 0201 0100 0000 0000 0000 0000  .ELF............</code></pre>
+<p>The contract, by hand: <code>7f 45 4c 46</code>, class <code>02</code>, data <code>01</code>, OSABI <code>00</code>. <code>readelf -h</code>:</p>
+<pre><code class="language-console">$ readelf -h tiny
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Type:                              DYN (PIE — position-independent)
+  Entry point address:               0x1050
+  Start of program headers:          64 (bytes into file)
+  Start of section headers:          15104 (bytes into file)</code></pre>
+<p><code>objdump -f</code> — the one-line triage view:</p>
+<pre><code class="language-console">$ objdump -f tiny
+tiny:     file format elf64-x86-64
+architecture: i386:x86-64, flags 0x00000150: HAS_SYMS, DYNAMIC, D_PAGED
+start address 0x0000000000001050</code></pre>
+<p>The two tables — <code>readelf -lW</code> prints program headers plus the derived mapping:</p>
+<pre><code class="language-console">$ readelf -lW tiny
+  Type           Offset    VirtAddr   FileSiz  MemSiz   Flg Align
+  INTERP         0x000394  0x0000394  0x00001c 0x00001c R   0x1
+      [Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]
+  LOAD           0x000000  0x0000000  0x000628 0x000628 R   0x1000
+  LOAD           0x001000  0x0001000  0x00019d 0x00019d R E 0x1000
+  LOAD           0x002000  0x0002000  0x00012c 0x00012c R   0x1000
+  LOAD           0x002dd0  0x0003dd0  0x00024c 0x000370 RW  0x1000
+  GNU_RELRO      0x002dd0  0x0003dd0  0x000230 0x000230 R   0x1
+ Section to Segment mapping:
+  Segment Sections...
+   03     .init .plt .text .fini
+   05     .init_array .fini_array .dynamic .got .got.plt .data .bss</code></pre>
+<p>The RW <code>LOAD</code>'s <code>MemSiz</code> (0x370) exceeds <code>FileSiz</code> (0x24c) by 0x124 — that tail is <code>.bss</code> (288 bytes) plus padding, zero-filled at load; <code>GNU_RELRO</code> overlaps the RW segment's front (chapter 02). <code>readelf -SW</code> is the linker's view:</p>
+<pre><code class="language-console">$ readelf -SW tiny
+  [14] .text    PROGBITS  0000000000001050 001050 000142 AX
+  [16] .rodata  PROGBITS  0000000000002000 002000 00000c  A
+  [25] .data    PROGBITS  0000000000004008 003008 000014 WA
+  [26] .bss     NOBITS    0000000000004020 00301c 000120 WA 32
+  [34] .symtab  SYMTAB    0000000000000000 0033e0 0003c0
+$ readelf -sW tiny | rg 'counter|main|printf'
+    12: 0000000000004018  4 OBJECT  LOCAL  DEFAULT  25 counter
+    34: 000000000000114d  69 FUNC   GLOBAL  DEFAULT  14 main
+     3: 0000000000000000  0 FUNC   GLOBAL  DEFAULT  UND printf@GLIBC_2.2.5</code></pre>
+<p><code>counter</code> sits at <code>0x4018</code> in section 25 (<code>.data</code>), <code>printf</code> is undefined with a version tag. Strip and compare:</p>
+<pre><code class="language-console">$ cp tiny tiny.stripped &amp;&amp; strip tiny.stripped
+$ ls -l tiny tiny.stripped
+-rwxr-xr-x 1 z z 17472 tiny
+-rwxr-xr-x 1 z z 14472 tiny.stripped          # -3000 bytes (-17%)
+$ size tiny tiny.stripped        # identical: strip touched nothing mapped
+$ readelf -h tiny.stripped | rg 'section headers'
+  Number of section headers:         29         # was 37</code></pre>
+<p>Both still run — <code>.dynsym</code> keeps <code>printf</code> alive. Finally, PE by hand: the builder writes a minimal PE32+ (section table as above) and drops a marker at the file bytes for RVA <code>0x1234</code>:</p>
+<pre><code class="language-python"># make_mini_pe.py — 36 KB skeleton PE64, section table as above
+import struct
+sections = [  # name, vsize, vaddr, rawsize, rawptr
+    (b".text\0\0\0", 0x5A48, 0x1000, 0x5C00, 0x400),
+    (b".rdata\0\0",  0x2A80, 0x7000, 0x2C00, 0x6400),
+    (b".data\0\0\0", 0x1530, 0xA000, 0x1600, 0x9000)]
+out = bytearray(0x9000)
+out[0:2] = b"MZ"                                  # DOS magic
+out[0x3C:0x40] = struct.pack("&lt;I", 0x80)          # e_lfanew
+out[0x80:0x84] = b"PE\0\0"                        # PE signature
+out[0x84:0x98] = struct.pack("&lt;HHIIIHH", 0x8664, 3, 0, 0, 0, 0xF0, 0x22)  # COFF
+opt = bytearray(0xF0)                             # optional hdr, PE32+
+struct.pack_into("&lt;H",  opt, 0,  0x20B)           # magic
+struct.pack_into("&lt;I",  opt, 16, 0x1234)          # AddressOfEntryPoint (RVA!)
+struct.pack_into("&lt;Q",  opt, 24, 0x140000000)     # ImageBase
+struct.pack_into("&lt;II", opt, 32, 0x1000, 0x200)   # Section/FileAlignment
+out[0x98:0x188] = opt
+pos = 0x188                                       # section table
+for name, vs, va, rs, rp in sections:
+    out[pos:pos+40] = name + struct.pack("&lt;IIIIIIHHI", vs, va, rs, rp, 0,0,0,0,0)
+    pos += 40
+out[0x634:0x644] = b"ENTRYPOINT_BYTES"            # bytes for RVA 0x1234
+open("mini.exe", "wb").write(out)</code></pre>
+<pre><code class="language-console">$ python3 make_mini_pe.py
+$ od -A x -t x1z mini.exe -j 0x630 -N 16    # jump straight to our computed offset
+000630 00 00 00 00 45 4e 54 52 59 50 4f 49 4e 54 5f 42  &gt;....ENTRYPOINT_B&gt;</code></pre>
+<p><code>0x400 + (0x1234 − 0x1000) = 0x634</code> — the bytes sit exactly where the arithmetic said. The loader maps <code>.text</code> at <code>ImageBase + 0x1000</code> and jumps to <code>ImageBase + 0x1234</code>.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Crash triage with no symbols.</strong> A stripped-binary crash hands you a bare address. You cannot <code>addr2line</code> it, but <code>readelf -SW</code> minus the PIE base at least names the section — "in <code>.plt</code>" (lazy-binding stub, chapter 02) vs "in <code>.text</code>" is a real fork in the investigation.</li>
+<li><strong>Size engineering.</strong> Initialized globals cost file bytes (<code>.data</code>); zero-initialized cost none (<code>.bss</code>, <code>MemSiz</code> only). Dropping <code>= {0}</code> from a big buffer is free bytes; <code>strip</code> buys ~17% when debug info is dispensable.</li>
+<li><strong>Malware first sixty seconds.</strong> Magic bytes tell you the family; an entry point outside the executable segment, a deleted section table, or imports of 2 DLLs and 4 functions all say "packed" before any disassembly (chapter 06).</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch03 (virtual memory)</strong>: each <code>PT_LOAD</code> is one <code>mmap</code> — the four <code>/proc/self/maps</code> permission lines there were this segment table all along; <code>.bss</code> zero-fill was demand paging.</li>
+<li><strong>Module 01 ch06 (object layout)</strong>: vtables live in <code>.data.rel.ro</code>/<code>.rodata</code>; chapter 04 finds them without symbols via this reasoning.</li>
+<li><strong>Module 04 ch02-06</strong>: ch02 executes the loader's half (<code>PT_DYNAMIC</code>, <code>.got</code>, relocations, RELRO); ch03 locates <code>main</code> from <code>e_entry</code>; ch04 reads vtables out of the sections mapped here; ch05's decompilers parse these three formats; ch06 breaks and rebuilds them (IAT reconstruction).</li>
+<li><strong>Module 05 ch06 (APK &amp; OTA)</strong>: Android's "binary formats" are ZIP + DEX — same discipline, different magic (<code>dex\n035\0</code>).</li>
+<li><strong>Module 06 ch04 (dyld &amp; the shared cache)</strong>: <code>__LINKEDIT</code> at planet scale — thousands of Mach-Os pre-linked into one COW-mapped file.</li>
+<li><strong>Module 07 ch02/04</strong>: the Windows and Linux loader chapters, built directly on the PE and ELF structures decoded here.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Why can one file carry two tables of contents — program headers and section headers — without contradicting each other? Who reads which, and what breaks if each is deleted?</li>
+<li><strong>Predict the number.</strong> An RW <code>PT_LOAD</code> has <code>p_vaddr = 0x3dd0</code>, <code>p_filesz = 0x24c</code>, <code>p_memsz = 0x370</code>. How many bytes does the loader supply that exist nowhere in the file, and from where?</li>
+<li><strong>Predict the number.</strong> With the lab's section table (<code>.rdata</code> VirtAddr 0x7000, RawPtr 0x6400) and <code>ImageBase = 0x140000000</code>: an imported function's thunk sits at RVA <code>0x7A34</code>. What file offset, and what load-time VA?</li>
+<li><strong>Concept.</strong> A fully stripped Linux binary still calls <code>printf</code> correctly, and <code>strings</code> on it still shows every format string. Explain both facts in terms of what <code>strip</code> may and may not remove.</li>
+<li><strong>Bug diagnosis.</strong> <code>readelf -S mystery.bin</code> reports a broken section table, yet <code>./mystery.bin</code> runs perfectly. Is the file corrupt? Why does it still execute?</li>
+<li><strong>Bug diagnosis.</strong> A program fails with <code>cannot execute binary file: Exec format error</code>. <code>file</code> says <code>ELF 32-bit LSB executable, ARM, EABI5</code>; the machine is x86-64. Which two header fields did the kernel read before rejecting it, and which <code>e_ident</code> byte had to be right first?</li>
+<li><strong>Bug diagnosis (PE).</strong> An analyst dumps a running process's module out of memory to disk; PE tools then fail on its section table. What did the dump destroy about the RVA→file-offset relationship?</li>
+<li><strong>Cross-chapter (module 01 ch03).</strong> That chapter's <code>/proc/self/maps</code> showed an <code>r--p</code> line <em>between</em> the <code>r-xp</code> and <code>rw-p</code> lines the four <code>PT_LOAD</code>s here predict. Which program-header feature accounts for it, and which chapter of this module explains it?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Two views of one byte layout, with disjoint readers.</strong> The kernel and <code>ld.so</code> read program headers, never section headers; linkers and tools read section headers. Delete the section table: still runs, but tool-hostile. Delete the program headers: nothing can load the file. No contradiction is possible — a section's <code>[sh_addr, sh_addr+sh_size)</code> either intersects a segment (loaded) or does not (linker-only, like <code>.symtab</code>).</li>
+<li><strong>0x124 = 292 bytes</strong> (<code>p_memsz − p_filesz</code>), mapped as anonymous zero pages and never read from disk. Here that region is <code>.bss</code> (288 bytes, the <code>zeroed[64]</code> array) plus padding; its first write is a demand-zero page fault (module 01 ch03).</li>
+<li><strong>Offset 0x6E34; VA 0x140007A34.</strong> <code>0x7000 &lt;= 0x7A34 &lt; 0x9A80</code> puts it in <code>.rdata</code>: <code>0x6400 + (0x7A34 − 0x7000) = 0x6E34</code>. At the preferred <code>ImageBase</code>, VA = <code>0x140000000 + 0x7A34</code> (ASLR may rebase; the RVA is the stable name).</li>
+<li><strong><code>strip</code> may only remove bytes no program header maps.</strong> It deletes <code>.symtab</code>/<code>.strtab</code>/<code>.debug_*</code> — linker-only data. It cannot remove <code>.dynsym</code>/ <code>.dynstr</code> (the loader resolves imports through them — where <code>printf</code> lives) or <code>.rodata</code> (mapped by the R <code>PT_LOAD</code> — the format strings). Local and debug names go; imports and string constants never do.</li>
+<li><strong>Not corrupt — headerless.</strong> Section headers are runtime-irrelevant: the kernel maps <code>PT_LOAD</code>s, <code>ld.so</code> reads <code>PT_DYNAMIC</code>, nobody reads <code>e_shoff</code>. <code>sstrip</code>-style tools and packers produce exactly this signature. Analyze with program headers alone (or rebuild headers from a memory dump — chapter 06).</li>
+<li><strong>It read <code>e_ident[EI_CLASS]</code> (byte 4: 32-bit) to size the header, then <code>e_machine</code> (ARM = 40), and returned ENOEXEC.</strong> Byte 5 (<code>EI_DATA</code>) had to say little-endian before <code>e_machine</code> could be parsed at all. Fix: <code>qemu-arm</code> or recompiling — the header was honest; the host speaks another architecture.</li>
+<li><strong>In memory the module is laid out at <code>SectionAlignment</code> (0x1000); on disk at <code>FileAlignment</code> (0x200).</strong> A memory dump is a memory image — every section sits at its RVA, so <code>RawPtr + (RVA − VirtAddr)</code> no longer describes the bytes. Rebuilding means rewriting the section table to the memory layout (Scylla-style, chapter 06).</li>
+<li><strong><code>PT_GNU_RELRO</code></strong> covers the front of the RW <code>PT_LOAD</code> (<code>.init_array</code>, <code>.dynamic</code>, <code>.got</code>): after relocation <code>ld.so</code> <code>mprotect</code>s those pages read-only, and <code>/proc/PID/maps</code> shows the split as an extra <code>r--p</code> line. Chapter 02: partial vs full RELRO is exactly "is <code>.got.plt</code> inside the RELRO region or not."</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 04 — Decompilation &amp; reverse engineering</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

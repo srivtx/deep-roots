@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 04 final exam — deep-roots</title>
+<meta name="description" content="Final exam for module 04 (reading what compilers leave behind), with worked answers.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 04 final exam — deep-roots">
+<meta property="og:description" content="Final exam for module 04 (reading what compilers leave behind), with worked answers.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 04 final exam — deep-roots">
+<meta name="twitter:description" content="Final exam for module 04 (reading what compilers leave behind), with worked answers.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 04 &middot; reading what compilers leave behind &middot; final exam</div>
+<h1 class="post-title">Module 04 final exam</h1>
+<div class="post-meta">every chapter &middot; worked answers behind the fold</div>
+<p>Twelve questions across all six chapters. Closed book. Every answer is worked — the derivation is the point. Scoring: 11+ = you own this module; 8-10 = solid, revisit the flagged chapters; &lt;8 = the quizzes below each chapter are the study path.</p>
+<p><strong>Part I — the file and the loader (chapters 01-02)</strong></p>
+<ol>
+<li><strong>Concept.</strong> An ELF carries two tables of contents — program headers and section headers. Who reads which, what breaks when each is deleted, and why is "readelf complains but the program runs" the classic packed-binary signature rather than corruption? Tie the four <code>PT_LOAD</code>s to the <code>/proc/PID/maps</code> permission rows of module 01 ch03.</li>
+</ol>
+<ol>
+<li><strong>Derive.</strong> With this PE section table and <code>ImageBase = 0x140000000</code>, an imported function's thunk sits at RVA <code>0x8E2C</code>. Which section owns it, what is the file offset, and the VA at the preferred base? Which answer survives a rebased load?</li>
+</ol>
+<pre><code class="language-text">   name    VirtAddr  VirtSize  RawSize  RawPtr
+   .text   0x1000    0x5A48    0x5C00   0x400
+   .rdata  0x7000    0x2A80    0x2C00   0x6400
+   .data   0xA000    0x1530    0x1600   0x9000</code></pre>
+<ol>
+<li><strong>Derive — read the dance.</strong> File bytes: <code>printf@plt</code> at <code>0x1040</code> opens <code>jmp QWORD PTR [GOT 0x4008]</code>; initial <code>GOT[printf] = 0x1046</code>; there sits <code>push 0x1</code>, then <code>jmp PLT0</code>, which pushes the link_map and jumps <code>_dl_runtime_resolve</code>. Trace the first call, the resolver's write, every later call, and why the initial slot must point at the <code>push</code> in the same PLT entry — what would pointing at the <code>jmp</code> (or at <code>printf</code> itself) do? What <code>LD_DEBUG=bindings</code> line separates lazy from <code>LD_BIND_NOW=1</code>?</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis (cross-chapter).</strong> A writeup claims code execution by overwriting <code>printf@got</code> in target A (Debian-default gcc: <code>GNU_RELRO</code>, no <code>BIND_NOW</code>) and target B (<code>-z relro -z now</code>). For each: does the write land on a writable page? Why does <code>/proc/PID/maps</code> show <em>five</em> file-backed rows for four <code>PT_LOAD</code>s — which header makes the extra <code>r--p</code> row, and where does <code>.got.plt</code> sit in each build? Name the five-second confirmation.</li>
+</ol>
+<p><strong>Part II — reading the code (chapters 03-04)</strong></p>
+<ol>
+<li><strong>Derive.</strong> From a stripped <code>-O2</code> binary, a pointer arrives in <code>rdi</code> and these accesses appear (plus a loop whose closing test is shown). Recover the struct: each field's offset, size, and type; the padding and why; <code>sizeof</code>.</li>
+</ol>
+<pre><code class="language-asm">   movsxd     rax, DWORD PTR [rdi]
+   cvttsd2si  ecx, QWORD PTR [rdi+0x8]
+   add        rax, QWORD PTR [rdi+0x10]
+   movsx      rdx, BYTE PTR [rdi+0x18]
+   mov        rdi, QWORD PTR [rdi+0x30]
+   test       rdi, rdi
+   jne        .loop</code></pre>
+<ol>
+<li><strong>Concept — name the idioms.</strong> Three switches in one <code>-O2</code> binary: (A) cases 0-5, each a distinct block of logic; (B) cases 0-5 returning 10, 21, 32, 43, 54, 65; (C) cases 0, 100, 1000, 100000. Predict each dispatch structure with its byte-level evidence, state the cost model, and explain why the jump-table doorman must be <code>ja</code> (unsigned) rather than <code>jg</code>.</li>
+</ol>
+<ol>
+<li><strong>Derive.</strong> Decode by hand: <code>_ZNK3net9TCPSocket4sendEPKvm</code> and <code>_ZTVN3net9TCPSocketE</code>. Then: an object stores its vptr at offset 0 — which address (relative to the vtable symbol) does it hold, what two words precede it, and what does the second let you recover for the whole binary?</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis.</strong> At <code>-O0</code> a derived-class constructor writes the vptr twice: the base constructor stores vtable-for-Base, then the derived overwrites it. The stripped <code>-O2</code> build shows one vptr store and no base-constructor call. A teammate concludes "not actually derived — the two-writes fingerprint is broken." Diagnose what the optimizer did, why it is legal, and what still proves the derivation.</li>
+</ol>
+<p><strong>Part III — the toolchain and the adversary (chapters 05-06)</strong></p>
+<ol>
+<li><strong>Concept.</strong> State the two theorem-grade limits of decompilation, prove each in one sentence, and explain why <code>goto</code> in decompiler output is a design decision, not a bug.</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis.</strong> A decompilation shows <code>local_14</code> as a <code>char *</code> before a loop and an <code>int</code> counter after — values apparently clobbering. The source reads <code>for (int i = 0; i &lt; n; i++) total += abs(a[i]);</code>, but the decompilation is a guard plus a <code>do-while</code> walking a pointer to an end pointer — no <code>i</code> anywhere. Diagnose both readings; what experiment confirms the first?</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis — identify the packing.</strong> Suspect ELF triage: 3 program headers, 0 sections; an <code>RW</code> <code>LOAD</code> with <code>FileSiz 0x1000</code>, <code>MemSiz 0x40428</code>; an <code>R E</code> <code>LOAD</code> at <code>0x405000</code>; entry <code>0x4055e0</code>; no <code>PT_DYNAMIC</code>, no <code>PT_INTERP</code>; the <code>R E</code> segment's entropy is 7.5 bits/byte; the program still prints via <code>printf</code>. What is it, what is each segment for, how do libc calls resolve with no loader, what one property distinguishes "packed" (recoverable) from "encrypted" (not), and what does legit UPX leave that malware strips?</li>
+</ol>
+<ol>
+<li><strong>Analysis — the playbook.</strong> You must stop a packed binary exactly at the original entry point. Give two field methods with the mechanical reason each works, why you cannot simply search the file for the OEP's address, and what must happen before the dump is analyzable.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<p><strong>Part I</strong></p>
+<ol>
+<li>The kernel and <code>ld.so</code> read program headers only; linkers and tools (readelf, gdb, Ghidra) read section headers. Delete the section table: still runs, tool-hostile (<code>sstrip</code>, packers); delete program headers: nothing loads it. No contradiction: a section either intersects a segment (loaded) or is linker-only (<code>.symtab</code>). "readelf complains, program runs" is <em>headerless</em>, not corrupt — packers keep the minimal honest headers and replace the payload (ch06). The four <code>PT_LOAD</code>s are four <code>mmap</code>s — the <code>r--p</code>/<code>r-xp</code>/<code>r--p</code>/<code>rw-p</code> rows of module 01 ch03. (ch01, ch06)</li>
+</ol>
+<ol>
+<li><code>0x7000 &lt;= 0x8E2C &lt; 0x9A80</code> (<code>0x7000+0x2A80</code>), so <code>.rdata</code> owns it. Offset = <code>RawPtr + (RVA − VirtAddr) = 0x6400 + (0x8E2C − 0x7000) = 0x822C</code>. Preferred VA = <code>0x140000000 + 0x8E2C = 0x140008E2C</code>. ASLR moves the VA; the <strong>RVA</strong> — address minus ImageBase — is the stable identity. (ch01)</li>
+</ol>
+<ol>
+<li>First call: <code>call printf@plt</code> → the stub's <code>jmp</code> reads <code>GOT[printf] = 0x1046</code> → control bounces back into the same stub onto <code>push 0x1</code> — the JUMP_SLOT's relocation index rides the stack → <code>jmp PLT0</code> → push link_map → <code>_dl_runtime_resolve</code>, which looks up <code>printf</code>, <strong>writes <code>&amp;printf</code> into slot 0x4008</strong>, and enters it. Later calls: the stub's <code>jmp</code> reads the patched slot — two instructions. The slot must initially point at the <code>push</code>: that back-pointer turns a data indirection into a resolver invocation, stacking the index. At the <code>jmp</code> it would loop forever; at <code>printf</code> it is impossible — the linker knows neither <em>which</em> object satisfies the symbol (resolution order) nor <em>where</em> it lands (ASLR). Lazy: the binding line traces after "transferring control"; <code>LD_BIND_NOW=1</code> moves it before. (ch02)</li>
+</ol>
+<ol>
+<li>A: the write lands — partial RELRO ends at <code>0x4000</code>, and <code>.got.plt</code>'s JUMP_SLOTs (<code>0x4000+</code>) sit in the still-writable <code>rw-p</code> row: that writable function pointer is the GOT-overwrite family (module 02 ch06). B: the write segfaults — <code>BIND_NOW</code> resolved every slot eagerly, then the loader <code>mprotect</code>ed the whole GOT, <code>.got.plt</code> included, read-only: full RELRO working. The extra <code>r--p</code> row is <code>PT_GNU_RELRO</code>'s <code>mprotect</code> over the front of the RW <code>PT_LOAD</code> (module 01 ch03). Confirm: <code>readelf -dW binary | grep BIND_NOW</code> — present = full. (ch02; module 01 ch03; module 02 ch06)</li>
+</ol>
+<p><strong>Part II</strong></p>
+<ol>
+<li><code>0x00</code>: 4-byte signed int (<code>movsxd</code>). <code>0x04</code>: 4 bytes padding — inferred: the double at <code>0x08</code> needs 8-byte alignment and nothing touches <code>0x04</code>. <code>0x08</code>: IEEE double (<code>cvttsd2si</code>). <code>0x10</code>: 8-byte signed integer (the qword <code>add</code>). <code>0x18</code>: a signed byte in a byte array — the next touched offset is <code>0x30</code>, so 24 bytes: <code>char name[24]</code>. <code>0x30</code>: an 8-byte self-pointer — the loop reloads <code>rdi</code> from <code>[rdi+0x30]</code> and tests it: the induction variable is the pointer itself (a list walk). <code>sizeof = 0x38 = 56</code>; the untouched gap is padding proof (module 01 ch07). (ch03)</li>
+</ol>
+<ol>
+<li>(A) Jump table: <code>cmp edi,0x5; ja default; movsxd rax,[rdx+rdi*4]; add rax,rdx; jmp rax</code> — bounds check, table in <code>.rodata</code>, 4-byte base-relative displacements (zero relocations under ASLR). <code>ja</code>, not <code>jg</code>: a negative <code>x</code> must reach <code>default</code> — unsigned, −1 reads as ~4 billion; <code>jg</code> would pass negatives into the table, reading out of bounds. (B) No dispatch: the results are linear in the case value (<code>10+11x</code>), so gcc emits the closed form — two <code>lea</code>s behind the guard; absence of a table is not absence of a switch. (C) Comparison tree: <code>cmp/je/jg</code> in binary-search arrangement — four cases over 100,001 slots waste a table. The table beats ~10 bytes of compare-and-branch per case only when labels are dense. (ch03)</li>
+</ol>
+<ol>
+<li>First: <code>_Z</code> + <code>N</code> (nested) + <code>K</code> (const member) + <code>3net 9TCPSocket 4send</code> + <code>E</code> + <code>PKvm</code> (pointer to const void; unsigned long) = <strong><code>net::TCPSocket::send(void const*, unsigned long) const</code></strong> — return types are not encoded. Second: <code>TV</code> = "vtable for" + nested <code>3net 9TCPSocket</code> = <strong><code>vtable for net::TCPSocket</code></strong>. The vptr holds the <strong>address point</strong>, vtable+0x10; the two preceding words are the offset-to-top (0 for a primary base) and the <strong>typeinfo pointer</strong> — and each typeinfo's vptr discriminator (<code>__si_class_type_info</code> = single inheritance, <code>__vmi_…</code> = multiple) makes the whole inheritance DAG recoverable from <code>.data.rel.ro</code> without executing anything. (ch04)</li>
+</ol>
+<ol>
+<li><code>-O2</code> <strong>inlined the base constructor</strong>, and with no virtual call between the two stores the intermediate (base) vptr store is dead — dead-store elimination removes it. Legal because that value is observable only if something reads the vptr while the base constructor runs (a virtual call there must dispatch to the <em>base's</em> version — why <code>-O0</code> keeps both writes). <code>s-&gt;area()</code> may even be devirtualized — the compiler just wrote that vptr. The derivation is still provable via RTTI: the vtable's typeinfo slot at <code>vptr−0x08</code> targets <code>__si_class_type_info</code> with a base pointer at <code>+0x10</code> — the DAG survives optimization in <code>.data.rel.ro</code> (module 01 ch06; <code>-fno-rtti</code> zeroes the slot). (ch04; ch03)</li>
+</ol>
+<p><strong>Part III</strong></p>
+<ol>
+<li>(1) <strong>Names are unrecoverable</strong>: renaming every variable is a semantics-preserving bijection — infinitely many sources compile to the same bytes, so no algorithm can select the original; <code>uVar1</code> is the theorem, not a failure. (2) <strong>Perfect structuring is impossible</strong>: goto-free C generates exactly the reducible CFGs; irreducible CFGs exist (computed <code>goto</code>s, state machines), and structuring them requires node splitting, which can blow up exponentially — every structurer compromises. <code>goto</code> in the output is that compromise made visible: the honest limit. (ch05)</li>
+</ol>
+<ol>
+<li>First: <strong>variable merge error</strong> — at <code>-O1</code>+ two source variables with disjoint live ranges share one stack slot, and the decompiler faithfully reports one; confirm by widening <code>local_14</code>'s type and watching the uses split into two consistent groups. Second: the induction variable <code>i</code> became address arithmetic — <code>lea</code> for the end pointer, <code>add rdi,4</code> for the increment, a pointer <code>cmp</code> for the condition — so <code>i</code> no longer exists in the dataflow, and a decompiler can only name what the dataflow contains: the same erasure theorem as names. (ch05; ch03)</li>
+</ol>
+<ol>
+<li><strong>Packed (UPX-family).</strong> The <code>RW</code> load is the output buffer: one file page plus <code>MemSiz − FileSiz</code> ≈ 252 KB of demand-zero memory — where the stub decompresses the original image. The <code>R E</code> load is the compressed blob plus entry stub (the moved <code>e_entry</code> points into it — the stub is a mini-loader: decompress, fix imports, jump to OEP). No <code>PT_INTERP</code>/<code>PT_DYNAMIC</code>, yet <code>printf</code> resolves — the stub resolves imports itself: maps libc, walks its exports, patches the decompressed call sites. Entropy: normal x86 code runs ~6.0-6.5 bits/byte; ≥7.0 means compressed or encrypted. The distinction: <strong>compression is keyless</strong> — run to OEP and recover; encryption needs its key first. Legit UPX leaves <code>UPX!</code> magic and the <code>$Info</code> string; real packers strip or fake them. (ch06; ch01-02)</li>
+</ol>
+<ol>
+<li>(1) <strong>Hardware write watchpoint on the OEP page</strong> (<code>watch *(int*)0x401080</code>): the decompressor <em>must</em> write <code>_start</code>'s bytes there, so it fires exactly when memory first holds the unpacked program. (2) <strong>The stack-restore trick</strong>: the stub pushes a marker state at entry; break when <code>rsp</code> unwinds past it — or on the stub's tail, where it pops its registers and <code>ret</code>s into the original <code>_start</code>. The OEP cannot be grepped because it is <strong>computed, not stored</strong> — <code>0x401080</code> as an immediate appears nowhere in the packed file. Afterwards: dump <code>/proc/PID/mem</code>, then rebuild imports — the in-memory GOT holds <em>resolved addresses</em>, not symbol references: redo the linker's job (rebuild <code>.dynsym</code>/<code>.got</code>, Scylla-style) before chapters 03-05 apply. (ch06; ch01-02)</li>
+</ol>
+</details>
+<div class="post-footer"><p>Chapter list: <a href="index.html">Module 04</a>. Module 01 also has the <a href="../quiz.html">interactive quiz</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

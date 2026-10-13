@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The sandbox — deep-roots</title>
+<meta name="description" content="Chapter 05 of module 05: The sandbox">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The sandbox — deep-roots">
+<meta property="og:description" content="Chapter 05 of module 05: The sandbox">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The sandbox — deep-roots">
+<meta name="twitter:description" content="Chapter 05 of module 05: The sandbox">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 05 &middot; an OS designed by memory constraints</div>
+<h1 class="post-title">The sandbox</h1>
+<div class="post-meta">chapter 05 &middot; ~13 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Android's sandbox is three old UNIX ideas stacked. Every installed app gets its own uid (first app uid: 10000), so the kernel's 1974 owner checks quarantine files, sockets, and processes per app — for free. SELinux adds a second kernel wall: every app process runs in the <code>untrusted_app</code> domain, and per-app MLS categories stop apps reading each other even when the file <em>type</em> is shared. seccomp then shrinks the syscall surface itself — a filter program, installed during zygote specialization and irremovable, rules on every syscall before it executes. Permissions, "shared" storage, and the Keystore are policy layers riding on those walls. The payoff is a boundary map: what a fully compromised app can actually reach. Reference platform: Android 14 (AOSP 14), kernel 6.1, arm64.</blockquote>
+<h2 id="1-one-app-one-uid-1974-s-idea-at-phone-scale">1. One app, one uid: 1974's idea at phone scale</h2>
+<p>Android did not invent the app sandbox; it inherited the oldest one there is. In a 1974 timesharing system every process carries a numeric identity, and the kernel compares identities on every <code>open()</code>, <code>bind()</code>, and <code>kill()</code>. The radical move was the <em>assignment policy</em>: one uid per human became one uid per app. First app uid is 10000 (<code>AID_APP_START</code> in <code>android_filesystem_config.h</code>), last is 19999 (<code>AID_APP_END</code>); everything below 10000 is reserved for the platform (root 0, <code>system</code> 1000, <code>shell</code> 2000). Secondary users multiply out: uid = userId × 100000 (<code>AID_USER_OFFSET</code>) + appId, so the same app on user 10 is 1010155, printed <code>u10_a155</code>.</p>
+<p>Derive the consequences — none of them is new code, just the 1974 check with a new assignment table:</p>
+<ul>
+<li><strong>Files.</strong> <code>/data/user/0/com.example.one</code> is owned <code>10145:10145</code>, mode 0771 (<code>drwxrwx--x</code>). Another app's <code>open()</code> dies with <code>EACCES</code> in the DAC check, before SELinux is even consulted.</li>
+<li><strong>Processes.</strong> <code>kill()</code> and <code>ptrace()</code> on a foreign uid fail (<code>EPERM</code>, <code>ESRCH</code>); <code>/proc/&lt;pid&gt;</code> of another app hides its details — procfs gating is uid-aware.</li>
+<li><strong>Sockets.</strong> Filesystem UNIX sockets carry file permissions, so a bound socket path belongs to one uid.</li>
+</ul>
+<p>What pure-uid DAC cannot fence: anything deliberately world-accessible — <code>/dev</code> nodes, <code>/proc</code>, and above all the <em>system daemons</em>, privileged processes behind Binder. The interesting data moved off the filesystem; the 1974 wall needs a second wall behind it.</p>
+<h2 id="2-selinux-one-domain-a-thousand-partitions">2. SELinux: one domain, a thousand partitions</h2>
+<p>SELinux is a second kernel permission hook that consults <em>labels</em>, not uids. Every process carries an scontext (<code>u:r:untrusted_app:s0:c23,c256</code>), every file a tcontext; policy is a table of <code>allow source target:class permissions</code> rules with default-deny — no matching allow, no access, logged as an <code>avc: denied</code> line. Android 5.0 made this wall mandatory for apps.</p>
+<p>Policy is <strong>compiled once, at boot</strong>: init merges the platform and vendor <code>.cil</code> files (Treble split) into one binary policy, loaded into <code>/sys/fs/selinux</code>, never reloaded. Apps never modify policy — per-app confinement is <em>labeling</em>, not policy change.</p>
+<p>The labeling path: at install scan, PackageManager maps the APK's signing cert through <code>mac_permissions.xml</code> (compiled from <code>keys.conf</code> at build) to a short string called <strong>seinfo</strong> (<code>platform</code>, <code>media</code>, <code>default</code>, ...). When the zygote forks an app (chapter 01's fork+specialize), libselinux looks the child up in <code>seapp_contexts</code> (<code>/system/etc/selinux/plat_seapp_contexts</code>, first match wins), keyed on uid and seinfo:</p>
+<pre><code class="language-text"># plat_seapp_contexts (schematic, AOSP 14)
+user=_app isPrivApp=true  domain=priv_app   type=privapp_data_file levelFrom=all
+user=_app seinfo=platform domain=platform_app type=app_data_file levelFrom=all
+user=_app                  domain=untrusted_app type=app_data_file levelFrom=all</code></pre>
+<p>Because an app process <em>never exec()s</em> (chapter 01), the zygote cannot use the normal exec-time domain transition; it performs a <strong>dynamic transition</strong> (<code>dyntransition</code>) on the child — a privilege policy grants to zygote alone and <code>neverallow</code>s everywhere else.</p>
+<p>Both apps in the last two lines run as <code>untrusted_app</code> and own files typed <code>app_data_file</code> — and untrusted_app is allowed to read app_data_file. Type equality would be a hole, so <code>levelFrom=all</code> stamps the process with an <strong>MLS category pair</strong> derived from the appId, and installd stamps the data dir with the same pair:</p>
+<pre><code class="language-text">process:  u:r:untrusted_app:s0:c23,c256     app A (appId 10145)
+file B:   u:object_r:app_data_file:s0:c7,c257   app B (appId 10107)</code></pre>
+<p>A multi-category constraint requires the reader's category set to match the file's, so A's <code>open()</code> is denied — at the same kernel hook, same <code>avc: denied</code> log shape, one layer down. One domain plus categories partitions the app population without a thousand types.</p>
+<p><code>neverallow</code> is the compile-time conscience of all this: assertions the policy <em>build</em> must prove, e.g. (paraphrasing AOSP <code>app.te</code>):</p>
+<pre><code class="language-text"># if ANY allow rule anywhere ever grants this, the build dies:
+neverallow { appdomain -platform_app } platform_app_data_file:file open;</code></pre>
+<p>Thousands of such lines rule out entire bug classes before a device boots — enforcement at runtime, <em>proof</em> at compile time.</p>
+<h2 id="3-seccomp-a-packet-filter-for-syscalls">3. seccomp: a packet filter for syscalls</h2>
+<p>The third wall guards no resource — it shrinks the kernel API itself. Since Android 9 (2018), every zygote-forked app runs under a seccomp-BPF filter, installed in the child during specialization (after the uid drop, before any app bytecode runs).</p>
+<p>The mechanism is anachronistic on purpose: seccomp reuses the <strong>1992 BSD packet-filter VM</strong> — a short, loop-free program of load/compare/jump instructions — and just changes what the "packet" is: a 64-byte <code>struct seccomp_data</code> snapshot of the syscall:</p>
+<pre><code class="language-c">struct seccomp_data {   // 64 bytes, built by the kernel at syscall entry
+    int   nr;                    // syscall number
+    __u32 arch;                  // AUDIT_ARCH_ARM64, so filters are per-ABI
+    __u64 instruction_pointer;   // who called
+    __u64 args[6];               // the six syscall arguments
+};</code></pre>
+<p>The kernel runs the program (interpreted or JIT-compiled) on <em>every</em> syscall; the verdict is ALLOW, ERRNO(n), TRAP (delivered as SIGSYS, signal 31), or KILL. Bounded, loop-free, reading only those 64 bytes, it is safe per-syscall — the same BPF VM idea eBPF later generalized to 64-bit registers, maps, and a verifier.</p>
+<p>The app deny list (AOSP 14, <code>system/seccomp/policy-*.stpl</code>) is the insider's list: <code>bpf</code>, <code>userfaultfd</code>, <code>perf_event_open</code>, <code>swapon</code>/ <code>swapoff</code>, and (jointly with SELinux) the kernel-keyring trio <code>add_key</code> / <code>request_key</code> / <code>keyctl</code>. The arm64 table has roughly 300 entries (Linux 6.1); the filter removes the families behind kernel subsystems apps must never touch. <code>ptrace</code> and raw/most-netlink socket families are blocked by the <em>SELinux</em> layer instead — each wall blocks what it can express cheaply: seccomp speaks syscall numbers, SELinux speaks labels.</p>
+<p>Filters are a <strong>one-way ratchet</strong>: inherited across <code>fork()</code>, they can only be intersected with more filter, never removed. An app may install <em>stricter</em> filters — Chromium stacks a second on its renderer inside Android's — but nothing relaxes the zygote's. A heap-grooming exploit that wants <code>userfaultfd</code> gets <code>EPERM</code>, and no child it spawns will fare better.</p>
+<h2 id="4-permissions-one-prompt-three-enforcement-points">4. Permissions: one prompt, three enforcement points</h2>
+<p>A manifest <code>uses-permission</code> is a request; <em>enforcement</em> is spread across three points, and knowing which point answers which permission is the whole game.</p>
+<p><strong>Install-time (normal) permissions</strong> mostly never touch the kernel — with one exception: a legacy set maps to UNIX supplementary groups. <code>INTERNET</code> puts the process in group 3003 (<code>inet</code>) at fork — visible in <code>run-as ... id</code>. An app without it fails socket creation with <code>EPERM</code> (<code>SocketException: socket failed: EPERM (1)</code>) — the 1974 group mechanism as a permission bit. External-storage groups live in the shared block at 50000 (<code>AID_SHARED_GID_START</code>).</p>
+<p><strong>Runtime (dangerous) permissions</strong> — camera, location, since Android 6.0 — are enforced <em>at the far end of Binder</em>: the service in system_server/mediaprovider calls <code>checkCallingPermission</code> per request. The kernel never sees the permission; the dialog just mutates a grant record in <code>/data/system</code>.</p>
+<p><strong>Signature permissions</strong> are gated by identity: granted only if the requester is signed with the same key as the definer. Platform-signed apps get <code>seinfo=platform</code>, land in <code>platform_app</code> via seapp_contexts — a permission implemented as an SELinux <em>domain</em>. Privileged permissions ride <code>/system/etc/permissions/privapp-permissions-*.xml</code> allowlists — a build-time <code>neverallow</code> in the Java world.</p>
+<h2 id="5-where-the-bytes-live-installd-fuse-and-the-secure-world">5. Where the bytes live: installd, FUSE, and the secure world</h2>
+<p>App-private storage is a layout mangling performed by <strong>installd</strong> (root, SELinux domain <code>installd</code>) at install and first run: what the app sees as <code>/data/data/com.example.one</code> is really <code>/data/user/0/...</code> (<code>/data/data</code> is a symlink to <code>/data/user/0</code>), plus a device-encrypted twin at <code>/data/user_de/0/...</code> readable <em>before</em> first unlock (FBE "de" storage — why your alarm rings pre-unlock). installd does the mkdir, chowns to <code>10xxx:10xxx</code>, mode 0771, and labels the dir <code>app_data_file</code> with the app's category pair. No path into another app's dir survives DAC.</p>
+<p>External storage is the illusion in the stack. <code>/storage/emulated/0</code> is not a partition: it is <code>/data/media/0</code> (owned <code>media_rw</code>) viewed through a translation layer — historically the sdcardfs kernel filesystem, retired across Android 11–13 in favor of a userspace <strong>FUSE daemon</strong> fronted by MediaProvider. The layer re-owns every file <em>per viewer</em>: the same photo <code>stat()</code>s as owned by whichever app is looking. Modes are synthesized, so <code>chmod 0600</code> there never reaches a real inode. Since scoped storage (Android 11), the access decision for "shared" files is a row in MediaProvider's database: file permissions as SQL. It <em>looks</em> like a FAT filesystem from 1990; it is a policy engine wearing one.</p>
+<p>The Keystore is where the sandbox stops and silicon begins. An app's <code>generateKey</code> call goes to keystore2 (Android 12+), which forwards to the KeyMint HAL running in the TEE — or on <strong>StrongBox</strong>, a separate secure-element CPU (first shipped as the Titan M in Pixel 3, 2018) with its own core, storage, and rate limiting. Key material never enters app RAM; the app holds a reference, and keystore2 checks the caller's uid on every operation: data-dir privacy extended into hardware.</p>
+<h2 id="6-the-boundary-map">6. The boundary map</h2>
+<p>Assemble the walls and answer the payoff question: an attacker has full RCE in app A (appId 10145, <code>untrusted_app</code>, all its permissions). What can the code actually touch?</p>
+<pre><code class="language-text">              what a fully compromised app can reach
++---------------------------------------------------------------------+
+| seccomp-BPF filter (installed at zygote specialization, inherited)  |
+|   blocks: bpf, userfaultfd, perf_event_open, swapon, keyring trio   |
+|   -&gt; kernel subsystems behind banned syscalls are unreachable       |
+|  +---------------------------------------------------------------+  |
+|  | UNIX uid 10145 (AID_APP_START 10000 &lt;= uid &lt; 20000)           |  |
+|  |   blocks: other apps' files/sockets/processes (DAC EACCES),   |  |
+|  |   kill/ptrace of foreign uids, ~all of /system as a writer    |  |
+|  |  +----------------------------------------------------------+ |  |
+|  |  | SELinux domain + MLS categories                           | |  |
+|  |  |   u:r:untrusted_app:s0:c23,c256                           | |  |
+|  |  |   blocks: /dev nodes, procfs, exec of system binaries,    | |  |
+|  |  |   ptrace, raw sockets; category mismatch blocks app B's  | |  |
+|  |  |   app_data_file even if B chmods it 0644                 | |  |
+|  |  |  +----------------------------------------------------+  | |  |
+|  |  |  | what SURVIVES (reachable through the walls)         |  | |  |
+|  |  |  |   own app_data_file dirs (CE + DE twins)            |  | |  |
+|  |  |  |   Binder calls to any service that will answer      |  | |  |
+|  |  |  |   network (if INTERNET -&gt; gid 3003)                 |  | |  |
+|  |  |  |   scoped external storage via FUSE/MediaProvider    |  | |  |
+|  |  |  |   Keystore/KeyMint operations by reference          |  | |  |
+|  |  |  |   shared zygote COW pages (read-only, no secrets)   |  | |  |
+|  |  |  +----------------------------------------------------+  | |  |
+|  |  +----------------------------------------------------------+ |  |
+|  +---------------------------------------------------------------+  |
++---------------------------------------------------------------------+</code></pre>
+<p>Read the map as an attack-surface checklist: the kernel walls are the strong part; the soft part is the <em>binder surface</em> — every system service that takes app calls is code with far more privilege, gated by per-call <code>checkCallingPermission</code>. Real-world Android privescs are overwhelmingly "service trusted the caller's parcel" bugs, not sandbox escapes. The sandbox makes the <em>file system</em> tiny and forces the interesting traffic through auditable chokepoints.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>Uid arithmetic is a table you keep in your head</strong>: apps live in 10000–19999 (<code>AID_APP_START</code>/<code>AID_APP_END</code>); multi-user is <code>uid = userId * 100000 + appId</code> (user 10's app 10155 = 1010155); external-storage groups sit in the shared block from 50000. The framework package <code>android</code> occupies 10000 (<code>u0_a0</code>), so real apps start at <code>u0_a1</code>. AppIds are recycled after uninstall — correlating logs across reinstall is a known trap.</li>
+<li><strong>The app seccomp deny list</strong> (AOSP 14): <code>bpf</code>, <code>userfaultfd</code>, <code>perf_event_open</code>, <code>swapon</code>/<code>swapoff</code>, keyring trio. Note <em>what is not there</em>: <code>ptrace</code> and raw/most-netlink sockets are denied by SELinux for <code>untrusted_app</code>, not by the filter — the lists split by what each layer expresses cheaply.</li>
+<li><strong>seapp_contexts is consulted twice</strong>: by the zygote (process label, via the <code>dyntransition</code> policy reserves for zygote) and by installd (file label on the data dir). First match wins, and the vendor file can override the platform one — a Treble-era surprise when debugging a wrong domain.</li>
+<li><strong>neverallow is the quiet superpower</strong>: entire permission-grant classes are impossible because the policy build fails if any allow rule contradicts an assertion — security review happens at compile time, before any device sees the change.</li>
+<li><strong>FUSE storage semantics</strong>: ownership on <code>/storage/emulated</code> is synthesized per-calling-app — the same file <code>stat()</code>s differently depending on who asks; chmod/chown never reach the underlying media_rw inode; the true ACL is MediaProvider's database row.</li>
+<li><strong>run-as is the honest window</strong>: requires a <em>debuggable</em> app, drops you into the real uid and groups (3003/9997/50xxx reveal the app's permission-gid state instantly).</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Any device or emulator with a debuggable app installed (an AVD with the Google APIs image accepts <code>adb root</code>; outputs below are from a stock userdebug image, Android 14 / kernel 6.1 / arm64).</p>
+<pre><code class="language-text">$ adb shell run-as com.example.debug id
+uid=10147(u0_a147) gid=10147(u0_a147)
+  groups=10147(u0_a147),3003(inet),9997(everybody),50147(u0_a147_cache)</code></pre>
+<p>Read it: uid 10147 is in the 10000 block; 3003 = INTERNET granted; 9997 = <code>everybody</code> (shared storage); 50147 = the app's external-storage cache group (shared block, 50000+).</p>
+<pre><code class="language-text">$ adb root &amp;&amp; adb shell ls -Z /data/user/0 | head -3
+u:object_r:app_data_file:s0:c23,c256  com.example.one
+u:object_r:app_data_file:s0:c7,c257   com.example.two
+u:object_r:app_data_file:s0:c512,c768 com.example.three</code></pre>
+<p>Same <em>type</em> (<code>app_data_file</code>) everywhere; the category pairs differ per app — section 2's partition, visible as data. Pair with <code>ls -l /data/user/0</code>, which shows the <code>u0_a45</code>-style owner for each.</p>
+<pre><code class="language-text">$ adb shell run-as com.example.debug cat /proc/self/attr/current
+u:r:untrusted_app:s0:c23,c256
+$ adb shell run-as com.example.debug sh -c 'grep -E "Uid|Seccomp" /proc/self/status'
+Uid:    10147   10147   10147   10147
+Seccomp:    2
+Seccomp_filters:    1</code></pre>
+<p><code>Seccomp: 2</code> is <code>SECCOMP_MODE_FILTER</code> — the zygote's program is active; <code>Seccomp_filters:</code> (kernel 5.13+) counts installed filters.</p>
+<pre><code class="language-text">$ adb shell dmesg | grep avc | tail -1
+type=1400 audit(1830572.439:527): avc:  denied { open } for
+  comm="CameraThrea" path="/data/misc/cameraserver" dev="dm-11" ino=21
+  scontext=u:r:untrusted_app:s0:c23,c256
+  tcontext=u:object_r:cameraserver_data_file:s0 tclass=file permissive=0</code></pre>
+<p>Read any denial the same way: <code>scontext</code> = who (domain + categories), <code>tcontext</code> = the label touched, <code>tclass</code> = class, <code>permissive=0</code> = <em>enforced</em> (<code>1</code> = logged-but-allowed). <code>dmesg</code> needs a userdebug build — on user builds denials surface only in logcat's events buffer. No device? Treat this section as a documented walkthrough: every command is replayable when you get one.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Attack-surface review.</strong> For any app, draw the boundary map with its actual uid, domain, groups, and permission set — then enumerate the "reachable" set: exposed binder surfaces, granted permissions, native code's syscall habits. That set, not the manifest, is the review output.</li>
+<li><strong>Permission debugging by layer.</strong> <code>EACCES</code> says DAC (uid/ownership); <code>EPERM</code> on a syscall says seccomp or a capability neverallow; an <code>avc: denied</code> line says SELinux — three failure modes, three fixes, told apart from one log line.</li>
+<li><strong>Storage bug triage.</strong> "chmod didn't work", "wrong owner", "MediaStore still lists it" — one cause: FUSE translation over <code>/data/media</code> with MediaProvider as the real ACL. Debug the provider's grants, not file modes on <code>/storage/emulated</code>.</li>
+<li><strong>Incident explanation.</strong> "Why can't a compromised app read my photos" now has a full answer — uid ownership, MLS category mismatch, seapp_contexts labeling, MediaProvider rows — four sentences, each naming a real layer.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch03 (virtual memory as isolation)</strong> — the address-space wall is the layer <em>under</em> these walls: zygote COW pages are shared across mutually hostile uids — memory sharing without data sharing.</li>
+<li><strong>Module 02 ch01 (trust boundaries)</strong> — the runtime-permission dialog is a <em>declared</em> consent boundary; this chapter's kernel walls are <em>enforced</em> ones; the two meet at <code>checkCallingPermission</code>.</li>
+<li><strong>Module 05 ch01 (boot &amp; the Zygote)</strong> — UID assignment happens in the specialize step of fork: <code>setresuid</code>, the <code>dyntransition</code>, and the seccomp prctl are why a fork of a root-warm process lands in a 3-walled sandbox before its first bytecode.</li>
+<li><strong>Module 05 ch03 (Binder)</strong> — the one door deliberately left open through section 6's map; the post-sandbox attack surface.</li>
+<li><strong>Module 07 ch05 (desktop kernels)</strong> — same Linux kernel, opposite defaults: one uid per human, SELinux permissive or off, no mandatory seccomp — Chrome ships its own sandbox to compensate.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>App B's private file is accidentally <code>chmod 0644</code> — the DAC layer fails open. App A (both run as <code>untrusted_app</code>, files typed <code>app_data_file</code>) still cannot read it. Which mechanism stops A, and where is it checked?</li>
+<li>An app with appId 10155 is installed for secondary user 10. Compute the process uid and the owner string <code>ls -l</code> will print for its data dir.</li>
+<li>Two builds of one app differ only in manifest. <code>run-as &lt;pkg&gt; id</code> on build 1 shows <code>3003(inet)</code> in groups; build 2 does not. Which manifest line differs, and what does build 2's first <code>new Socket()</code> throw?</li>
+<li>A file-manager app (granted <code>MANAGE_EXTERNAL_STORAGE</code>) runs <code>chmod 0600</code> on <code>/storage/emulated/0/secret.txt</code>, yet a media app can still read the file through MediaStore. Diagnose.</li>
+<li>Logcat shows <code>avc: denied { open } ... scontext=u:r:untrusted_app tcontext=u:object_r:net_data_file:s0 tclass=file permissive=0</code>. The developer adds <code>ACCESS_NETWORK_STATE</code> and retests. Diagnose both the original attempt and why the fix fails.</li>
+<li>A kernel 0-day lands in the <code>userfaultfd</code> subsystem, and an exploit needs that syscall for heap grooming. Which wall answers, with what verdict, and why does forking a child not help the attacker?</li>
+<li>An app process never <code>exec()</code>s (module 05 ch01). Trace where and how its uid, SELinux label, and seccomp filter get applied, and name the transition type SELinux uses <em>because</em> there is no exec.</li>
+<li>On desktop Linux (module 07 ch05) browser tabs all run as the human's uid. Name which of this chapter's walls are missing by default on that desktop, and what the browser itself must therefore ship.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The MLS/MCS category constraint.</strong> B's file label carries B's category pair (<code>s0:c7,c257</code>), A's process carries A's (<code>s0:c23,c256</code>); the policy requires the reader's categories to match the file's, checked in the kernel's SELinux permission hook — the same hook that enforces type rules, logging <code>avc: denied { read } ... tcontext= u:object_r:app_data_file:s0:c7,c257 ... permissive=0</code>. The giveaway is the category mismatch on an otherwise-allowed type. <code>chmod</code> was never the last word.</li>
+</ol>
+<ol>
+<li><strong>uid 1010155, printed <code>u10_a155</code>.</strong> uid = userId × 100000 (<code>AID_USER_OFFSET</code>) + appId = 10 × 100000 + 10155. bionic renders it <code>u10_a155</code>; the dir is <code>/data/user/10/&lt;pkg&gt;</code>, with the same CE/DE twins as user 0.</li>
+</ol>
+<ol>
+<li><strong>The <code>&lt;uses-permission android:name="android.permission.INTERNET"/&gt;</code> line.</strong> INTERNET is a normal, install-time permission mapping to supplementary gid 3003 at fork; build 2 lacks it, so its first socket creation throws <code>SocketException: socket failed: EPERM (1)</code>.</li>
+</ol>
+<ol>
+<li><strong>The chmod was theater.</strong> <code>/storage/emulated/0</code> is a FUSE view over <code>/data/media/0</code> owned by <code>media_rw</code>; ownership and mode are synthesized per-viewing app and never reach a real inode — access is decided by MediaProvider's database rows. The fix is per-row/media grants, or moving secrets into the app's own <code>app_data_file</code> dir.</li>
+</ol>
+<ol>
+<li><strong>A type-enforcement denial, not a permission gap.</strong> The app tried to <code>open()</code> a path under <code>/data/misc/net</code> (<code>net_data_file</code>); <code>untrusted_app</code> has no allow for that type — by design, guarded by <code>neverallow</code>. No Java permission maps to that label, so <code>ACCESS_NETWORK_STATE</code> (binder-checked, service-side) cannot change the verdict. The fix is the API path — ConnectivityManager over Binder — not the filesystem.</li>
+</ol>
+<ol>
+<li><strong>seccomp answers with ERRNO — <code>userfaultfd</code> returns <code>EPERM</code>.</strong> It is on the app deny list, so the filter's verdict fires at syscall entry, before the kernel touches the subsystem. Forking is useless: filters are a one-way ratchet — children inherit and can only intersect with stricter ones.</li>
+</ol>
+<ol>
+<li><strong>All three are applied in the forked child during zygote specialization, before any app code runs</strong>: drop to the assigned uid (<code>setresuid</code> plus the permission groups), apply the SELinux label via a <strong>dynamic transition</strong> (<code>dyntransition</code>) — used precisely because there is no exec — then install the seccomp filter via <code>prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER)</code>.</li>
+</ol>
+<ol>
+<li><strong>Missing: per-principal uid, enforcing SELinux, mandatory seccomp.</strong> Desktop Linux defaults to one uid per human, SELinux permissive or absent, no syscall filter — three of the four walls are absent, so Chrome ships its own sandbox (seccomp, setuid helpers) to approximate what Android grants every app for free.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch04.html"><span class="cn-label">previous</span><span class="cn-title">Ch 04</span></a>
+<a class="next" href="ch06.html"><span class="cn-label">next</span><span class="cn-title">Ch 06</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 05 — Android internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 02 final exam — deep-roots</title>
+<meta name="description" content="Final exam for module 02 (the dark mirror of module 01), with worked answers.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 02 final exam — deep-roots">
+<meta property="og:description" content="Final exam for module 02 (the dark mirror of module 01), with worked answers.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 02 final exam — deep-roots">
+<meta name="twitter:description" content="Final exam for module 02 (the dark mirror of module 01), with worked answers.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 02 &middot; the dark mirror of module 01 &middot; final exam</div>
+<h1 class="post-title">Module 02 final exam</h1>
+<div class="post-meta">every chapter &middot; worked answers behind the fold</div>
+<p>Twelve questions across all seven chapters. Closed book. Every answer is worked, not just stated — the derivations are the point. Scoring: 11+ = you own this module; 8-10 = solid, revisit the chapters your misses cluster in; &lt;8 = the chapter quizzes are the study path.</p>
+<p><strong>Part I — the attacker's model and the stack (chapters 01-02)</strong></p>
+<ol>
+<li><em>(concept)</em> A bug bounty report reads: "missing bounds check found in an image-parsing helper — critical vulnerability, ship a patch today." Using the terminology contract, derive what the report has <em>not</em> established — then explain programmable severity: why the same unchecked copy can be "low: DoS" this year and critical next year with no code change.</li>
+</ol>
+<ol>
+<li><em>(predict)</em> A pre-forking daemon (one fork per connection, never execs) is built with <code>-fstack-protector-strong</code>. QA reports: "an attacker triggered stack-smashing aborts in three children, then gave up — the canary appears unbreakable." What is wrong with that conclusion? Compute the worst-case and expected child-crash counts to recover the canary, state why the first canary byte is free, and name the process-architecture fix.</li>
+</ol>
+<ol>
+<li><em>(predict)</em> A protected build places <code>char buf[64]</code> at <code>[rbp-0x50]</code> with the canary at <code>[rbp-0x8]</code>. Compute (a) the bytes from <code>buf</code>'s start to the first canary byte, and (b) the bytes to the return address. Then predict (c) an 80-character <code>strcpy</code> (81 bytes written) — signal, exit code, and whether the corrupted return address is ever loaded; and (d) a 72-character one (73 bytes written) — what is detected, and which CI tool catches what the canary cannot.</li>
+</ol>
+<p><strong>Part II — code reuse and the heap (chapters 03-04)</strong></p>
+<ol>
+<li><em>(diagnose)</em> A ret2libc exploit crashes mid-libc: SIGSEGV, <code>si_code = SI_KERNEL</code> (128), <code>fault_addr = (nil)</code>, <code>rip</code> pointing at a <code>movaps</code>. Diagnose the failure, derive the parity arithmetic that produced it, and give the one-gadget fix.</li>
+</ol>
+<ol>
+<li><em>(derive)</em> An overflow gives you exactly 16 controlled bytes: the saved RBP and the saved RIP of the victim's frame. Derive the two-word chain that turns this into a full ROP stack in a sprayed buffer — name the gadget, walk each instruction, and state the code-review conclusion this forces.</li>
+</ol>
+<ol>
+<li><em>(predict)</em> glibc 2.35, x86-64: <code>malloc(0x68)</code> nine times into <code>t[0..8]</code>, then <code>free(t[0])</code> through <code>free(t[7])</code>. Which chunk lands in the fastbin, what do the next three <code>malloc(0x68)</code> calls return, and on which malloc does <code>t[7]</code> finally come back? Why is the boundary exactly seven?</li>
+</ol>
+<ol>
+<li><em>(diagnose)</em> glibc 2.34: an exploit overwrites a freed chunk's tcache <code>next</code> with the raw, 16-byte-aligned target <code>0x404060</code> and calls <code>malloc</code> twice; the process aborts <em>inside malloc</em>, not at the target. Diagnose the mistake, give the correct stored value, and state what the exploit additionally had to own for that value.</li>
+</ol>
+<p><strong>Part III — use-after-free and the ladder (chapters 05-06)</strong></p>
+<ol>
+<li><em>(diagnose, cross-module)</em> A class declares its members <code>Toolbar toolbar_; Canvas canvas_;</code> — and <code>~Toolbar()</code> calls <code>canvas_.flush()</code>. The crash lands in <code>~Toolbar</code>. Explain the mechanism using module 01 chapter 09's destruction rule read adversarially, and give the fix as a member-ordering decision.</li>
+</ol>
+<ol>
+<li><em>(concept)</em> Name the invariant each of canary, NX, and ASLR defends; then derive, one sentence each, why a use-after-free violates none of them. Finally, name the first ladder rung that touches the <em>bug itself</em> rather than the payload, and give its per-attempt success probability.</li>
+</ol>
+<ol>
+<li><em>(predict)</em> A stale pointer to a freed 32-byte object on an MTE system in sync mode; every attempt runs in a fresh process. Compute the expected number of attempts, the cost of each failure, and derive why Arm chose 4 tag bits over 8 — show both sides of the trade.</li>
+</ol>
+<p><strong>Part IV — corruption-free attacks and the whole chain (chapter 07 + cross-chapter)</strong></p>
+<ol>
+<li><em>(predict)</em> A Flush+Reload trace over a left-to-right square-and-multiply RSA implementation (2048-bit exponent, top bit always 1) logs 3,145 executions of the loop body, of which 2,047 are the always-executed square step. How many 1-bits does the exponent have? Why does a multiply-always implementation leak nothing to this exact trace?</li>
+</ol>
+<ol>
+<li><em>(cross-chapter)</em> Chapter 01's chain is bug → primitive → technique → impact. (a) Which link do side channels break, and why does that make "zero vulnerabilities" compatible with full compromise? (b) The chapter 06 ladder assumes memory corruption; name two rung families invented in response to chapter 07's attacks, each matched to the attack it answers. (c) One sentence: why is "close the timing channel" asymptotically impossible?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<p><strong>Part I</strong></p>
+<ol>
+<li>A missing check is a <strong>bug</strong> — a defect that exists whether or not anyone notices. Not yet established: a <strong>vulnerability</strong>, i.e. reachability across a trust boundary with attacker-controlled input — a fact about the call graph plus the boundary, not the code; a helper no untrusted input reaches has no attacker until refactoring moves it under a parser (ch01). Nor a <strong>primitive</strong> (which memory operation it yields — overwrite N bytes where?) or the <strong>exploit</strong> spending it. Programmable severity: a logic bug's impact is fixed at report time; a write primitive's is decided later by aim — badly aimed it crashes (QA: "DoS, low"), well aimed it hijacks. Input bytes at the crash site, or crash distance scaling with input length, upgrade severity mechanically (ch01).</li>
+</ol>
+<ol>
+<li>The conclusion assumes a crash re-randomizes the canary. It does not: <code>fork</code> copies the parent's TLS verbatim — only <code>exec</code> consults <code>AT_RANDOM</code> (ch02). The parent keeps forking children with the <em>same</em> canary, so the attacker is inside a finite search, not a lottery. Worst case: the low byte is known (glibc's terminator, always <code>0x00</code>), leaving 7 unknown bytes × 255 wrong values = <strong>1,785 crashes</strong>; expected ≈ 7 × 127.5 ≈ <strong>893</strong> — the "entropy" bypass flavor (ch02/ch06). Fix: fork <strong>plus exec</strong> per connection, the inetd shape, so each connection re-rolls <code>AT_RANDOM</code>.</li>
+</ol>
+<ol>
+<li>(a) 0x50 − 0x8 = <strong>72</strong> bytes (64 buffer + 8 alignment slack). (b) 0x50 + 8 = <strong>88</strong> bytes (buffer + slack + canary + saved RBP). (c) The 81 bytes cross all eight canary bytes (offsets 72-79): the epilogue compare fails, <code>__stack_chk_fail</code> aborts — <strong>SIGABRT</strong>, exit <strong>134</strong>, "stack smashing detected"; the corrupted saved RIP is never loaded. (d) The 73 bytes put the terminating NUL on the canary's low byte — <code>0x00</code> over <code>0x00</code>: nothing detected, the bug stays latent. The canary compares eight specific bytes at return only; ASan's redzones check every byte past the 64-byte object and flag the first — why CI needs ASan, not just hardening flags (ch02).</li>
+</ol>
+<p><strong>Part II</strong></p>
+<ol>
+<li>The callee entered with <code>rsp % 16 == 0</code> instead of the ABI-required 8, so its first 16-byte-aligned SSE access faulted — a #GP, which Linux reports as SIGSEGV with <code>si_code = SI_KERNEL</code> and no fault address (ch03). Derivation: the ABI guarantees <code>rsp ≡ 8 (mod 16)</code> at entry because a 16-aligned call site pushes an 8-byte return address. A chain entered by <code>ret</code> has no call: after k returns from slot S, the callee sees <code>rsp = S + 8k</code>; if that is ≡ 0 (mod 16), every <code>movaps</code> at ABI-computed offsets faults. Each <code>ret</code> shifts <code>rsp</code> by 8 — fix: prepend one bare <code>ret</code> gadget; parity flips, no registers change (ch03).</li>
+</ol>
+<ol>
+<li>Write <strong>saved RBP = &amp;fake_stack</strong> (a sprayed buffer filled through a second channel) and <strong>saved RIP = &amp;(leave; ret)</strong>. Walk it: the victim's <code>leave</code> sets <code>rsp</code> to the saved-RBP slot; its <code>pop rbp</code> loads the attacker's <code>&amp;fake_stack</code>, and <code>ret</code> jumps to the gadget. The gadget's <code>leave</code> runs <code>mov rsp, rbp</code> — <strong>rsp now lives in the sprayed buffer</strong>; <code>pop rbp</code> consumes its first word; <code>ret</code> pops the first real gadget, and the chain runs from attacker-filled memory (<code>pop rsp; ret</code> and <code>xchg rax, rsp</code> are the alternatives when other registers are controlled). Conclusion: 16 controlled bytes + any pivot + any filled buffer = a complete ROP precondition — "too small to matter" is a review error, not a mitigation (ch03).</li>
+</ol>
+<ol>
+<li><code>t[7]</code> goes to the <strong>fastbin</strong>; the next three <code>malloc</code>s return <strong><code>t[6]</code>, <code>t[5]</code>, <code>t[4]</code></strong> — tcache is a LIFO stack, last freed first (ch04). <code>t[7]</code> returns only on the <strong>eighth</strong> malloc, after the seven tcache entries drain. The boundary is <code>tcache_count</code>'s default of <strong>7 per bin</strong> — a check boundary, not just a knob: the 8th same-size free bypasses tcache and meets the fastbin's weaker, head-only double-free check — why grooming sequences count frees (ch04).</li>
+</ol>
+<ol>
+<li><strong>Safe-linking was ignored.</strong> Since glibc 2.32 the stored <code>next</code> is mangled — <code>PROTECT_PTR(pos, ptr) = (pos &gt;&gt; 12) ^ ptr</code>, <code>pos</code> being the slot's own address — so the raw <code>0x404060</code> decodes to a garbage pointer and the pop aborts inside malloc. Correct stored value: <code>0x404060 ^ (pos &gt;&gt; 12)</code> — which requires knowing <code>pos</code>, i.e. <strong>a heap leak</strong> (the key is 12 bits of the slot's own address). The target must also stay 16-byte aligned or the pop dies as <code>unaligned tcache chunk detected</code>. On glibc 2.26-2.31 the raw value would have worked — vintage is part of the diagnosis (ch04).</li>
+</ol>
+<p><strong>Part III</strong></p>
+<ol>
+<li>Members destruct in <strong>reverse declaration order</strong> (module 01 ch09): <code>canvas_</code>, declared second, dies <em>first</em>; <code>toolbar_</code>, declared first, dies <em>last</em> — so <code>~Toolbar()</code> runs after <code>~Canvas()</code> and calls <code>canvas_.flush()</code> on a destructed member: a temporal bug in teardown order, ch05's destructor-triggered destruction shape at member scope. The dependency arrow points the wrong way — a destructor using a member that dies earlier. Fix by ordering: <strong>declare <code>toolbar_</code> after <code>canvas_</code></strong>, so it is destroyed first, while <code>canvas_</code> is still alive; or use an explicit two-phase shutdown (ch05).</li>
+</ol>
+<ol>
+<li>The <strong>canary</strong> guards the saved return path of instrumented frames (a fixed location); <strong>NX</strong> guards which pages may execute; <strong>ASLR</strong> guards address knowledge for an attacker who already controls flow (ch05). A use-after-free violates none: the free is legal, the chunk healthy, and the stale use a normal read of a mapped address through a pointer whose validity nothing tracks — the invariant broken is <em>temporal</em> (ch05). The first rung that touches the bug rather than the payload is <strong>MTE</strong> (ch06): freed memory is retagged, and a stale access survives only on a tag match — probability <strong>1/16</strong> per fresh process.</li>
+</ol>
+<ol>
+<li>Geometric with p = 1/16: expected <strong>16 attempts</strong>. Each failure is a SIGSEGV (<code>SEGV_MTESERR</code>) that kills the process — loud, logged, and the tags re-roll, so failures accumulate no knowledge (ch06). The trade: 4-bit tags on 16-byte granules cost 4/128 = <strong>3.125%</strong> of memory as metadata and give 1/16 per attempt; 8-bit tags would give 1/256 but double the floor to <strong>6.25%</strong> of RAM. Arm picked 4 bits as the knee of the memory-vs-resistance curve; sync mode's crash-per-miss (converting ~94% of naive UAF attempts into reports) does the rest (ch06).</li>
+</ol>
+<p><strong>Part IV</strong></p>
+<ol>
+<li>Left-to-right square-and-multiply squares once per remaining bit — 2,047 squares for a 2048-bit exponent whose top bit is 1 — and multiplies once per <em>additional</em> 1-bit: 3,145 − 2,047 = 1,098 multiplies, so the popcount is <strong>1,099</strong> (multiplies = popcount − 1). Multiply-always executes the multiply every iteration with a dummy operand when the bit is 0: a fixed 2 × 2,047 loop body, so this access-pattern trace carries <strong>zero bits</strong> — the touched lines are data-independent (blinding additionally randomizes the exponent per run) (ch07).</li>
+</ol>
+<ol>
+<li>(a) The <strong>first link — the bug</strong>. A side channel's transmitter needs no bug and sends nothing voluntarily: the "vulnerability" is that hardware performance depends on inputs — impact with no memory-safety violation at all, which is why ch07 sits outside ch01's chain and ch06's ladder (ch07). (b) Any two: <strong>KPTI</strong> (two page tables per process) answers Meltdown's transient reads of the always-mapped kernel; <strong>retpolines</strong> answer Spectre v2's branch-target injection; <strong>constant-time code</strong> answers cache-timing key recovery (Kocher 1996, Flush+Reload); <strong>CAT</strong> answers shared-L3 attacks (ch06/ch07). (c) Timing is a function of the work done; only a program whose work is independent of its secrets leaks nothing, and removing the <em>sharing</em> means not co-locating attacker and victim — the cloud's economic premise (ch07).</li>
+</ol>
+</details>
+<div class="post-footer"><p>Chapter list: <a href="index.html">Module 02</a>. Module 01 also has the <a href="../quiz.html">interactive quiz</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

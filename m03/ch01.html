@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The bug from first principles — deep-roots</title>
+<meta name="description" content="Chapter 01 of module 03: The bug from first principles">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The bug from first principles — deep-roots">
+<meta property="og:description" content="Chapter 01 of module 03: The bug from first principles">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The bug from first principles — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of module 03: The bug from first principles">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 03 &middot; the four families and the machinery that finds them</div>
+<h1 class="post-title">The bug from first principles</h1>
+<div class="post-meta">chapter 01 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A bug is a divergence between the behavior you <em>intended</em> and the behavior the program <em>delivers</em>, and the intended half is mostly unwritten, so "it works as coded" is not a defense. Executions double with every branch while tests grow linearly, so every suite is a thin slice of an exponential space, and the slice misses corners, where the four failure families live — each a <em>mechanism</em>, not a symptom. Timing, allocator layout, and optimization level are invisible inputs: hence Heisenbugs and "works on my machine." Fault, error, failure, and Boehm's 1:10:100 curve close the argument.</blockquote>
+<h2 id="1-the-definition-a-divergence-and-half-the-spec-is-unwritten">1. The definition: a divergence, and half the spec is unwritten</h2>
+<p>Every bug report is secretly about two programs: the one you meant to write and the one that exists.</p>
+<ul>
+<li><strong>The spec</strong>: the input → behavior mappings you intend. For "print the file, sorted" it includes clauses no ticket ever wrote: never lose the file, never hang, 10 GiB files too.</li>
+<li><strong>The behavior</strong>: the mappings the program implements — every path you never executed, every environment you never ran it in.</li>
+</ul>
+<p><strong>A bug is any input (or input + environment) on which these two sets disagree.</strong> Three consequences:</p>
+<ol>
+<li><strong>The bug exists whether or not anyone observed it.</strong> Divergence is a property of the program plus environment, not of the bug report. Code that ran in production for a decade is not <em>verified</em>, merely <em>un-activated</em> (section 5: a dormant fault).</li>
+<li><strong>"It works as coded" is a category error.</strong> Code approximates intent; the bug is the gap. "Bug or feature?" asks what the spec says; where it is silent, the answer is a product decision that, once written, makes the divergence measurable.</li>
+<li><strong>A crash is not the bug.</strong> A crash is one <em>observable</em>, usually the kindest: loud and immediate. The dangerous bugs diverge silently, and the failure surfaces far away and much later.</li>
+</ol>
+<h2 id="2-why-bugs-cluster-paths-grow-exponentially-tests-grow-linearly">2. Why bugs cluster: paths grow exponentially, tests grow linearly</h2>
+<p>Take the smallest interesting case, a C function with five independent two-way branches:</p>
+<pre><code class="language-c">/* discount.c — five independent decisions, each doubling the path count */
+int discount(int age, int vet, int student, int coupon, int member) {
+    int d = 0;
+    if (age &gt; 64)  d += 10;   /* branch 1: 2 outcomes */
+    if (vet)       d += 10;   /* branch 2: 2 outcomes */
+    if (student)   d += 5;    /* branch 3: 2 outcomes */
+    if (coupon)    d += 5;    /* branch 4: 2 outcomes */
+    if (member)    d += 5;    /* branch 5: 2 outcomes */
+    return d;
+}</code></pre>
+<p>Each branch doubles the routes one call can take: five branches give <strong>2^5 = 32 paths</strong>, and any test walks exactly <em>one</em> of them. "All true" and "all false" execute every line and every branch both ways, yet touch 2 of 32:</p>
+<pre><code>   the 32 paths of discount(), one cell each (rows = bits b4b3, cols = b2b1b0)
+   X = a path a test walked      . = a path you ship unexecuted
+
+   +---+---+---+---+---+---+---+---+
+   | X | . | . | . | . | . | . | . |   2 tests: 100% line coverage,
+   | . | . | . | . | . | . | . | . |   100% branch coverage,
+   | . | . | . | . | . | . | . | . |   2/32 = 6.25% path coverage.
+   | . | . | . | . | . | . | . | X |   &lt;- cell 11111, the all-true input
+   +---+---+---+---+---+---+---+---+</code></pre>
+<p>The coverage argument in miniature, and it scales brutally:</p>
+<div class="table-wrap"><table><thead><tr><th>Two-way branches</th><th>Paths</th><th>Full path coverage at 1 ms per test</th></tr></thead><tbody><tr><td>5</td><td>32</td><td>32 ms</td></tr><tr><td>20</td><td>1,048,576</td><td>17.5 minutes</td></tr><tr><td>25</td><td>33,554,432</td><td>9.3 hours</td></tr><tr><td>32</td><td>4,294,967,296</td><td>49.7 days</td></tr></tbody></table></div>
+<p>One 32-branch function costs 49.7 <em>days</em> to path-cover; a real module has hundreds. Inputs are not booleans either: one 32-bit argument is 2^32 points <em>per path</em>. Loops multiply further: B branches iterated n times yield up to (2^B)^n traces. Threads: two threads of 6 atomic blocks each admit C(12,6) = <strong>924 interleavings</strong>; as one loop iteration run 3 times, 924^3 ≈ 7.9 × 10^8.</p>
+<p>The other side of the ledger is linear: minutes per test, a CI budget in hours. <strong>Every test suite is a thin, linear slice of an exponential space, and bugs cluster where the slice is thinnest</strong>: boundaries between path regions (off-by-ones), branch <em>combinations</em> (each branch tested alone, the pair never co-executed), rare interleavings. "Corner case" folklore is this arithmetic.</p>
+<h2 id="3-the-four-families-classify-by-mechanism-not-symptom">3. The four families: classify by mechanism, not symptom</h2>
+<p>Symptoms (crash, hang, wrong number, lost data) are many-to-one: every family can produce every symptom, so symptom triage tells you nothing. Classify by <em>mechanism</em>, the root cause in the execution machinery. Module 01's arc yields exactly four ways the model in the code can diverge from the model in the head:</p>
+<div class="table-wrap"><table><thead><tr><th>Family</th><th>Defining property (mechanism)</th><th>Canonical shapes</th><th>Detector (→ ch05)</th></tr></thead><tbody><tr><td><strong>Memory</strong></td><td>Accesses bytes the program does not own: out of bounds, out of lifetime, or misinterpreted.</td><td>Overflow, use-after-free, double-free, uninitialized read.</td><td>ASan</td></tr><tr><td><strong>Concurrency</strong></td><td>The outcome depends on an interleaving no line of code specifies.</td><td>Data race, TOCTOU, deadlock, lost wakeup.</td><td>TSan</td></tr><tr><td><strong>Numeric / parsing</strong></td><td>A value crosses a representation boundary silently.</td><td>Integer overflow, 0.1+0.2, encoding, 2038.</td><td>UBSan, property tests</td></tr><tr><td><strong>State</strong></td><td>An invariant spanning time or components is broken by a <em>sequence</em>, not any single step.</td><td>Retry storms, inconsistent snapshots, partial failure.</td><td>Invariant checks, fault injection</td></tr></tbody></table></div>
+<p>One root fact each. Memory: in C/C++ a pointer is a raw number and nothing checks at runtime which bytes it may name — module 01 ch21's four primitives, which is why ~70% of severe CVEs at Microsoft and Chromium (2019) are memory-safety bugs. Concurrency: each thread's code is sequentially correct; the bug lives <em>between</em> threads. Numeric: the mathematical value and its machine encoding are different objects, and the conversion is silent. State: every step is locally legal; the forbidden sequence is nobody's line of code. Mechanism also predicts visibility: memory faults are deterministic given a layout; concurrency faults need a rare interleaving to fire — the next section.</p>
+<h2 id="4-heisenbugs-and-works-on-my-machine-the-invisible-inputs">4. Heisenbugs and "works on my machine": the invisible inputs</h2>
+<p>The inputs you list in a test: argv, files, network. The inputs your program <em>also</em> reads, unlisted: thread schedule, allocator state, code layout, optimization level, core count, ASLR base, locale, timezone. The spec never pins them, so divergences keyed to them are bugs by section 1's definition.</p>
+<p>A <strong>Heisenbug</strong> is a failure whose probability is dominated by invisible inputs, which is why <em>observing</em> it changes it: attach gdb and every thread stops (schedule changed); add a printf and you allocate a buffer and take a lock (allocator state and timing changed). The bug appears to flee the instrument (1980s folklore; its opposite, the always-reproducing bug, is a <em>Bohrbug</em>).</p>
+<p><strong>"Works on my machine" is the same statement in memory-model terms.</strong> The program is really (source + toolchain + allocator + scheduler); change the machine and the memory model changes, and it decides which failures you get. The chain comes from module 01 ch19: glibc's tcache is a per-thread LIFO cache (bins of 7 chunks), so one extra allocation anywhere (a locale switch, one more printf) changes which chunk your dangling pointer aliases. On glibc ≥ 2.29 (verified on 2.41), a tcache free clobbers only the first 16 user bytes (<code>next</code> + <code>key</code>), so a use-after-free at offset 16+ reads <em>old, plausible data</em> and passes; under ASan the same access hits a poisoned redzone and aborts. Same source, different heap: silent wrong answer on one machine, crash on the other.</p>
+<p>The compiler plays the same trick. In <em>See it yourself</em>, a two-thread counter with a data race loses about half its updates at <code>-O0</code> and prints the correct total at <code>-O2</code>, because gcc 14.2 legally collapsed the loop into one <code>addq</code> — a data race is undefined behavior in C11 (§5.1.2.4), so the optimizer owes it nothing (module 10 ch02). <strong>"Cannot reproduce" is a fact about your reproduction, not about the fault.</strong> Match the invisible inputs, not "same OS."</p>
+<h2 id="5-fault-error-failure-and-the-price-of-finding-out-late">5. Fault, error, failure — and the price of finding out late</h2>
+<p>The dependability community (Avizienis, Laprie, Randell, Landwehr, "Basic Concepts and Taxonomy of Dependable and Secure Computing," IEEE TDSC 2001) splits "a bug" into a causal chain. A <strong>fault</strong> is the defect in the code: static, cheap to fix. An <strong>error</strong> is the deviated internal state an activated fault produces, invisible from outside. A <strong>failure</strong> is the delivered service deviating from the spec.</p>
+<pre><code class="language-c">/* the fault: writes n+1 bytes into an n-byte destination */
+void copy_name(char *dst, const char *src, size_t n) {
+    for (size_t i = 0; i &lt;= n; i++)   /* &lt;= — off-by-one */
+        dst[i] = src[i];
+}</code></pre>
+<pre><code> FAULT                  ERROR                  FAILURE
+ (code, dormant)        (deviated state)       (observed)
+
+ i &lt;= n in loop  -&gt;  dst[64] hits the    -&gt;  glibc aborts in free():
+                      adjacent chunk's      "invalid next size (fast)",
+                      size field:           10^7 cycles later, deep
+                      0x31 -&gt; 0x41          in malloc, no app frames
+     |                  |                    ^
+     | activation:      | propagation:       |
+     | a 64-byte name   | chunk is freed,    |
+     | finally arrives  | reused             |
+     v                  v                    |
+  (may take years)   (silent)            (the site you debug first)</code></pre>
+<p>Read it right to left: the failure site is three stages from the fault. malloc is not the culprit but the <em>detector</em> that caught the error ten minutes late — and that is what sanitizers automate, reporting <strong>errors</strong> at propagation time, before they become failures (ch05). The chain explains three pieces of folklore: rebooting "fixes" things because restart clears <em>errors</em> while the <em>fault</em> stays in the code; defensive checks are error-containment barriers; old code that "worked for years" never met its activation input.</p>
+<p><strong>Why late is expensive.</strong> Boehm's defect-cost escalation (<em>Software Engineering Economics</em>, 1981, IBM and TRW data; refreshed by Boehm &amp; Basili 2001): a defect costing 1 unit at requirements time costs ~10 by implementation and ~100 after release, for large projects (small non-critical ones run ~5:1). The curve is exponential in phase because each phase stacks artifacts on the assumption — design decisions, calling code, tests, docs, deployed data — and a late fix invalidates them all. For the memory and state families the error has already propagated into persisted data, so field cost includes data repair, not just a recompile.</p>
+<p>Two managed metrics make the iceberg measurable. <strong>Defect density</strong> (defects per KLOC): JPL's "Power of Ten" rules (Holzmann, 2006) exist so Class A flight code can hold ≤ 0.1 defects/KLOC, bought with static analysis plus review; typical delivered commercial code measures 1–5 defects/KLOC (Capers Jones's sampling — an order of magnitude, not a constant). <strong>Defect-removal efficiency</strong> (the iceberg ratio, found vs shipped): Jones and Bonsour (<em>The Economics of Software Quality</em>, 2011) measure ~85% of defects removed before release on average projects, &gt;95% for the best teams combining inspections with testing. The average team ships one bug per six it finds; your users are the last test suite you own.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The 100:1 number gets misquoted constantly.</strong> Boehm &amp; Basili (2001) is <em>100:1 for large projects, 5:1 for small non-critical ones</em>; a universal "10x" is the folklore version.</li>
+<li><strong>glibc tcache leaves freed data mostly intact.</strong> On glibc ≥ 2.29 a tcache free clobbers only the first 16 user bytes (<code>next</code> + <code>key</code>); a use-after-free at offset ≥ 16 reads old, plausible data and passes. Make it loud: <code>MALLOC_PERTURB_=170</code>. Change reuse: <code>GLIBC_TUNABLES=glibc.malloc.tcache_count=0</code> (glibc 2.35+ syntax).</li>
+<li><strong>Sanitizers perturb what they observe.</strong> ASan moves every allocation (redzones plus 1:8 shadow) and quarantines frees; TSan slows execution 5–15x, changing interleavings. "Does not reproduce under the sanitizer" is not evidence of absence.</li>
+<li><strong>A bug report without the optimization level is not reproducible.</strong> The same data race lost ~47% of 2,000,000 increments at <code>-O0</code> and printed the correct total at <code>-O2</code> (gcc 14.2, x86-64: one <code>addq $0xf4240</code>). Build flags are part of the program's identity, like the allocator.</li>
+<li><strong>gcov counts arcs, not paths.</strong> The lab's 5-branch function reports "12 branches" (10 from the ifs, 2 from main's usage guard). 100% branch coverage was 2/32 paths.</li>
+<li><strong>~70% launched the rewrite wave.</strong> MSRC (Matt Miller, BlueHat 2019) and Chromium (2019) each measured ~70% of severe vulnerabilities as memory-safety bugs (module 01 ch21 has the receipts).</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Both labs ran on Debian 13, gcc 14.2.0, glibc 2.41, x86-64, 2 cores. Your numbers will differ; that difference <em>is</em> section 4.</p>
+<p><strong>Lab 1 — count the paths, then watch the metric lie:</strong></p>
+<pre><code class="language-bash">$ gcc --coverage -O0 discount.c -o discount   # = -fprofile-arcs -ftest-coverage
+$ ./discount 70 1 1 1 1
+discount=35
+$ ./discount 30 0 0 0 0
+discount=0
+$ gcov -b discount.c</code></pre>
+<pre><code class="language-text">File 'discount.c'
+Lines executed:100.00% of 13
+Branches executed:100.00% of 12
+Taken at least once:91.67% of 12
+Calls executed:66.67% of 3</code></pre>
+<p>Two runs, 13/13 lines, every <code>if</code> taken both ways — yet only 2 of 32 paths. The one untaken arc (91.67%) is main's usage guard: the tool counts <em>arcs</em>, never paths. Now pay for the whole space:</p>
+<pre><code class="language-bash">$ rm -f discount.gcda &amp;&amp; for i in $(seq 0 31); do
+    ./discount $(( (i&amp;1) ? 70 : 30 )) $(( (i&gt;&gt;1)&amp;1 )) $(( (i&gt;&gt;2)&amp;1 )) \
+               $(( (i&gt;&gt;3)&amp;1 )) $(( (i&gt;&gt;4)&amp;1 )) &gt; /dev/null; done
+$ gcov -b discount.c     # same 91.67%, but all 32 paths now ran</code></pre>
+<p>Thirty-two launches to path-cover a 20-line function; each new branch doubles the bill.</p>
+<p><strong>Lab 2 — a Heisenbug you can schedule and unschedule:</strong></p>
+<pre><code class="language-bash">$ gcc -O0 -pthread race.c -o race0 &amp;&amp; gcc -O2 -pthread race.c -o race2
+$ for i in 1 2 3; do ./race0; done            # two cores, -O0
+counter=1081828 (expected 2000000)
+counter=1070473 (expected 2000000)
+counter=1035707 (expected 2000000)
+$ for i in 1 2 3; do ./race2; done            # same source, -O2
+counter=2000000 (expected 2000000)
+counter=2000000 (expected 2000000)
+counter=2000000 (expected 2000000)
+$ objdump -d race2 | grep -A1 '&lt;add&gt;:'
+    addq   $0xf4240,0x2e65(%rip)        # the whole loop, one instruction
+$ for i in $(seq 1 10); do taskset -c 0 ./race0; done | uniq -c
+     10 counter=2000000 (expected 2000000)</code></pre>
+<p>Same source, same machine, same day, three outcomes: at <code>-O0</code> on two cores ~47% of increments are lost, a <em>different number every run</em> (timing is an input); at <code>-O2</code> the compiler legally collapsed the racy loop into one <code>addq</code> (data race = UB, C11 §5.1.2.4); pinned to one core, 13/13 runs printed the correct total — the scheduler stopped supplying the losing interleaving. The fault (unsynchronized <code>counter++</code>) is present in every configuration; the <em>failure</em> is optional.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Walk crashes backwards through the chain.</strong> The abort in <code>free()</code> is a <em>failure</em>; hunt the <em>error</em> (which byte, which chunk) and the <em>fault</em> (which write crossed a boundary). Never patch at the failure site.</li>
+<li><strong>Pick the detector from the family, not the symptom.</strong> Memory → ASan, concurrency → TSan, numeric UB → UBSan, state → invariant checks plus fault injection. The wrong sanitizer on a race proves nothing (ch05).</li>
+<li><strong>Reproduce by matching the invisible inputs.</strong> Allocator (<code>LD_PRELOAD=libjemalloc.so.2</code>, <code>MALLOC_PERTURB_=170</code>, <code>glibc.malloc.tcache_count=0</code>), build flags (<code>-O0</code> vs <code>-O2</code>), core count (<code>taskset</code>), ASLR (<code>setarch -R</code>).</li>
+<li><strong>Defend review time with the curve.</strong> A fault caught in review is the 1-unit fix; post-release it is the 100-unit one plus incident response. That is the business case for review and CI in one number.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch19 (allocators)</strong> — tcache LIFO and the tunables behind "works on my machine."</li>
+<li><strong>Module 01 ch21 (memory security)</strong> — the four primitive memory failures and the ~70% statistic; ch02 is that chapter as a review checklist.</li>
+<li><strong>Module 02 ch05, ch06</strong> — the attacker's view of the same faults: use-after-free as exploitation primitive, the mitigation ladder as containment.</li>
+<li><strong>Module 03 ch02–05</strong> — the families in depth, then the finding machinery: today's gcov is the toy version of coverage-guided fuzzing.</li>
+<li><strong>Module 10 ch02 (queued)</strong> — the optimizer's license over UB: why Lab 2's <code>-O2</code> transformation is legal.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<p><strong>Q1 (concept).</strong> A teammate closes your ticket: "not a bug — the code does exactly what I wrote." What is missing from that sentence, between which two sets does the bug live, and why does that make "bug or feature" a product decision?</p>
+<p><strong>Q2 (concept).</strong> Define fault, error, and failure, one line each, in the dependability sense. Why does rebooting make the symptom vanish without fixing anything?</p>
+<p><strong>Q3 (predict the number).</strong> A function has 7 independent two-way branches. (a) How many paths? (b) At 1 ms per test, how long is full path coverage? (c) What is the smallest branch count for which full path coverage at 1 ms per test exceeds 24 hours? Derive it.</p>
+<p><strong>Q4 (predict the number).</strong> Two threads each execute 6 atomic blocks, order fixed within each thread. (a) How many interleavings? (b) If those blocks are one iteration of a loop each thread runs 3 times, how many total? Give the formula, then the numbers.</p>
+<p><strong>Q5 (diagnosis).</strong> Ten minutes after startup, a C server (glibc 2.41) aborts with <code>free(): invalid next size (fast)</code>, stack entirely inside malloc. Review finds <code>for (size_t i = 0; i &lt;= n; i++) dst[i] = src[i];</code> copying 64-byte names into a 64-byte heap buffer. Name the fault, the error, the failure, and explain the ten-minute gap.</p>
+<p><strong>Q6 (diagnosis).</strong> A service crashes about once per 1,000 runs in production and never under the debugger. Adding printf logging halves the crash rate. Name the class of bug, the invisible inputs, and explain why (a) the debugger and (b) the printf each changed the outcome.</p>
+<p><strong>Q7 (diagnosis, cross-module).</strong> Same source, two machines: the dev laptop (glibc 2.41) runs clean; production (jemalloc via <code>LD_PRELOAD</code>, more cores) segfaults on a <code>free()</code>. Using module 01 ch19, give the mechanism chain from "different allocator" to "different failure," and name two tunables to flip on the dev laptop.</p>
+<p><strong>Q8 (cross-chapter).</strong> In this chapter's terms, why are ~70% of severe CVEs at Microsoft and Chromium memory-safety bugs (module 01 ch21) rather than an even split across the four families? Give at least two mechanisms.</p>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>The sentence defines only the <em>behavior</em> set. The bug lives between the <strong>spec</strong> (intended input → behavior mappings, mostly unwritten) and the <strong>behavior</strong> the program plus environment delivers; "what I wrote" pins the second and says nothing about the first. With the spec implicit, whether a divergence is a bug is an intent decision — a product call that, once written, makes the divergence measurable and testable.</li>
+</ol>
+<ol>
+<li><strong>Fault</strong>: the defect in the code, static, cheap. <strong>Error</strong>: the deviated internal state an activated fault produces, invisible from outside. <strong>Failure</strong>: the delivered service deviating from the spec. Rebooting clears <em>errors</em> (state) while the <em>fault</em> (code) remains — reboot is error containment, not repair.</li>
+</ol>
+<ol>
+<li>(a) 2^7 = 128. (b) 128 × 1 ms = 0.128 s. (c) 24 h = 8.64 × 10^7 ms; need 2^B &gt; 8.64 × 10^7, so B &gt; log2(8.64 × 10^7) ≈ 26.36, hence B = 27. Check: 2^26 = 67,108,864 tests ≈ 18.6 h (fits); 2^27 = 134,217,728 ≈ 37.3 h (exceeds 24 h).</li>
+</ol>
+<ol>
+<li>(a) Placements of thread A's 6 blocks among 12 slots: C(12,6) = 924. (b) 924^3 ≈ 7.89 × 10^8, since each iteration interleaves independently. Formula: ((k1 + k2)! / (k1! · k2!))^iterations.</li>
+</ol>
+<ol>
+<li><strong>Fault</strong>: the <code>&lt;=</code> writing 65 bytes into a 64-byte buffer. <strong>Error</strong>: byte 65 corrupts the adjacent chunk's size field (0x31 → 0x41-style damage), silently. <strong>Failure</strong>: the abort in <code>free()</code>. The gap is activation plus propagation latency: the fault fires only when a 64-byte name arrives, and the corrupted chunk must be freed and reused before glibc's check trips — 10^7 cycles later. malloc is the detector, not the culprit; the fix belongs at the <code>&lt;=</code>.</li>
+</ol>
+<ol>
+<li>A <strong>Heisenbug</strong>: a concurrency bug whose probability is set by invisible inputs — thread schedule, allocator state, core count, timing. (a) The debugger stops all threads on attach and at breakpoints, changing the interleaving distribution. (b) printf takes the stdout lock and allocates on first use (buffering), serializing timing and perturbing tcache state. Halving the rate with logging is a measurement effect, not a fix; the repair is synchronization.</li>
+</ol>
+<ol>
+<li>Chain: jemalloc's size classes and free-list policy differ from glibc's tcache → the same allocation sequence places the 64-byte object next to <em>different</em> neighbors → the 65th byte hits a size field on one allocator and padding on the other → the check in <code>free()</code> trips only where metadata was hit. On the dev laptop: <code>LD_PRELOAD=libjemalloc.so.2</code> to match the allocator, <code>MALLOC_PERTURB_=170</code> to surface latent use-after-free (then <code>glibc.malloc.tcache_count=0</code>, <code>taskset</code>). Reproduction = matching invisible inputs.</li>
+</ol>
+<ol>
+<li>(1) <strong>No runtime check</strong>: nothing in C/C++ verifies bounds, lifetime, or ownership at access time, so touching unowned bytes is expressible and unchecked; faults accumulate. (2) <strong>Silent propagation</strong>: memory errors corrupt state and surface as distant, severe failures (leaks, control-flow hijack). (3) <strong>Determinism given layout</strong>: memory faults fire on every execution of the path, so fuzzing finds them at scale while races hide behind rare interleavings — discovery is biased toward memory. (4) <strong>Convergence</strong>: numeric and parsing faults often <em>end</em> as memory corruption (an overflowed length feeds malloc → heap overflow).</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 03 — Software bugs: the taxonomy of failure</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

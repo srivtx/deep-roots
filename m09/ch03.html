@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lock-free — deep-roots</title>
+<meta name="description" content="Chapter 03 of module 09: Lock-free">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Lock-free — deep-roots">
+<meta property="og:description" content="Chapter 03 of module 09: Lock-free">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Lock-free — deep-roots">
+<meta name="twitter:description" content="Chapter 03 of module 09: Lock-free">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 09 &middot; from MESI to consensus</div>
+<h1 class="post-title">Lock-free</h1>
+<div class="post-meta">chapter 03 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Lock-free replaces "one thread owns the critical section" with "anyone may attempt; one attempt atomically wins; losers retry." The primitive is compare-and-swap, the idiom is the CAS loop, the payoff is progress: no lock-holder can be preempted and stall everyone. But CAS compares <em>addresses</em>, not identity — once the allocator reuses an address, "same pointer" is a lie (ABA). And even with ABA fixed, a thread can be <em>reading</em> a node another thread already unlinked — so THE central problem is not ordering (chapter 01 solved that) but <strong>memory reclamation</strong>: when is it safe to free?</blockquote>
+<h2 id="1-why-lock-free-three-guarantees-three-bills">1. Why lock-free: three guarantees, three bills</h2>
+<p>The vocabulary is a ladder. <strong>Obstruction-free</strong>: a thread running solo makes progress. <strong>Lock-free</strong>: <em>some</em> thread completes in bounded steps — the system always progresses. <strong>Wait-free</strong>: <em>every</em> thread completes in bounded steps. The Treiber stack below is lock-free, not wait-free: a specific thread can fail its CAS unboundedly while others win.</p>
+<p>What the rung buys:</p>
+<ul>
+<li><strong>No lock-holder preemption cliff.</strong> Chapter 02's poison case: 3 threads on 2 cores, the holder preempted mid-critical-section, every waiter blocked for a timeslice (~ms). A preempted lock-free thread just has a half-finished CAS attempt — a failed attempt blocks nobody.</li>
+<li><strong>Priority-inversion immunity.</strong> A lock has an owner, and an owner can be low-priority (Mars Pathfinder, chapter 02's PI futex). A CAS attempt has no owner: nothing to invert, no inheritance protocol to enable.</li>
+<li><strong>Signal safety.</strong> A mutex in a signal handler deadlocks if the interrupted thread holds it (async-signal-unsafe). A CAS loop on one word is handler-callable; the kernel uses lock-free paths exactly where sleeping is illegal (NMI, interrupt context).</li>
+</ul>
+<p>The three bills: <strong>complexity</strong> (sections 2–4); <strong>retries</strong> — contention doesn't queue, it wastes work: N-1 threads fail per winner, and the mutex wins (section 5's number); and <strong>reclamation</strong> — the next two sections.</p>
+<h2 id="2-the-cas-loop-and-the-bug-it-was-born-with">2. The CAS loop, and the bug it was born with</h2>
+<p>Compare-and-swap, <code>CAS(addr, expected, desired)</code>: atomically, if <code>*addr == expected</code>, store <code>desired</code> and report success; else fail. On x86-64: one instruction, <code>lock cmpxchg</code> (~15–20 cycles, Skylake-class). Every lock-free structure is one idiom — <strong>read</strong> the word, <strong>compute</strong> the new world as if it still held, <strong>CAS</strong> to publish, <strong>retry</strong> with the value the failed CAS refreshed. Applied to a stack (Treiber, 1986): <code>push(n)</code> sets <code>n-&gt;next = head</code> and CASes head to <code>n</code>; <code>pop()</code> reads head <code>h</code>, reads <code>h-&gt;next</code> <code>n</code>, CASes head to <code>n</code>. Full code in the lab.</p>
+<p>Now derive the bug. The CAS guard asks "is head still <em>equal</em> to <code>h</code>?" — an <em>address</em> comparison, and the world may change as long as head's address returns to <code>h</code>: the allocator frees a node and hands its address to a new allocation (glibc's tcache is LIFO per size class, module 01 ch19), or the same node object is popped and pushed again:</p>
+<pre><code class="language-text">ABA, step by step (the lab's "break" mode; stack A -&gt; B -&gt; C):
+
+ step   T1 (victim)                  T2 (attacker)         head     pool
+ -----  ---------------------------  --------------------  -------  ------
+   1    h = A ; n = h-&gt;next = B                             A-&gt;B-&gt;C  {}
+        [flag-forced "preemption" here]
+   2                                 pop: CAS(A,B); free A  B-&gt;C     {A}
+   3                                 pop: CAS(B,C); free B  C        {A,B}
+   4                                 push: pool hands out  N4-&gt;C     {B}
+                                     A's slot -&gt; NEW node N4
+   5    CAS(head, A, B)                                    B (!)     {B}
+        head == A?  N4 IS at A's address -&gt; "yes":
+        installs the stale, retired B
+   6    node-5 reuses B's slot; its      head -&gt; node-5 -&gt; node-5 -&gt; ...
+        next = head = itself             node-3 (C) unreachable</code></pre>
+<p>The deeper point: <strong>pointer equality is not identity.</strong> Even in a GC language, the same-object flavor (pop A, pop B, push A) still passes the guard — B's payload comes back twice. "ABA" names the sequence head observes: A, (not A), A.</p>
+<p>Three fixes:</p>
+<ul>
+<li><strong>Tagged pointers</strong> (generation counters): compare {address, generation} instead of the address; every successful CAS bumps the generation, so a returning address fails the guard. Costs a wider atomic: 16-byte <code>cmpxchg16b</code> (x86-64, <code>-mcx16</code> + libatomic), or the lab's 48-bit pointer + 16-bit generation in one word.</li>
+<li><strong>LL/SC</strong> (load-linked/store-conditional): the linked load arms a monitor; the conditional store fails if <em>any</em> write hit the address since, not merely if the value returned — ABA-free by construction (ARM64 <code>ldxr</code>/<code>stxr</code>). But pairs fail spuriously, and ARMv8.1's LSE atomics reintroduced real CAS: porting x86 lock-free code to ARM is where ABA bugs wake up.</li>
+<li><strong>DCAS</strong> (CAS over two locations) never went mainstream; <code>cmpxchg16b</code> is its 16-byte single-location descendant.</li>
+</ul>
+<p>The tag fixes the guard, not line 1 of the loop: <code>h-&gt;next</code> dereferences <code>h</code> between load and CAS — if another thread freed <code>h</code> in that window, the read itself is a use-after-free, tag or no tag. Identity and lifetime are separate problems; the second is bigger.</p>
+<h2 id="3-the-problem-when-can-you-free-a-node-readers-might-hold">3. THE problem: when can you free a node readers might hold?</h2>
+<p>Locked code never asks this: exclusion means nobody is inside when you unlink and free. Lock-free code removed exclusion, so the <em>loser</em> of a CAS was legitimately reading the nodes it lost on — free them anyway and every section-2 algorithm is a use-after-free generator. The three industrial answers share one shape: <em>defer</em> the free until provably nobody holds the node.</p>
+<p><strong>Hazard pointers</strong> (Michael, 2004). Each thread owns a few published slots (1–2 typical): pointers saying "I am reading this node." To protect <code>p</code>: publish <code>haz = p</code>, then <em>validate</em> — re-read head; it must still equal <code>p</code> (publishing after a removal is the racy window; validation closes it). A remover CASes the node out and appends it to a per-thread <strong>retire list</strong> instead of freeing: a <strong>scan</strong> reads every thread's slots — O(N_threads × K) loads — frees each retired node in no slot, defers the rest to the next scan.</p>
+<p><strong>Epochs.</strong> A global epoch counter advances as writers retire; a thread entering a read section publishes the global epoch it <em>observes</em>; a node retired at epoch R is freed when <code>min_observed &gt; R</code> over all threads — everyone has since entered a later read section, so no live reader started before the retirement. One atomic load+store per critical section, the free decision O(N_threads) epoch reads. The bill: one parked thread pins an entire epoch's retires — latency is governed by the minimum, always.</p>
+<p><strong>RCU</strong> (read-copy-update), the Linux workhorse (thousands of call sites): make readers publish <strong>nothing</strong>. <code>rcu_read_lock()</code> compiles to no atomic, no barrier (at most a preemption-count bump). A writer copies the structure, updates the copy, publishes the new pointer with one release store, and retires the old version to be freed after a <strong>grace period</strong> — proof every CPU passed a <em>quiescent point</em> (context switch, idle, return to userspace), so no reader still holds the old pointer. <code>synchronize_rcu()</code> blocks ~25–60 ms on small quiet systems (kernel 5.x, order-of-magnitude; load and config swing it); <code>call_rcu()</code> turns the wait into a callback.</p>
+<p>Why RCU owns read-mostly workloads: readers write no shared memory, so they generate <strong>no coherence transaction at all</strong> — read throughput is flat in core count, the only zero-reader-cost scheme of the three. The bills land on writers: ms reclamation latency, a copy per update, and memory pinning — every retired version lives until its grace period completes, so pending reclamations grow with write rate × grace period — the "memory cost of RCU" you see as RSS growth during write spikes.</p>
+<h2 id="4-the-push-pop-asymmetry-and-the-line-you-share-by-accident">4. The push/pop asymmetry, and the line you share by accident</h2>
+<p>A pushed node has two parts: its <em>fields</em> and the <em>head pointer</em> that announces them — chapter 01's message-passing litmus with a pointer for the flag, so the edges are directional:</p>
+<ul>
+<li><strong>Push pays release.</strong> The pusher writes the node's fields, <em>then</em> publishes via the head CAS; release forbids the field writes from sinking below the publication. With a relaxed CAS, a popper on weak hardware can acquire head == node while the fields are still invisible.</li>
+<li><strong>Pop pays acquire.</strong> The popper loads head and immediately dereferences <code>h-&gt;next</code> — the load must synchronize with the pusher's release CAS, which happens exactly when it reads the value that CAS wrote (the read-from condition, chapter 01). The pop CAS itself is <code>acq_rel</code>: acquire for the unlink, release ordering the retirement against later scanners.</li>
+</ul>
+<p>The compression: <strong>release on push, acquire on pop — the edge lives with the pointer, and each side pays only its direction.</strong> <code>seq_cst</code> buys a total order nothing here depends on (no Dekker-shaped handshake); <code>relaxed</code> on both sides is a torn publication. On x86-64 both orderings are free (plain <code>mov</code> — TSO); on ARM64 they are real — code "verified on Intel" ships ordering bugs to ARM.</p>
+<p>False sharing, revisited with a CAS budget. Per-thread state is the point of lock-free design — hazard slots, counters, retire lists — and two threads' atomics one line apart are one coherence domain short of one variable. A <code>fetch_add</code> needs the line Exclusive/Modified (chapter 20): shared means invalidate + transfer per op, ~40–100 ns, versus ~5 ns local (5.1 ns measured, this box). The fix is 56 bytes of padding to the 64-byte line — why the kernel's <code>per_cpu</code> data gives each CPU its own line. (This 2-vCPU VM shows ~20–26 ns flat across all layouts — the vCPUs evidently share a physical core's caches; verify on bare metal.)</p>
+<h2 id="5-when-not-to-go-lock-free-the-honest-table">5. When NOT to go lock-free: the honest table</h2>
+<div class="table-wrap"><table><thead><tr><th>Your situation</th><th>Use</th><th>Why</th></tr></thead><tbody><tr><td>Read-mostly, hot reads</td><td><strong>RCU</strong></td><td>Zero reader cost, flat read scaling; ms reclamation and copy-on-write acceptable</td></tr><tr><td>Write-heavy, small, contended</td><td><strong>Mutex or shard</strong></td><td>The CAS retry storm wastes the losers — measured: mutex 1.5–1.9x faster (2 threads, this box)</td></tr><tr><td>Low contention, simple invariant</td><td><strong>Mutex</strong></td><td>4 ns uncontended (chapter 02); a bug surface you can reason about</td></tr><tr><td>GC language (Java, Go, JS)</td><td><strong>Lock-free, cheaply</strong></td><td>The GC <em>is</em> your epoch system — reclamation is free; tags still needed for same-object ABA</td></tr><tr><td>Signal handlers, NMI, no-sleep paths</td><td><strong>Atomics / lock-free</strong></td><td>No owner to deadlock against; bounded work</td></tr><tr><td>Hard per-thread latency bound</td><td><strong>Rethink</strong></td><td>Wait-free is research-grade; shard or use channels (ch04)</td></tr></tbody></table></div>
+<p>The meta-rule: lock-free is a <em>progress guarantee</em>, not a performance tier. Reach for it for the guarantee or RCU's read scalability — never "because locks are slow" (measure: <code>perf lock</code>, chapter 02).</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The asymmetry rule</strong>: release on push, acquire on pop; the pop CAS is <code>acq_rel</code> (acquire for the unlink, release for the retirement); counters are relaxed. Nothing stack-shaped needs <code>seq_cst</code> — no Dekker handshake exists.</li>
+<li><strong>RCU's zero-reader-cost trick</strong>: readers touch no shared writable line — no atomic, no barrier, nothing to invalidate. All bills are writer-side: <code>synchronize_rcu()</code> ~25–60 ms (expedited ~1–5 ms, for IPIs), plus memory pinned by pending reclamations (write rate × grace period).</li>
+<li><strong>Hazard-pointer scan cost</strong>: O(N_threads × K) slot reads, amortized — real libraries (folly, liburcu) scan per ~64–128 retirements, not per retire. Publication is one relaxed store; the <em>validation</em> re-read is what makes it sound.</li>
+<li><strong>False-sharing padding is a number, not a style</strong>: 64-byte lines; cross-core transfer ~40–100 ns (chapter 02's rung two) vs ~5 ns local (5.1 ns measured, this box). <code>alignas(64)</code> hazard slots, counters, retire lists — or <code>per_cpu</code>, the kernel's systematic version.</li>
+<li><strong>When NOT to</strong>: contended small structures (measured: Treiber 196–238 ns vs mutex 121–134 ns per push+pop pair, 2 threads, this box); code untested on the weak hardware it targets; anything whose reclamation you haven't designed — that's the hard part.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>One program, three modes: <code>break</code> (plain pointer CAS + naive free — ABA forced), <code>fix</code> (tagged word), <code>hazards</code> (retire lists + printed scan decisions). Debian 13, g++ (Debian 14.2.0-19) 14.2.0, kernel 5.10.134, 2-vCPU Intel Xeon VM. The elided harness (~15 lines per mode) forces the interleaving with release/acquire flags standing in for preemption: victim reads <code>h</code>, <code>h-&gt;next</code>, parks; attacker pops A, pops B, pushes; victim attempts the stale CAS.</p>
+<pre><code class="language-cpp">// treiber.cpp -- build: g++ -O2 -std=c++17 -pthread treiber.cpp -o treiber
+// usage: ./treiber break | fix | hazards   (includes: atomic, thread,
+// cstdio, cstring, vector)
+struct Node { Node* next; long val; };
+
+// 8-slot pool = malloc/free made observable: free returns the slot, reuse
+// hands out the lowest free slot -- what a tcache bin does (M01 ch19).
+static Node pool[8];  static bool used[8];
+static Node* pool_take(long val) {
+    for (int i = 0; i &lt; 8; i++) if (!used[i])
+        { used[i] = true; pool[i].val = val; pool[i].next = nullptr;
+          return &amp;pool[i]; }
+    return nullptr;
+}
+static void pool_free(Node* n) { used[n - pool] = false; }
+
+// ---- plain stack: CAS on the raw pointer, naive immediate free (BREAKABLE)
+static std::atomic&lt;Node*&gt; phead{nullptr};
+// push(n): n-&gt;next = head; CAS(head -&gt; n, release); retry; prints its slot.
+static Node* pop_plain() {
+    for (;;) {
+        Node* h = phead.load(std::memory_order_acquire);
+        if (!h) return nullptr;
+        Node* n = h-&gt;next;                 // plain read: can go stale
+        if (phead.compare_exchange_weak(h, n,
+              std::memory_order_acq_rel, std::memory_order_acquire)) {
+            pool_free(h);                  // naive: freed immediately
+            printf("  POP  node-%ld -&gt; RETIRED, freed now\n", h-&gt;val);
+            return h;
+        }                                  // failed CAS refreshed h: retry
+    }
+}
+
+// ---- tagged stack: 48-bit pointer + 16-bit generation in one word.
+// x86-64 user VAs &lt; 2^47, so bits 48-63 are spare. NOT portable to
+// 52-bit VAs (ARM64 LVA, LA57) -- there use a 16-byte CAS instead.
+static std::atomic&lt;uint64_t&gt; tw{0};
+static Node* decode(uint64_t w) { return (Node*)(uintptr_t)(w &amp; 0x0000FFFFFFFFFFFFULL); }
+static uint64_t gen(uint64_t w) { return w &gt;&gt; 48; }
+static uint64_t encode(Node* p, uint64_t t) { return (uint64_t)(uintptr_t)p | (t &lt;&lt; 48); }
+static Node* pop_tag(std::vector&lt;Node*&gt;* retire) {
+    for (;;) {
+        uint64_t w = tw.load(std::memory_order_acquire);
+        Node* p = decode(w);
+        if (!p) return nullptr;
+        Node* n = p-&gt;next;                 // safe only if p cannot be freed yet
+        if (tw.compare_exchange_weak(w, encode(n, gen(w) + 1),
+              std::memory_order_acq_rel, std::memory_order_acquire)) {
+            if (retire) { retire-&gt;push_back(p);
+                printf("  POP  node-%ld -&gt; RETIRED (deferred)\n", p-&gt;val); }
+            return p;                      // rejected: w refreshed, retry
+        }
+    }
+}
+
+// ---- hazard pointers: 1 slot per thread, retire lists, scans that print
+static Node* haz[2];                       // "I am reading this node"
+static std::vector&lt;Node*&gt; retired[2];
+static void scan_free(int tid, const char* when) {
+    std::vector&lt;Node*&gt; keep;
+    for (Node* r : retired[tid])
+        if (haz[0] == r || haz[1] == r) {
+            keep.push_back(r);
+            printf("  SCAN(%s): node-%ld DEFERRED\n", when, r-&gt;val);
+        } else {
+            pool_free(r);
+            printf("  SCAN(%s): node-%ld FREED\n", when, r-&gt;val);
+        }
+    retired[tid].swap(keep);
+}</code></pre>
+<p><code>fix</code> repeats the dance on the tagged word; <code>hazards</code> has a slow reader publish <code>haz[0]</code> + validate while a drainer pops all 5 nodes into <code>retired[1]</code> and scans twice, either side of the slot's release. Output:</p>
+<pre><code class="language-console">$ g++ -O2 -std=c++17 -pthread treiber.cpp -o treiber
+$ ./treiber break
+  POP  node-1 -&gt; RETIRED, freed now
+  POP  node-2 -&gt; RETIRED, freed now
+  PUSH node-4 at slot 0
+T1: CAS(A -&gt; B) SUCCEEDED: stale B installed as head
+main: node-5 allocated at B's recycled address
+  PUSH node-5 at slot 1
+traversal: node-5 -&gt; node-5 -&gt; node-5 -&gt; node-5 -&gt; (self-loop; node-3 unreachable)
+$ ./treiber fix
+T2: pop -&gt; node-1
+T2: pop -&gt; node-2
+T2: re-push node-1 (same object, gen advanced)
+T1: CAS REJECTED: expected gen 3, current gen 6 -&gt; ABA defeated, retry
+T1: retry pop -&gt; node-1
+$ ./treiber hazards
+  POP  node-1 -&gt; RETIRED (deferred)          ... nodes 2-5 likewise
+  SCAN(first): node-1 DEFERRED
+  SCAN(first): node-2 FREED                  ... nodes 3-5 likewise
+  SCAN(final): node-1 FREED</code></pre>
+<p>What to notice: in <code>break</code>, A and B are freed, both addresses recycled, and T1's CAS passes the <em>address</em> guard — the traversal self-loops, node-3 lost. In <code>fix</code>, the guard fails on the <em>generation</em> (3 vs 6 — T2's three CASes); the retry pops correctly. In <code>hazards</code>, 2 slot reads decide 5 nodes' fate; the deferred node flips to FREED only after its holder's release. Then delete <code>pool_free(h)</code> from <code>pop_plain</code> and re-run <code>break</code>: ABA vanishes — and a leak appears. That edit <em>is</em> the reclamation problem.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Diagnosing a rare lock-free crash</strong>: head pointing into a freed chunk plus an allocator that reuses addresses is ABA until proven otherwise — and you can name both halves (identity: tag; lifetime: hazard/epoch/RCU) instead of "add more barriers."</li>
+<li><strong>Reading kernel code</strong>: <code>rcu_read_lock</code> / <code>synchronize_rcu</code> / <code>call_rcu</code> now parse as the grace-period protocol — readers are free, the free is ms-late, and RSS growth during write spikes means pending reclamations, not a leak.</li>
+<li><strong>Performance triage</strong>: before replacing a mutex, measure (<code>perf lock</code>, chapter 02) and consult section 5 — the mutex won here; if reads dominate, the answer is RCU, not a fancier CAS.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch19</strong> — allocator internals: tcache LIFO reuse turns "freed" into "same address again" — ABA's other half.</li>
+<li><strong>Module 01 ch20</strong> — the MESI transactions every CAS bills you for, and the 64-byte line that makes padding necessary.</li>
+<li><strong>Module 09 ch01</strong> — push/pop is the message-passing litmus with head as the flag; the read-from condition is why pop's acquire works.</li>
+<li><strong>Module 09 ch02</strong> — the cost ladder this chapter's numbers are priced on; the PI futex, the inversion lock-free sidesteps.</li>
+<li><strong>Module 09 ch04</strong> — ownership transfer over channels: reclamation becomes someone else's problem by construction.</li>
+<li><strong>Module 03 ch03</strong> — the race family as a bug class; Pathfinder at mechanism level.</li>
+<li><strong>Module 12 ch01</strong> — the GPU analog: a warp's atomics to one location serialize at the L2 — the retry storm at warp scale.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Under sustained contention, one specific thread's Treiber pop can fail unboundedly. Which guarantee does the stack provide, which stronger one exists, and what does the stronger one require?</li>
+</ol>
+<ol>
+<li><strong>Concept.</strong> What does an RCU reader <em>not</em> do that a hazard-pointer reader must — and why does that keep read throughput flat as cores are added? Name the two writer-side costs paying for it.</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> Stack A→B→C. T1 reads <code>h = A</code>, <code>n = B</code>, and stalls. T2 pops A, pops B, then pushes a <em>new</em> node the allocator places at A's address, next = C. T1 runs <code>CAS(head, A, B)</code>. What does the CAS do, what is head afterwards, and name two corruptions the traversal can exhibit.</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> Epoch scheme: global epoch 40, observed epochs {12, 40, 40}. Node retired at epoch 11 — freed or deferred? And at 12? Which thread is the bottleneck, and what does it pin?</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis.</strong> A production lock-free stack crashes every few days. The core shows <code>head</code> pointing into a freed chunk; allocator logs show that chunk freed via tcache and re-served 200 ns later. Name the failure and give two independent fixes, one per half.</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis.</strong> A lock-free list pushes nodes with a <em>relaxed</em> CAS, fields written just before the push. Poppers rarely see zeroed fields on ARM64, never on x86-64. Which edge is missing, why does x86-64 hide the bug, and what ordering pair fixes it?</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis.</strong> A hazard-pointer service's RSS climbs during traffic spikes and drains in quiet periods; the retire lists grow. Diagnose and name two mitigations.</li>
+</ol>
+<ol>
+<li><strong>Cross-module (ch02, module 03 ch03).</strong> Mars Pathfinder inverted priorities because a lock has an <em>owner</em>. Why can a CAS attempt not be priority-inverted, and what failure replaces inversion for a low-priority thread under contention?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Lock-free</strong> — the system always progresses (some thread's CAS succeeds) while an individual thread can starve. <strong>Wait-free</strong> bounds <em>each</em> thread's steps, which requires algorithms with no retry loops at all (helping schemes, slot arrays) — costlier and rare.</li>
+</ol>
+<ol>
+<li><strong>The RCU reader publishes nothing</strong> — no slot store, no atomic, no barrier — so it writes no shared cache line and generates no coherence traffic: readers cannot slow each other at any core count. Writers pay the ms-scale grace period and memory pinned by pending reclamations, plus a copy per update.</li>
+</ol>
+<ol>
+<li><strong>The CAS succeeds</strong> — the guard compares addresses, and the new node occupies A's address. Head becomes the retired node B. Corruptions: (a) use-after-free — B's memory may serve another allocation, so <code>B-&gt;next</code> is arbitrary; (b) duplication — B's payload returns a second time; C may be lost (the lab's <code>break</code> run: self-loop).</li>
+</ol>
+<ol>
+<li>Epoch 11: <strong>freed</strong> — <code>min_observed = 12 &gt; 11</code>. Epoch 12: <strong>deferred</strong> — strict <code>&gt;</code>, and thread 1 sits <em>at</em> 12, so a reader that started then might still hold the node. Thread 1 pins the whole epoch-12 retire set: reclamation waits on the slowest observer.</li>
+</ol>
+<ol>
+<li><strong>ABA, the allocator-reuse flavor.</strong> Identity half: a tagged pointer (48-bit pointer + 16-bit generation, or 16-byte <code>cmpxchg16b</code>) so the returning address fails the guard. Lifetime half: a reclamation scheme — hazard pointers, epochs, RCU — so a node a reader might touch cannot be freed or reused. Production needs both: the scheme protects the <code>h-&gt;next</code> dereference, the tag the guard.</li>
+</ol>
+<ol>
+<li>Missing: the <strong>release half of the push CAS</strong>. The popper's acquire load of head then pairs with nothing — no read-from edge, no visibility of the field writes, so the node can read half-initialized. x86-64 hides it because TSO already orders stores; ARM64 does not. Fix: push CAS <code>release</code>, pop load <code>acquire</code>.</li>
+</ol>
+<ol>
+<li><strong>Retire-list growth, not a leak</strong>: deferred nodes accumulate while a hazard is held or between scans; pinned memory = retirement rate × deferral time — spiking with traffic, draining when quiet. Mitigate by scanning more often (costs the O(N_threads) scan) or bounding the list with backpressure to writers.</li>
+</ol>
+<ol>
+<li>A lock has an owner — the kernel boosted the low-priority holder via the PI futex's chain. A CAS attempt owns nothing: no holder to preempt, nothing to boost. The replacement failure is <strong>starvation/livelock</strong>: the low-priority thread's CAS attempts fail indefinitely while others win the same word — system-wide progress holds, per-thread does not.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch02.html"><span class="cn-label">previous</span><span class="cn-title">Ch 02</span></a>
+<a class="next" href="ch04.html"><span class="cn-label">next</span><span class="cn-title">Ch 04</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 09 — Concurrency &amp; distributed memory</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

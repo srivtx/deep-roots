@@ -37,3 +37,40 @@ same format.
   was retried successfully.
 - **Result:** pushed to `main`, Pages enabled, live at
   <https://srivtx.github.io/deep-roots/>.
+
+---
+
+## Session 002 — 2026-10-13 · the expansion: modules 02-12, all fields, first principles
+
+- **Task:** extend the program from one module to twelve: write modules 02-12
+  (memory security & exploitation, software bugs, decompilation & RE, Android,
+  iOS, desktop OS internals, COBOL & mainframe, concurrency & distributed memory,
+  compilers & runtimes, database storage engines, GPU & accelerator memory) from
+  first principles at insider depth, with quizzes, labs, and final exams; extend
+  the site to a 12-module program; push.
+- **Agents:** main orchestrator (Super Z / GLM) + ~75 chapter/exam-writing
+  subagents in waves. Main agent wrote the 11 module specs (READMEs with
+  per-chapter mandatory-content checklists) that served as the subagent
+  contracts; every chapter subagent followed the CONVENTIONS.md template
+  (30-second version, derived sections, What insiders know, See it yourself,
+  How to use this knowledge, Connections, 8-question quiz with worked answers).
+- **Content:** 59 new chapters (modules 02-12) + 11 final exams (12 questions
+  each, worked answers). Total program: 82 chapters, ~266,000 words, 59 chapter
+  quizzes + 12 final exams. Labs run on Linux/gcc/gdb/Python (captured real
+  output, platform-marked); Windows/macOS/iOS/Android/COBOL labs are honest
+  documented walkthroughs where the platform is unavailable, marked as such.
+- **Site:** `tools/build_site.py` extended to a multi-module builder: modules
+  02-12 render to `m02/`..`m12/` (per-module chapter pages + landing pages +
+  final exams; module 01 keeps its legacy `chapters/` URLs), program grid on the
+  home page, sitemap extended to 100+ URLs, header nav gains a Modules link.
+  Two converter bugs found by QA and fixed: list-continuation lines swallowing
+  `</details>` when no blank line preceded it (7 chapters affected), and
+  repo-relative `.md` links in one chapter converted to the house plain-text
+  chapter-reference convention. Full QA: 107 generated pages, tag-balance and
+  link checks, 0 issues.
+- **Subagent timeouts:** 16 of ~75 subagents hit their session deadline with
+  reports lost but files fully written (verified by structure grep + word count
+  + marker checks after each wave) — the same failure mode as session 001,
+  handled the same way: verify the artifact, trust the artifact.
+- **Result:** all 12 modules LIVE, committed and pushed to `main`:
+  <https://srivtx.github.io/deep-roots/>.

@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The memory-bug family — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 03: The memory-bug family">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The memory-bug family — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 03: The memory-bug family">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The memory-bug family — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 03: The memory-bug family">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 03 &middot; the four families and the machinery that finds them</div>
+<h1 class="post-title">The memory-bug family</h1>
+<div class="post-meta">chapter 02 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Module 01 ch21 said memory safety fails four ways; this chapter is the same physics read as a code-review checklist. Every memory bug is one sentence: <em>some bytes were used outside the size and lifetime their owner granted.</em> From that invariant derive the whole family — overflow, off-by-one, use-after-free, double-free, uninitialized read, escaped pointer — plus the managed-language cousins (C++ iterator invalidation, Java static-collection leaks, Python <code>__del__</code> cycles). Each has a shape you can see in a diff, a sanitizer that catches it, and a CVE-shaped twin that shipped. The rule that survives all of them: every pointer-shaped thing needs a named owner of its lifetime.</blockquote>
+<h2 id="1-one-invariant-six-violations">1. One invariant, six violations</h2>
+<p>Memory is a flat byte array; ownership and lifetimes are conventions on top (module 01 ch03–05): a stack frame owns its locals for a call (ch04), a heap chunk its <code>malloc</code>ed bytes until one <code>free</code> (ch05), an array its indices <code>0..n-1</code>. None of it is machine-enforced. The invariant the programmer must maintain:</p>
+<blockquote><strong>Every byte access is inside one owner's granted region, inside that owner's lifetime, and reads a value someone actually wrote.</strong></blockquote>
+<p>Violate the region → overflow or off-by-one. Violate the lifetime → use-after-free, double-free, the escape. Violate "actually wrote" → the uninitialized read. That is the entire family, derived, not memorized:</p>
+<div class="table-wrap"><table><thead><tr><th>Shape</th><th>Violation</th><th>What physically happens</th><th>Detector (→ ch05)</th><th>CVE-shaped twin</th></tr></thead><tbody><tr><td>Overflow (write)</td><td>region</td><td>bytes land in the neighbor's chunk/frame</td><td>ASan redzones</td><td>Morris worm, 1988 (<code>fingerd</code>/<code>gets</code>)</td></tr><tr><td>Out-of-bounds (read)</td><td>region</td><td>neighbor's bytes are <em>exfiltrated</em></td><td>ASan</td><td>Heartbleed, CVE-2014-0160</td></tr><tr><td>Off-by-one</td><td>region, by exactly 1</td><td>one byte past the fence</td><td>UBSan <code>-fsanitize=bounds</code></td><td>NULL-byte heap poisoning (module 02 ch04)</td></tr><tr><td>Use-after-free</td><td>lifetime</td><td>access into a <em>re-allocated</em> chunk</td><td>ASan quarantine</td><td>CVE-2019-5786 (Chrome <code>FileReader</code>)</td></tr><tr><td>Double-free</td><td>lifetime, twice</td><td>same chunk enters two free lists</td><td>ASan; glibc ≥2.29 tcache key</td><td>apt CVE-2020-3810</td></tr><tr><td>Uninitialized read</td><td>"was written"</td><td>leftovers from a previous tenant</td><td>MSan / Valgrind</td><td>kernel stack info-leaks (KMSAN)</td></tr><tr><td>Escape (return of local)</td><td>lifetime</td><td>pointer into a dead stack frame</td><td><code>-Wreturn-local-addr</code> warning</td><td><code>asctime()</code> static returns</td></tr></tbody></table></div>
+<p>MSRC and Chromium 2019 both measured roughly <strong>70% of severe vulnerabilities as memory-safety bugs</strong> (module 01 ch21) — this table from the outside. The rest of the chapter is its rows, one diff at a time.</p>
+<h2 id="2-writing-past-the-end-overflow-and-the-off-by-one-that-guards-it">2. Writing past the end: overflow, and the off-by-one that guards it</h2>
+<p><code>strcpy(dst, src)</code> writes <code>strlen(src) + 1</code> bytes — the <code>+1</code> is the NUL — knowing nothing about what <code>dst</code> owns. The bug is the definition of the function:</p>
+<pre><code class="language-c">/* VULNERABLE (CWE-787): the destination's size is not an input */
+void greet(const char *name) {
+    char buf[64];
+    strcpy(buf, name);      /* writes strlen(name)+1; buf owns 64 */
+}</code></pre>
+<p>The obvious fix is <code>strncpy</code> — where the trap list starts:</p>
+<pre><code class="language-c">char user[8];
+strncpy(user, "Alexander", 8);  /* copies EXACTLY 8 bytes of a 9-char string */
+/* Trap 1: no NUL is written when strlen(src) &gt;= n. strlen(user) then walks
+   past user[7] into whatever the neighbor stores.                    */
+/* Trap 2: when strlen(src) &lt; n, strncpy ZERO-PADS the rest of dst —
+   memset-sized cost on big buffers, a real hotspot.                 */</code></pre>
+<p>Trap 1 is the dangerous one: a "bounded" copy that builds a non-terminated string, so the <em>next</em> string call overflows on your behalf. Silent truncation is the same call's data-side CVE shape: a truncated identifier still compares unequal and skips a permission check. The honest pattern makes the size an input to a <em>decision</em>:</p>
+<pre><code class="language-c">/* FIXED: check-then-copy */
+if (strlen(name) &gt;= sizeof buf) { return -1; }
+strcpy(buf, name);</code></pre>
+<p>The off-by-one is the overflow's minimal form; derive it as a fencepost: 8 elements have valid indices <code>0..7</code> — 8 slots between 9 fenceposts — and a loop written <code>i &lt;= 8</code> visits the ninth fencepost as a slot:</p>
+<pre><code class="language-text">        index:    0     1     2     3     4     5     6     7   |  8
+                 +-----+-----+-----+-----+-----+-----+-----+-----+---------+
+   int v[8]:     |  1  |  1  |  1  |  1  |  1  |  1  |  1  |  1  | guard?? |
+                 +-----+-----+-----+-----+-----+-----+-----+-----+---------+
+                   ^--- owned by v ----------------^  ^-- v[8]: NOT yours
+                                                          (ASan redzone)</code></pre>
+<p>The standard is precise: you may <em>form</em> the one-past-the-end pointer (<code>v + 8</code>) — end-iterators depend on it — but never <em>dereference</em> it. In the heap, the extra byte often lands on the next chunk's size field — the "off-by-one NULL-byte overwrite" that module 02 ch04 turns into an exploit primitive.</p>
+<h2 id="3-lifetimes-out-of-order-use-after-free-and-double-free">3. Lifetimes out of order: use-after-free and double-free</h2>
+<p><code>free(p)</code> says <em>these bytes now belong to the allocator</em> (module 01 ch05, ch19). They do not vanish: glibc 2.41 files small chunks into a per-thread tcache bin within microseconds, and the next same-size <code>malloc</code> pops the same address back out — owned by someone else. A UAF is not "read garbage" but "read the <em>next tenant's</em> data," or write their function pointer. Hence the exploit-chain opener (module 02 ch05).</p>
+<p>Two review shapes dominate. First, the observer/callback pattern — an object holds raw pointers it promises to notify, and one listener dies first:</p>
+<pre><code class="language-cpp">class Session {                          // the publisher
+    std::vector&lt;Listener*&gt; listeners_;   // raw = "I do NOT own these"
+public:
+    void fire() { for (auto* l : listeners_) l-&gt;on_event(this); }
+};
+// Bug: a listener forgets to unregister in ~Listener();
+// the next fire() calls into freed memory: heap-use-after-free.</code></pre>
+<p>Second, destructor-triggered notification: a destructor fires events while its neighbors are <em>also</em> being destroyed (a registry clearing at static-destruction time), after the receiver's lifetime ended. Both are intermittent — crashing only when the allocator reuses the freed bytes before the next <code>fire()</code>.</p>
+<p>The double-free is the error-path bug, because happy paths are tested and error paths are not:</p>
+<pre><code class="language-c">int reload(Entry *e, const char *src) {
+    free(e-&gt;name);               /* release the old buffer first */
+    char *fresh = malloc(strlen(src) + 1);
+    if (!fresh) return -1;       /* BUG: e-&gt;name still holds the OLD,
+                                     already-freed pointer        */
+    strcpy(fresh, src);
+    e-&gt;name = fresh;             /* fixes the dangling copy —
+                                     skipped on the error path    */
+    return 0;
+}
+/* Later cleanup: free(e-&gt;name) -&gt; second free of the same chunk. */</code></pre>
+<p>The bug lives in the gap between "free" and "reassign": every early return leaves a dangling copy. ASan catches it in testing by <em>quarantining</em> freed chunks instead of reusing them.</p>
+<h2 id="4-reading-what-was-never-written-uninitialized-data-and-the-escape">4. Reading what was never written: uninitialized data and the escape</h2>
+<p>The uninitialized read never leaves your own frame, and it is the one that changes with optimization level — why "works at -O0, breaks at -O2" is folklore. The mechanism is stack reuse (module 01 ch04): at <code>-O0</code>, locals live at fixed frame offsets, so an uninitialized <code>x</code> reads what the <em>previous</em> call at that depth left; at <code>-O2</code>, <code>x</code> gets a register never written, and the compiler — same UB clause — may optimize the read into anything:</p>
+<pre><code class="language-c">static int f(void) {
+    int x;              /* never initialized */
+    return x + 1;       /* UB: read of an indeterminate value */
+}
+static void dirty(int a, int b) { int junk = a * b; (void)junk; }
+int main(void) {
+    dirty(41, 1);       /* leaves 41 in this stack region */
+    printf("%d\n", f());
+}</code></pre>
+<p>Verified on GCC 14.2.0 (Debian, x86-64): <code>-O0</code> prints <strong>42</strong> (frame reuse), <code>-O2</code> prints <strong>1</strong> (register held 0) — no answer is correct under undefined behavior. The production version is the info-leak: kernel structs copied to userspace with uninitialized padding leak stack contents (KMSAN in-kernel; userspace needs MSan on <em>every</em> library — ch05).</p>
+<p>The escape is the mirror: the value <em>was</em> written, to a frame that no longer exists.</p>
+<pre><code class="language-c">char *label(void) {
+    char buf[16];       /* owned by label()'s frame (ch04) */
+    snprintf(buf, sizeof buf, "hello");
+    return buf;         /* frame dies at return; pointer dangles */
+}</code></pre>
+<p>GCC has warned for decades (<code>-Wreturn-local-addr</code>, on by default) — the warning never to be silenced with a cast: the returned address points into stack memory the <em>next call anywhere</em> overwrites. Its civilized cousin, returning a static buffer (POSIX <code>asctime()</code>), trades the crash for a data race between <code>ctime()</code> callers. Same root cause: no owner holds the lifetime.</p>
+<h2 id="5-managed-runtimes-inherit-the-family-c-java-python-shapes">5. Managed runtimes inherit the family: C++, Java, Python shapes</h2>
+<p>The invariant does not disappear under a garbage collector; it mutates.</p>
+<p><strong>C++: iterator invalidation is the off-by-one at scale.</strong> <code>push_back</code> amortizes growth by capacity doubling (module 01 ch19: 1→2→4→8…), and doubling means <em>reallocate and copy</em> — new buffer, new addresses:</p>
+<pre><code class="language-cpp">std::vector&lt;int&gt; v{1, 2, 3, 4};
+int *first = &amp;v[0];         // points into the current buffer
+for (int i = 0; i &lt; 4; i++)
+    v.push_back(i);         // insert #5: capacity 4 -&gt; 8, buffer MOVES
+// first now dangles: invalid by the STANDARD, not just the allocator —
+// and invisible without annotations, since the old buffer looks intact.</code></pre>
+<p>Review rule: <em>if <code>push_back</code> triggers reallocation, every iterator, pointer, and reference into the vector is dead</em>; check <code>v.capacity()</code>, or <code>reserve()</code> explicitly. Since the language (not the allocator) declares them dead, only ASan container annotations or <code>_GLIBCXX_ASSERTIONS</code> catch the dangling use in tests.</p>
+<p><strong>Java: static collections are immortal, so their contents are too.</strong> No GC collects an object reachable from a <code>static</code> field. The classic leak is a listener registry:</p>
+<pre><code class="language-java">static final Map&lt;String, Listener&gt; REGISTRY = new HashMap&lt;&gt;();
+// every redeploy registers a new Listener holding the new ClassLoader;
+// the old loader can never be collected</code></pre>
+<p>Redeploying app servers die of this — not the heap but <em>Metaspace</em>: each leaked listener pins a leaked <code>ClassLoader</code>, and Metaspace is <em>unbounded</em> by default (set <code>-XX:MaxMetaspaceSize</code> to fail loudly). No sanitizer exists for this class; the detector is a heap dump plus dominator-tree analysis (jcmd, Eclipse MAT); the fix is unregistering on teardown, or weak references.</p>
+<p><strong>Python: refcounting cannot see cycles, and <code>__del__</code> used to make them permanent.</strong> CPython's primary collector is a refcount (module 01 ch14); two objects referencing each other sit at refcount 1 forever, so a tracing GC (three generations, thresholds 700/10/10 — ch14) breaks cycles. Before PEP 442 (Python 3.4), an object with <code>__del__</code> inside a cycle was <em>uncollectable</em> — no safe finalizer order — parked in <code>gc.garbage</code>, which only grew. PEP 442 made such cycles collectable, so on CPython 3.12 they <em>are</em> collected — though <code>__del__</code> can still <em>resurrect</em> an object (store <code>self</code> somewhere). Detectors: <code>gc</code> debugging flags, <code>gc.garbage</code>, <code>objgraph</code>. A <code>__del__</code> is a lifetime contract; contracts need owners.</p>
+<h2 id="6-the-reviewer-s-heuristic-every-pointer-needs-an-owner">6. The reviewer's heuristic: every pointer needs an owner</h2>
+<p>Walk any diff and ask one question per pointer-shaped thing — pointer, reference, iterator, index, handle, callback registration: <em>who owns this lifetime, by name?</em> The six shapes are the six ways the answer goes missing:</p>
+<ul>
+<li><strong>Overflow / off-by-one</strong> — the <em>region</em>'s owner is unknown to the operation (<code>strcpy</code>, <code>&lt;=</code>): make the size an input to a decision.</li>
+<li><strong>Use-after-free</strong> — the <em>target</em>'s owner changed silently (observer lists, late destructors): unregistration must be as visible as registration.</li>
+<li><strong>Double-free</strong> — ownership <em>transferred</em> but a stale copy survived an error path: null-out at the free site, or free in exactly one place.</li>
+<li><strong>Uninitialized</strong> — the owner never wrote the value: initialize, or let MSan prove you wrong.</li>
+<li><strong>Escape</strong> — the owning frame ended while the pointer lived on: never silence <code>-Wreturn-local-addr</code>.</li>
+<li><strong>Managed variants</strong> — the owner is a static field, a reallocated buffer, or an invisible cycle: same question, new vocabulary.</li>
+</ul>
+<p>This is why Rust's borrow checker (module 01 ch10) is a memory-bug <em>exterminator</em>: it makes the heuristic machine-checked.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><code>strncpy</code>'s <code>n</code> counts <em>destination</em> bytes; <code>strncat</code>'s <code>n</code> counts <em>source</em> chars and <strong>always</strong> NUL-terminates — the asymmetry bites everyone once. When <code>strlen(src) &lt; n</code>, strncpy zero-fills the rest: 4 KiB of memset for a 5-char copy.</li>
+<li>GCC's <code>-Wstringop-truncation</code> (in <code>-Wall</code> since GCC 8) fires on the exact truncating-<code>strncpy</code> shape; GCC 14 adds <code>-Wuse-after-free</code>, flagging <code>p</code> used after <code>free(p)</code> <em>within one function</em> — neither warning catches the cross-function UAF.</li>
+<li><code>std::vector</code> invalidation: <code>push_back</code> invalidates everything iff it reallocates (watch <code>capacity()</code>); middle <code>insert</code>/<code>erase</code> invalidates always, even without growth; <code>std::deque::insert</code> kills all iterators but keeps references to end elements.</li>
+<li>glibc 2.26 introduced tcache (per-thread, 64 bins, 7 chunks each — module 01 ch19); glibc 2.29 added the double-free <code>key</code> check, so production often catches the fast double-free with <code>free(): double free detected in tcache 2</code> — ASan still catches the ones tcache misses.</li>
+<li>ASan catches UAF only because it <em>quarantines</em> freed chunks (default ~256 MB held back from reuse); without it, the bug would look like ordinary corruption. And ASan's default does <em>not</em> check stack-use-after-return — set <code>ASAN_OPTIONS=detect_stack_use_after_return=1</code>, the mode that turns escape-the-local into a caught red-zone read.</li>
+<li>Uninitialized reads are invisible to ASan and UBSan — the bits pass every bounds check; only MSan (bit-propagation tracking, all-instrumented builds) or Valgrind see them. The #1 "sanitizers say clean but the bug is real" surprise.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>All commands run on <strong>GCC 14.2.0 (Debian 14.2.0-19), glibc 2.41, x86-64</strong>; outputs are real fragments. Type up two sources first (<code>escape.c</code> and <code>uninit.c</code> are complete in section 4):</p>
+<pre><code class="language-c">/* offbyone.c */
+#include &lt;stdio.h&gt;
+int sum(void) {
+    int v[8] = {1,1,1,1,1,1,1,1};   /* 8 valid indices: 0..7 */
+    int total = 0;
+    for (int i = 0; i &lt;= 8; i++)    /* BUG: &lt;= reads v[8], one past the end */
+        total += v[i];
+    return total;
+}
+int main(void) { printf("total=%d\n", sum()); return 0; }</code></pre>
+<pre><code class="language-c">/* uaf.c */
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+int main(void) {
+    char *name = malloc(8);     /* heap chunk: 8 usable bytes */
+    strcpy(name, "aa");
+    free(name);                /* chunk returns to tcache — pointer dangles */
+    size_t n = strlen(name);   /* use-after-free read */
+    free(name);                /* double-free: the error-path finish */
+    return (int)n;
+}</code></pre>
+<p><strong>1. The off-by-one — the compiler is silent, the sanitizers are not.</strong></p>
+<pre><code class="language-console">$ gcc -Wall -Wextra -c offbyone.c -o /dev/null
+        (no warnings: -Wall cannot see i &lt;= 8 as wrong)
+$ gcc -g -fsanitize=address,undefined offbyone.c -o offbyone &amp;&amp; ./offbyone
+offbyone.c:6:19: runtime error: index 8 out of bounds for type 'int [8]'
+=================================================================
+==25112==ERROR: AddressSanitizer: stack-buffer-overflow on address ...
+READ of size 4 at 0x7fa4cf200040 thread T0
+    #0 ... in sum offbyone.c:6
+    #1 ... in main offbyone.c:9</code></pre>
+<p>Note the division of labor: UBSan names the <em>rule</em> broken, ASan the <em>memory</em> touched — both from one build, which is why <code>-fsanitize=address,undefined</code> is the lab default (machinery: ch05).</p>
+<p><strong>2. The escape — the one the compiler catches for free.</strong></p>
+<pre><code class="language-console">$ gcc -Wall -Wextra -c escape.c -o /dev/null
+escape.c: In function 'label':
+escape.c:5:12: warning: function returns address of local variable
+      [-Wreturn-local-addr]</code></pre>
+<p>No sanitizer needed; on by default, never to be cast away. (To <em>see</em> the corruption: <code>ASAN_OPTIONS=detect_stack_use_after_return=1</code> on the ASan build.)</p>
+<p><strong>3. Use-after-free and the double-free — ASan's signature report.</strong></p>
+<pre><code class="language-console">$ gcc -Wall -Wextra -c uaf.c -o /dev/null
+uaf.c:7:16: warning: pointer 'name' used after 'free' [-Wuse-after-free]
+$ gcc -g -fsanitize=address uaf.c -o uaf &amp;&amp; ./uaf
+==25302==ERROR: AddressSanitizer: heap-use-after-free on address ...
+READ of size 2 ... in strlen
+0x502000000010 is located 0 bytes inside of 8-byte region [...]
+freed by thread T0 here:
+    #0 ... in free
+    #1 ... in main uaf.c:6
+previously allocated by thread T0 here:
+    #1 ... in main uaf.c:4</code></pre>
+<p>The three-stack report (use, free, alloc sites) is the whole investigation in one message; the follow-on <code>free(name)</code> triggers <code>attempting double-free</code>. GCC 14 already flagged the intra-function UAF at <code>-Wall</code>; the sanitizer's edge is the cross-function variants.</p>
+<p><strong>4. The uninitialized read — the one that needs -O0 vs -O2.</strong></p>
+<pre><code class="language-console">$ gcc -O0 uninit.c -o u0 &amp;&amp; ./u0
+42                          # f()'s frame reused dirty()'s slot (ch04)
+$ gcc -O2 uninit.c -o u2 &amp;&amp; ./u2
+1                           # register garbage; UB, not a "different answer"
+$ gcc -O2 -fsanitize=undefined uninit.c -o uub &amp;&amp; ./uub
+1                           # UBSan does NOT catch uninitialized reads</code></pre>
+<p>Neither output is correct. The last line also shows the wrong sanitizer choice: only MSan sees this class (ch05).</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Code review as shape-matching.</strong> When a diff adds a raw pointer field, a callback registration, a <code>strncpy</code>, an early return after a <code>free</code>, or a <code>static</code> collection, name the family and the failure mode <em>before</em> the bug exists — ask the owner question.</li>
+<li><strong>Picking the detector in a second.</strong> Corruption of a neighbor → ASan. Breaks only under <code>-O2</code> → suspected uninitialized read → MSan, not UBSan. Intermittent event-path crash → UAF → ASan quarantine. A <code>tcache 2</code> production message → the glibc ≥2.29 guard caught a double-free; audit every error path.</li>
+<li><strong>Debugging "works on my machine."</strong> Different allocator or optimization level → different layout and registers → different manifestation of the same UB; the -O0/-O2 experiment is the two-machine story in one binary.</li>
+<li><strong>The interview answer with teeth.</strong> "How do you prevent memory bugs?" Not "be careful": <em>name an owner for every lifetime, make sizes inputs to decisions, run ASan+UBSan in CI, and know which class each detector misses.</em></li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch05 / ch19</strong> — what <code>free</code> actually does (bins, tcache) is why a UAF reads the <em>next tenant's</em> bytes and why vector growth reallocates.</li>
+<li><strong>Module 01 ch04</strong> — frame layout and stack reuse are the mechanism behind the -O0 uninitialized value and the escaped local.</li>
+<li><strong>Module 01 ch21</strong> — the four primitive failures; this chapter re-derives them as review shapes with detectors attached.</li>
+<li><strong>Module 02 ch02 / ch04 / ch05</strong> — the exploitation view: off-by-one NULL-byte primitive, glibc metadata attacks, UAF reallocation to a controlled type; defense requires the offense.</li>
+<li><strong>Module 03 ch05</strong> — how ASan's shadow memory, UBSan's checks, MSan's bit propagation, and quarantine actually work.</li>
+<li><strong>Module 10 ch02</strong> — UB as the compiler's optimization license: why an uninitialized read can "become" any value the optimizer prefers.</li>
+<li><strong>Module 01 ch14</strong> — CPython's refcount-plus-generations machinery; why cycles plus <code>__del__</code> need a tracing GC.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>(Concept)</strong> State the single invariant from which all six shapes in this chapter derive, and give the one-line violation each of use-after-free and the uninitialized read commits against it.</li>
+<li><strong>(Concept)</strong> Why does the C standard allow <em>forming</em> <code>v + 8</code> for <code>int v[8]</code> while forbidding <code>v[8]</code>? What does the standard need that pointer for?</li>
+<li><strong>(Predict)</strong> <code>char user[8]; strncpy(user, "Alexander", 8);</code> — describe the exact contents of <code>user</code>, then predict what <code>strlen(user)</code> does and why.</li>
+<li><strong>(Predict)</strong> The <code>dirty()</code>/<code>f()</code> program of section 4 prints 42 at <code>-O0</code> and 1 at <code>-O2</code> (GCC 14.2.0, x86-64). Explain both numbers; which (if either) is correct?</li>
+<li><strong>(Predict, cross-module)</strong> On CPython 3.12, two objects reference each other and both define <code>__del__</code>. Are they collected? What would the answer have been on CPython 3.3, and where would the objects sit?</li>
+<li><strong>(Diagnosis)</strong> A <code>Session</code> keeps <code>std::vector&lt;Listener*&gt;</code> and fires events in its destructor. The crash log shows heap-use-after-free <em>only under heavy load</em>; ASan's "freed by" stack points to <code>~Listener</code>. Name the pattern; why does load make it visible?</li>
+<li><strong>(Diagnosis)</strong> C++ code keeps <code>int *p = &amp;v[0];</code> on a <code>std::vector&lt;int&gt;</code> with 4 elements and capacity 4, then does 5 <code>push_back</code> calls. When exactly does <code>p</code> become invalid, and why may <code>*p</code> still <em>appear</em> to work?</li>
+<li><strong>(Diagnosis, cross-module)</strong> The <code>reload()</code> error path of section 3: explain why it manifests only when <code>malloc</code> fails, why glibc 2.41 may catch it with <code>free(): double free detected in tcache 2</code>, and which single restructuring kills the class.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Invariant:</strong> every byte access must be inside one owner's granted region, inside that owner's lifetime, and read a value actually written. Use-after-free violates <em>lifetime</em>: access after ownership returned to the allocator, likely re-granted to a new tenant. The uninitialized read violates <em>was-written</em>: bytes in-bounds and alive but never stored, so the read yields a previous tenant's leftovers — reuse, not corruption.</li>
+<li>The one-past-the-end pointer makes C's pointer model workable: the end sentinel for iteration (<code>p != v + n</code>) and the anchor of pointer subtraction (<code>v + n - v == n</code>). Forming it accesses no memory; dereferencing it <em>would</em> touch bytes outside the object, so that alone is undefined. 8 slots need 9 valid addresses to bound them.</li>
+<li><code>user</code> holds the 8 bytes <code>A l e x a n d e r</code> and <strong>no NUL</strong> — <code>strncpy</code> terminates only when <code>strlen(src) &lt; n</code>, and here <code>strlen("Alexander") == 9</code>. <code>strlen(user)</code> reads past <code>user[7]</code> until it finds a zero: an out-of-bounds read with attacker-influenced length — the Heartbleed class, minus the network.</li>
+<li>At <code>-O0</code>, locals live at fixed frame offsets; <code>f</code>'s <code>x</code> lands on <code>dirty</code>'s <code>junk</code> (41), so <code>x + 1</code> prints <strong>42</strong> — frame reuse (module 01 ch04) in the act. At <code>-O2</code>, <code>x</code> lives in a register holding 0, printing 1. Neither is correct: the read is undefined behavior, so any value — including one the optimizer <em>chooses</em> (module 10 ch02) — is permitted.</li>
+<li>On CPython 3.12 (PEP 442, 3.4+): yes, the cycle detector collects them, each <code>__del__</code> at most once, in a defined order. On 3.3 the finalizer made the cycle <em>uncollectable</em> — no safe order — so both objects sat in <code>gc.garbage</code> until interpreter exit. Refcounting + cycles + finalizers is exactly where a tracing GC earns its keep (module 01 ch14).</li>
+<li>Destructor-triggered notification to a partially destroyed observer: the listener died before the publisher. Under light load the freed chunk sits in tcache with bytes intact, so the call <em>appears</em> to work; under load, allocations reuse the chunk (tcache: per-thread, 7 deep — module 01 ch19), the callback pointer is overwritten, and the call crashes. Intermittency is allocator timing; ASan makes it deterministic via quarantine.</li>
+<li>Capacity 4, size 4: the first <code>push_back</code> grows to 8 and moves the buffer, so <code>p</code> is invalid immediately (inserts 2–4 fit; the fifth grows 8→16). <code>*p</code> may still appear to work because the freed old buffer is intact until a new tenant claims it: invalid <em>by the standard</em> is not yet <em>corrupt in memory</em> — why only ASan annotations or <code>_GLIBCXX_ASSERTIONS</code> catch it.</li>
+<li>On the happy path <code>e-&gt;name = fresh</code> overwrites the dangling copy first; only the <code>malloc</code>-failure return skips it, leaving <code>e-&gt;name</code> dangling for cleanup to double-free. glibc 2.29+'s tcache key detects a chunk pushed twice into a tcache bin — only while it is still in tcache (7 chunks, same thread); a migrated chunk corrupts free-list metadata instead (module 02 ch04). Class-killer: transfer ownership atomically — assign the new pointer before freeing the old (or null-out at the free site), so no early return observes a dangling copy.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 03 — Software bugs: the taxonomy of failure</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

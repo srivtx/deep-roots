@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WAL &amp; crash recovery — deep-roots</title>
+<meta name="description" content="Chapter 04 of module 11: WAL &amp; crash recovery">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="WAL &amp; crash recovery — deep-roots">
+<meta property="og:description" content="Chapter 04 of module 11: WAL &amp; crash recovery">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="WAL &amp; crash recovery — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of module 11: WAL &amp; crash recovery">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 11 &middot; the disk is the new heap</div>
+<h1 class="post-title">WAL &amp; crash recovery</h1>
+<div class="post-meta">chapter 04 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A database must survive a crash with every acknowledged commit intact and every half-finished transaction gone. The pages are big, random, torn-prone; the log is small, sequential, append-only. The fix is an inversion: make the <strong>log the truth</strong>, demote the <strong>pages to a rebuildable cache</strong>. Changes are logged and made durable first; pages update lazily, under one rule — a page may not reach disk before the log records describing it do: a <em>write barrier</em> (module 10 ch04) in a durability uniform. Recovery replays forward (redo), then erases backward what never committed (undo); group commit — many transactions sharing one fsync — makes it cheap.</blockquote>
+<h2 id="the-inversion-the-log-is-the-truth-the-pages-are-a-cache">The inversion: the log is the truth, the pages are a cache</h2>
+<p>One transaction touches scattered pages: heap, two B-tree leaves, metadata. Chapter 01's physics: the disk's atomicity unit is the <em>sector</em> (512 B–4 KB), not your page (PostgreSQL 8 KB, InnoDB 16 KB) — a mid-transaction crash leaves a state that never legally existed: row updated, index not. Shadow paging — copy every touched page, flip one root pointer: COW at database scale (module 01 ch03) — lost to ~2x write amplification and shattered locality. Production lineage chose <strong>write-ahead logging</strong>: record the <em>description</em> of each change in an append-only log, make <em>that</em> durable, let the pages lag.</p>
+<p>Derive why the log wins: "Insert row (5, 'bob') into page 47" is tens of bytes; the pages it dirties are 8–16 KB each. The log is sequential — the one place a disk streams (ch01: ~200 MB/s sequential vs 100–200 IOPS random on HDD) — and <em>sector-atomic</em>: a record that fits in one sector cannot half-land the way a 16 KB page over 4 KB sectors can. The cheapest durable artifact is the description, not the data. Hence the insider's mantra:</p>
+<blockquote><strong>The log is the truth; the pages are a cache of the log's consequences.</strong></blockquote>
+<p>A lost dirty page costs nothing — redo re-applies the log to it. A lost log record breaks a promise already reported to a user. The phrase traces to Gray &amp; Reuter's <em>Transaction Processing</em> (1993); the machinery is Mohan's <strong>ARIES</strong> (IBM, 1992), below.</p>
+<h2 id="lsns-and-the-wal-rule-a-write-barrier-for-durability">LSNs and the WAL rule: a write barrier for durability</h2>
+<p>Ordering comes from a <strong>log sequence number (LSN)</strong> — a monotone value stamped on every record: InnoDB (MySQL 8.0) an 8-byte byte-offset into the redo stream; PostgreSQL 16 a 64-bit <code>XLogRecPtr</code>, printed as hex like <code>0/16B3748</code>. Two more LSNs close the loop:</p>
+<ul>
+<li><strong>Page LSN</strong> — each page header stamps the LSN of the last record applied to it (PostgreSQL <code>pd_lsn</code>, 8 bytes at page offset 0; InnoDB <code>FIL_PAGE_LSN</code>, 8 bytes at offset 16 of the 16 KB page).</li>
+<li><strong>Flushed LSN</strong> — how far the log is actually durable (written + fsynced).</li>
+</ul>
+<p>Then the <strong>WAL rule</strong>:</p>
+<blockquote>A page may be flushed to disk only if <code>page_LSN ≤ flushed_LSN</code>.</blockquote>
+<pre><code class="language-text">  log (durable through LSN 4000)         buffer pool (RAM)           disk (a cache!)
+  +------+------ ... -----+------+       +----------------------+
+  | 3800 |   ...          | 4000 | &lt;--   | page 12   LSN 3600   |  dirty, evict me
+  +------+------ ... -----+------+ last  +----------------------+
+                                flushed  | page 47   LSN 5200   |  dirty, evict me
+                                         +----------------------+
+  WAL rule:  flush(P)  &lt;=&gt;  page_LSN(P) &lt;= flushed_LSN
+
+  page 12:  3600 &lt;= 4000  -&gt;  OK; its whole history is already durable.
+  page 47:  5200 &gt;  4000  -&gt;  BLOCKED: first force the log (write + fsync
+                              records 4000..5200), THEN flush page 47.
+  If page 47 landed first and the machine died: a page whose only
+  record is gone -&gt; effect with no explanation, unrecoverable.</code></pre>
+<p>Note the shape. Module 10 ch04's card-table <strong>write barrier</strong>: a pointer store may not become <em>visible</em> to the GC before the card is dirtied, or the collector reasons from a stale world. The WAL rule: a page flush may not become <em>durable</em> before its log records are, or the recoverer faces a page with no explanation. Same concept — a happens-before edge at a store, with <strong>durability</strong> standing in for <strong>visibility</strong>, protecting an asynchronous reader from effect-without-record.</p>
+<h2 id="physiological-logging-the-record-format-that-makes-replay-possible">Physiological logging: the record format that makes replay possible</h2>
+<p>What does one record say? Three spots on a spectrum:</p>
+<ul>
+<li><strong>Pure logical</strong> — "INSERT INTO users VALUES (5,'bob')". Tiny, but replay needs the whole query engine and must work on whatever page layout exists at recovery time — whether an index split has been replayed yet changes where the row goes: it re-derives location, so mid-recovery state makes it fragile.</li>
+<li><strong>Pure physical</strong> — "here is the complete 16 KB after-image of page 47". Replay is trivially correct (overwrite; idempotent by construction), but the win is gone: 100–500x more bytes per change — the write amplification you fled returns as log volume.</li>
+<li><strong>Physiological</strong> — InnoDB's choice (Mohan's coinage): <em>physical page identification + logical operation on that page</em>: "apply to page 47: insert record (5,'bob')". The page number stays stable across splits (chapter 02), and the operation lands in the page's own structures — valid at replay time <em>because replay repeats history in order</em>: each page is in exactly the state the record expects.</li>
+</ul>
+<p>The design also buys what recovery leans on: <strong>idempotent redo</strong>. The guard is the page LSN: applying a redo record with LSN <code>L</code> first checks <code>page_LSN(P) ≥ L</code>; if true, <em>skip</em>. The requirement: every redo operation <em>repeatable</em> — no "increment a counter", no absolute offsets; each record self-contained, landing identically twice. (PostgreSQL 16 logs nearer the physical end and insures torn pages differently, below.)</p>
+<h2 id="redo-and-undo-aries-in-one-page">Redo and undo: ARIES in one page</h2>
+<p>Crash: the fsync'd log prefix is intact, the buffer pool is gone. <strong>ARIES</strong> (<em>Algorithms for Recovery and Isolation Exploiting Semantics</em>, Mohan et al., ACM TODS 1992) runs three passes:</p>
+<pre><code class="language-text">  crash!  log timeline (LSNs grow rightward),  * = commit record
+  --| T1: BEGIN UPDATE UPDATE COMMIT* | T2: BEGIN UPDATE UPDATE | T3: BEGIN UPDATE |--
+    ^checkpoint                         ^last flushed LSN (durable to here)
+
+  1. ANALYSIS  from checkpoint: rebuild who was running (losers = T2, T3)
+               and which pages were dirty (the flush list).
+  2. REDO      from checkpoint-LSN forward, apply EVERYTHING, including
+               T2/T3's uncommitted edits ("repeat history"): physiological
+               replay must proceed in exact order to keep pages
+               structurally consistent; the page-LSN check keeps it
+               idempotent.
+  3. UNDO      walk BACKWARD from the log's end: for each loser apply the
+               inverse of each update, logging it as a CLR (Compensation
+               Log Record) -- redo-only, undoNext-linked, so a crash
+               DURING undo resumes where it left off: undo is crash-safe.</code></pre>
+<p>Redo repeats history <em>including work that will be undone</em> — the price of in-order, structurally sound replay, and cheap: sequential I/O. Undo is itself logged — without CLRs, a crash during recovery could loop forever. PostgreSQL's twist: no undo — aborted tuples stay on disk, masked by snapshots, collected by VACUUM (chapter 05); InnoDB erases during recovery, PostgreSQL masks and garbage-collects.</p>
+<h2 id="the-commit-point-one-fsync-many-transactions">The commit point: one fsync, many transactions</h2>
+<p>A transaction is durably committed when the <strong>log flush covering its commit record completes</strong> — not at its last page edit, not when the record reaches the in-memory log buffer. Before that flush, "committed" is a rumor; after it, redo resurrects the transaction.</p>
+<p>So commit latency ≈ fsync latency: consumer NVMe ~1–2 ms; an enterprise SSD with power-loss-protection capacitors ~50–100 µs (ch01's 10x insider gap). One naive client gets <code>1/fsync_time</code> commits/s — a 10 ms fsync is a <strong>100 commits/s ceiling</strong>, CPU speed irrelevant.</p>
+<p><strong>Group commit</strong> breaks it: N transactions reaching the commit point while one fsync is in flight all attach to it — one flush, N durable commits.</p>
+<ul>
+<li>Throughput: <code>N/fsync_time</code> — 8 concurrent committers on that 10 ms disk = 800/s.</li>
+<li>Latency: each still waits ~one fsync epoch — you amortize the only expensive operation on the commit path.</li>
+</ul>
+<p>The implementations are pipelines: a leader takes the log mutex, copies its tail plus waiters' commit records into one write, releases the mutex, then holds only the <em>fsync mutex</em> while the flush runs — writers keep appending and the next batch queues (PostgreSQL's commit-flush queue; InnoDB's log-flush leader, same dance). The knobs, with their loss windows:</p>
+<ul>
+<li><code>synchronous_commit = off</code> (PostgreSQL 16; default <code>on</code>): return before the flush — the WAL writer flushes every <code>wal_writer_delay</code> (200 ms default), bounding loss to ~3x that; you lose durability latency, never consistency.</li>
+<li><code>innodb_flush_log_at_trx_commit = 2</code> (MySQL 8.0; default <code>1</code>): write per commit, fsync ~1/s — survives a mysqld crash (the OS cache holds the bytes), loses ≤ 1 s of commits on power loss.</li>
+</ul>
+<p>Batch geometry + fsync policy is <em>the</em> database tuning lever: it decides commit throughput before any query-level optimization matters.</p>
+<h2 id="checkpoints-and-torn-page-insurance">Checkpoints and torn-page insurance</h2>
+<p><strong>Checkpoints bound recovery.</strong> Without them, redo starts at LSN 0 forever and the log never truncates. A checkpoint asserts: every page dirty as of LSN C is on disk — redo starts at C, log before C is recyclable. Real checkpoints are <em>fuzzy</em>: InnoDB (MySQL 8.0) flushes the dirty list in the background while writes continue and advances the checkpoint when pre-C stragglers drain, force-flushing when redo capacity (<code>innodb_redo_log_capacity</code>, default 100 MB) runs low. PostgreSQL 16 checkpoints every <code>checkpoint_timeout</code> (5 min default) or <code>max_wal_size</code>, spreading writes via <code>checkpoint_completion_target</code> (0.9). Crash-recovery time is proportional to log bytes since the last checkpoint — the "restart took 20 minutes" ticket is a redo-distance question.</p>
+<p><strong>Torn pages are the residual hole.</strong> The WAL rule guarantees the log <em>explains</em> every page — but physiological redo applies operations to a page whose starting state must be valid. Chapter 01: a 16 KB page over 4 KB sectors can half-land; half-old/half-new never legally existed, its checksum fails, and replaying diffs cannot reconstruct what was computed against a whole page. Two insurance designs:</p>
+<ul>
+<li><strong>PostgreSQL</strong>: <code>full_page_writes = on</code> (default) — the first modification of each page after a checkpoint logs the <em>entire page image</em> into the WAL, so a torn page is replaceable wholesale from the log. Cost: WAL bloat while pages dirtied since the checkpoint go unwritten.</li>
+<li><strong>InnoDB</strong>: the <strong>doublewrite buffer</strong> — 2 MB scratch (128 × 16 KB pages, MySQL 8.0 default <code>ON</code>). Flush path: write pages to scratch, fsync, then write to their real tree locations. A tear now hits the <em>second</em> write; the scratch copy is intact, so recovery copies scratch → tree and applies redo. Cost: every flushed page written twice — page-flush write amplification 2x, cheap because the scratch writes are sequential. On CoW filesystems (ZFS, btrfs) pages are never overwritten in place, so doublewrite is redundant there and commonly disabled.</li>
+</ul>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The mantra's lineage</strong>: "the log is the truth" traces to Gray &amp; Reuter (1993); the machinery is Mohan's ARIES (IBM, 1992) — "repeat history" is literally ARIES' slogan. The losing alternative, shadow paging, was COW at database scale, dead within a prototype.</li>
+<li><strong>Why physiological, in one sentence</strong>: pure physical pays 16 KB per change; pure logical can't find its target when page layouts shift mid-recovery; "page + operation" pins the target and keeps the record 100–500x smaller than the pages it describes.</li>
+<li><strong>Group-commit tuning is a hardware question</strong>: a power-loss-protected SSD makes fsync ~50–100 µs, collapsing the case for <code>synchronous_commit=off</code> / <code>flush_log_at_trx_commit=2</code>; consumer NVMe (~1–2 ms fsync) trades a bounded loss window (200 ms–1 s) for multiples of throughput — audit <em>which</em> SSD before touching the knob.</li>
+<li><strong>Doublewrite's real cost</strong>: 2x on page-flush bandwidth (sequential, so ~2 MB per batch), zero on the commit path — pure waste on CoW filesystems, the classic "disable it on ZFS" folklore. PostgreSQL's <code>full_page_writes</code> is the same insurance paid in WAL volume — visible as WAL spikes right after every checkpoint.</li>
+<li><strong>Idempotent redo's hard requirement</strong>: every redo op repeatable, with the page LSN as dedup guard (<code>skip if page_LSN ≥ record_LSN</code>). A redo op with side conditions ("only if slot empty") or non-repeatable effects (counters, absolute offsets) silently breaks crash-during-recovery.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>No PostgreSQL here (no <code>psql</code>/<code>pgbench</code>); the labs use SQLite 3.53.1 (Python 3.12.15) on Linux 5.10. With PG 16 at home: <code>pgbench -c 8 -T 60 bench</code>, <code>kill -9</code> the postmaster, restart, and the server log reads <code>database system was not properly shut down; automatic recovery in progress</code>, <code>redo starts at 0/...</code>, <code>redo done at 0/...</code>.</p>
+<p><strong>Lab 1 — kill -9 a database mid-transaction (WAL mode).</strong></p>
+<pre><code class="language-bash">cd /tmp/wallab &amp;&amp; cat &gt; crasher.py &lt;&lt;'EOF'
+import sqlite3, time
+db = sqlite3.connect("crash.db")
+db.execute("PRAGMA journal_mode=WAL")        # redo-style: log is the truth
+db.execute("PRAGMA synchronous=FULL")        # fsync at every commit point
+db.execute("BEGIN")                          # committed transaction
+db.execute("CREATE TABLE t(i INTEGER PRIMARY KEY, v TEXT)")
+db.executemany("INSERT INTO t VALUES(?,?)", [(i, "x"*40) for i in range(500)])
+db.commit()
+db.execute("BEGIN IMMEDIATE")                # doomed: never commits
+db.executemany("INSERT INTO t VALUES(?,?)", [(i, "y"*40) for i in range(500, 800)])
+print("300 uncommitted rows; waiting for SIGKILL", flush=True)
+time.sleep(30)
+EOF
+python3 crasher.py &amp; sleep 2; kill -9 %1; ls -la crash.db*</code></pre>
+<pre><code class="language-text">-rw-rw-r--  1 z z   4096  crash.db        &lt;- main file: ONE page. The cache.
+-rw-rw-r--  1 z z  41232  crash.db-wal    &lt;- the log: 10x bigger. The truth.
+-rw-rw-r--  1 z z  32768  crash.db-shm</code></pre>
+<pre><code class="language-bash">python3 -c "import sqlite3; print(sqlite3.connect('file:crash.db?mode=ro', uri=True)
+             .execute('SELECT count(*), max(i) FROM t').fetchone())"
+# (500, 499)  -- committed rows resurrected; 0 of the 300 doomed ones</code></pre>
+<p>The sizes teach the lesson: the main file holds one 4 KB page, the WAL 41 KB. <code>count = 500</code> on read-only reopen is commit-frame visibility — the 300 doomed rows sit beyond the last commit frame (no commit record, no durability); a later <code>PRAGMA wal_checkpoint(PASSIVE)</code> returns <code>(0, 10, 10)</code>, pages catching up.</p>
+<p><strong>Lab 2 — the same crash, undo-style</strong> (<code>journal_mode=DELETE</code>, 1,000 uncommitted rows, <code>kill -9</code>): a hot <code>rj.db-journal</code> of before-images (8,720 B) is replayed on reopen — the table is empty. WAL replays committed work forward; the rollback journal erases uncommitted work backward.</p>
+<p><strong>Lab 3 — commit latency, 1 vs 8 clients.</strong> Eight threads, 200 <code>BEGIN IMMEDIATE</code>/insert/<code>COMMIT</code> each, separate connections (SQLite 3.53.1, same sandbox):</p>
+<pre><code class="language-text">sync=FULL   clients=1  mean commit 0.008 ms  p99 0.025 ms  max 0.050 ms
+sync=FULL   clients=8  mean commit 0.093 ms  p99 0.082 ms  max 54.318 ms
+sync=NORMAL clients=1  mean commit 0.007 ms  p99 0.025 ms  max 0.048 ms
+sync=NORMAL clients=8  mean commit 0.069 ms  p99 0.029 ms  max 33.488 ms</code></pre>
+<p>Platform honesty: this sandbox's overlay filesystem reports a 0.0003 ms fsync (the host absorbs it), so the absolute numbers are a floor. What survives: concurrency without batching is still a convoy — writer serialization plus real flushes yields the 54 ms tail at 8 clients. On a real 10 ms-fsync disk, naive commits top out at 100/s <em>total</em> regardless of client count; group commit at 8 committers delivers 800/s.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Commit-latency tickets</strong>: before blaming the query, locate the commit fsync — hardware class (PLP or not), knob (<code>synchronous_commit</code>, <code>innodb_flush_log_at_trx_commit</code>), offered concurrency (is there even a batch to group?).</li>
+<li><strong>"Restart took 20 minutes"</strong>: that is redo distance — log bytes since the last checkpoint. Check checkpoint frequency (<code>checkpoint_timeout</code>, <code>max_wal_size</code>, <code>innodb_redo_log_capacity</code>) before suspecting hardware.</li>
+<li><strong>Corruption incidents</strong>: InnoDB "database page corruption" + checksum error after power loss means torn page + bypassed insurance (doublewrite or <code>full_page_writes</code> off, or lying hardware). Restore path: clean copy + log apply.</li>
+<li><strong>Rolling your own durability</strong> (job queues, ledgers): append-only records smaller than a sector, fsync as the commit point, idempotent replay guarded by per-entity sequence stamps — your page-LSNs.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch03 (COW/virtual memory)</strong> — shadow paging was fork()'s COW at database scale; its defeat by the log is why "append a description" beats "copy the world."</li>
+<li><strong>Module 10 ch04 (write barriers)</strong> — card-table barrier and WAL rule are the same discipline at a store: effect never observable before its enabling record; visibility there, durability here.</li>
+<li><strong>Module 11 ch01 (the disk contract)</strong> — sector atomicity, fsync latency classes, torn-write physics: the premises every section cashed in.</li>
+<li><strong>Module 11 ch05 (MVCC)</strong> — the undo log doubles as the version store; roll pointers are backward log traversal at row granularity, and PostgreSQL's "mask, don't undo" recovery is its snapshot machinery reused.</li>
+<li><strong>Module 09 ch05 (consensus)</strong> — Raft is a replicated WAL: log-as-truth at fleet scale, state machine as cache, commit index as flushed-LSN.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>After a crash, all data pages are intact, but the last two log records (still in the OS page cache) were lost — and one transaction had already acknowledged its commit. What category of failure is this, and why is it worse than losing every dirty page?</li>
+<li>A teammate proposes redo records meaning "increment the row count in page 47's header by 1." A crash happens mid-recovery and some records replay twice. What property is violated, and what is the standard guard?</li>
+<li>Page 12 has page LSN 3,600; page 47 has page LSN 5,200; the flushed LSN is 4,000. Both must be evicted now. What happens, in what order, and why does the order matter?</li>
+<li>An fsync takes 10 ms; eight clients commit continuously. (a) Naive one-fsync-per-commit: system-wide throughput ceiling? (b) Perfect group commit: throughput and per-commit latency? (c) What does (a) say about concurrency without batching?</li>
+<li>MySQL 8.0 runs with <code>innodb_flush_log_at_trx_commit = 2</code>. The mysqld process is <code>kill -9</code>ed; users report committed transactions vanished. Is the knob a sufficient explanation, or do you keep investigating?</li>
+<li>InnoDB with doublewrite active on ext4 (4 KB sectors, 16 KB pages). Power dies during a page flush; after reboot the page's checksum fails. Which write tore, where is the intact copy, and what does recovery do?</li>
+<li>Disk A writes atomically in 512 B sectors; disk B in 4 KB sectors (chapter 01). Both host 16 KB pages. Which produces torn pages, which needs doublewrite/full-page-writes, and which makes small log records atomic for free?</li>
+<li>Module 10 ch04's card-table barrier forces "dirty the card before the pointer store becomes visible to the collector." Name the two players and the ordering for that barrier and for the WAL rule, then state the one-word difference in what each protects.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>A durability violation — the only unforgivable kind.</strong> The promise was "commit record in the durable log"; losing log records breaks a promise already reported to the user. Dirty pages are a cache — redo rebuilds them for free. Likely causes: commit acknowledged before fsync reached stable storage (<code>innodb_flush_log_at_trx_commit = 2</code> plus an OS crash), or hardware lying about fsync.</li>
+<li><strong>Idempotent redo is violated</strong>: applying the record twice double-counts. The guard is the page LSN: before applying a record with LSN L, recovery checks <code>page_LSN(P) ≥ L</code> and skips if the page already absorbed it. That works only because physiological operations are repeatable — "set field to value" is; "increment" is not.</li>
+<li>Page 12 flushes immediately: <code>3,600 ≤ 4,000</code>, its history already durable. Page 47 is blocked — first force the log (write + fsync) to ≥ 5,200, then flush. If page 47 hit disk first, a crash would leave a page whose changes have no surviving description: effect without record, exactly what the rule forbids.</li>
+<li>(a) <code>1/10 ms</code> = <strong>100 commits/s total</strong> — clients serialize behind the fsync; eight clients are a queue. (b) All eight attach to one flush: <strong>800 commits/s</strong>, each ~10 ms. (c) Without batching, concurrency buys nothing on the fsync path; with group commit it converts linearly into throughput — the commit-path lever, not a micro-optimization.</li>
+<li><strong>Keep investigating.</strong> Value 2 writes the log to the OS cache per commit and fsyncs about once per second; <code>kill -9</code> doesn't destroy the kernel's copy, so the next startup reads it fine. Vanished commits after a <em>process</em> kill point elsewhere: a different knob in effect, or lying fsync. Power loss — not process loss — is where the ~1 s window appears.</li>
+<li>The tear hit the <strong>second write</strong> — from doublewrite scratch (2 MB, 128 × 16 KB) to the tree. The first write (batch → scratch + fsync) completed, so an intact copy sits in scratch. Recovery copies the clean 16 KB image into place, then continues redo from that page's LSN. The log alone can't fix it: physiological redo needs a valid starting page, and a torn page is a state that never existed.</li>
+<li><strong>Both can tear a 16 KB page</strong> — any atomicity unit below the page allows it — so both need insurance. Disk B (4 KB sectors) tears in chunkier shapes: 0, 4, 8, or 12 KB of 16 lands, the rest doesn't. Disk A (512 B) offers 32 tear points but makes a small sector-sized <em>log record</em> atomic for free — section 1's sector-atomicity argument. The real escape is a CoW filesystem, where pages are never overwritten in place.</li>
+<li>Card-table barrier: the <strong>mutating thread</strong> and the <strong>GC</strong>; ordering is <em>card dirtying before pointer-store visibility</em>, protecting the collector's heap view. WAL rule: the <strong>page flusher</strong> and <strong>crash recovery</strong>; ordering is <em>log durability before page durability</em>, protecting the recoverer's page explanations. One word: <strong>visibility</strong> vs <strong>durability</strong> — the same edge, different plane.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 11 — Database storage engines</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XNU: the kernel's memory picture — deep-roots</title>
+<meta name="description" content="Chapter 01 of module 06: XNU: the kernel's memory picture">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="XNU: the kernel's memory picture — deep-roots">
+<meta property="og:description" content="Chapter 01 of module 06: XNU: the kernel's memory picture">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="XNU: the kernel's memory picture — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of module 06: XNU: the kernel's memory picture">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 06 &middot; a memory-distrust machine</div>
+<h1 class="post-title">XNU: the kernel's memory picture</h1>
+<div class="post-meta">chapter 01 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> XNU ("X is Not Unix") is three systems fused: CMU's Mach (tasks, threads, VM, ports) + a 4.4BSD line (processes, files, sockets, signals) + IOKit (C++ drivers). The unit that matters for memory is the Mach <em>task</em> — a container of one vm map, one port table, and threads — wearing a BSD <em>proc</em> as a costume: one entity, both <code>pid</code> and <code>task_for_pid</code>. The vm map lists policy records (range + permissions + backing VM object); module 01 ch03's page tables are the mechanism underneath. Apple Silicon runs 16K pages (4K on Intel Macs and in Rosetta), kernel memory lives in kalloc zones, and kernel entry has two number spaces: positive BSD syscalls, negative Mach traps.</blockquote>
+<h2 id="1-one-kernel-three-ancestors">1. One kernel, three ancestors</h2>
+<p>iOS and macOS run the same kernel: XNU, open-sourced by Apple and versioned with Darwin (XNU 10063.x ships in macOS 14 Sonoma / iOS 17, Darwin 23). The name survives in the architecture: not a Unix kernel, but it serves a Unix API.</p>
+<p>The parts: Mach 3.0 was CMU's late-1980s microkernel research — message-passing IPC, memory as <em>objects</em> served by pagers, a minimal kernel. Clean but slow: every cross-component call became a message round-trip. NeXT's fix (inherited by Apple in 1997) collocated the BSD server <em>inside</em> the kernel — keep the abstractions, drop the message hop. iOS is the same kernel with different policies on top; hence a Mac is a fine lab machine.</p>
+<pre><code class="language-text">  user space:   your app + libSystem + frameworks (the shared cache, ch04)
+  ------------------------------------------------------------ syscall / trap boundary
+  BSD layer:    procs, pids, VFS, sockets, signals            (bsd/)
+  Mach core:    tasks, threads, vm maps, VM objects, ports    (osfmk/)
+  IOKit:        C++ drivers, IOMemoryDescriptor, user clients (iokit/)
+  ------------------------------------------------------------ hardware: MMU, 16K pages, PAC</code></pre>
+<p>Not strictly layered: BSD calls into Mach for memory work, and user space reaches drivers <em>through Mach ports</em> (ch03). IOKit's C++ is restricted — no exceptions, no RTTI, manual retain/release on <code>OSObject</code>.</p>
+<h2 id="2-the-task-one-entity-two-views">2. The task: one entity, two views</h2>
+<p>Mach's word for "process" is deliberate: a <strong>task</strong> is a <em>resource container</em>, never the thing that executes. It owns exactly three things — a <strong>vm map</strong> (the address space, section 3), an <strong>ipc space</strong> (port rights, ch03), and <strong>threads</strong> (the execution units: registers and stacks, nothing else). One task, N threads.</p>
+<p>The BSD half answers "what does POSIX need?" with a <code>struct proc</code>: pid, file descriptors, credentials, signal state. The insider's picture is <strong>one entity, two structs</strong>: the task (<code>osfmk/kern/task.h</code>) carries <code>bsd_info</code> pointing at the <code>proc</code>, the <code>proc</code> (<code>bsd/sys/proc.h</code>) carries <code>p_task</code> back — <code>proc_task(p)</code> / <code>task_proc(t)</code> are the everyday translations. <code>launchd</code>, pid 1, is the first pair.</p>
+<pre><code class="language-text">        one entity (e.g. pid 1234)
+        +--------------------- task -----------------------+
+        | vm_map    *map        address space (section 3) |
+        | ipc_space *itk        port rights (ch03)         |
+        | queue      threads    1..N execution units       |
+        | bsd_info --------+                                |
+        +------------------|-------------------------------+
+                           v
+        +--------------------- proc -----------------------+
+        | pid_t     p_pid       1234                       |
+        | filedesc *p_fd        open file descriptors      |
+        | task      *p_task ---+---&gt; back to the task      |
+        +---------------------|----------------------------+</code></pre>
+<p>Both views are load-bearing: Mach is the kernel's native currency, BSD the API's (<code>kill</code>, <code>wait</code>, every shell tool). One fork() chain crosses <code>bsd/kern_fork.c</code> into osfmk and back — why panic traces show both vocabularies in one backtrace. The bridge from user space is the Mach trap <code>task_for_pid</code> (trap 26, gated by <code>taskgated</code> on macOS, entitlements on iOS): a privilege, because a task port is a master key to a process's memory.</p>
+<p>One flag for module 05 readers: <strong>there is no zygote on iOS.</strong> Sandbox policy denies third-party apps <code>fork()</code> — every app is <code>posix_spawn</code>ed fresh, nothing pre-warms a shared heap. The "pay once" job the zygote does with COW, iOS does with the shared cache (ch04): frameworks are mapped, not inherited.</p>
+<h2 id="3-the-vm-map-policy-not-mechanism">3. The vm map: policy, not mechanism</h2>
+<p>Derive it from the question the kernel must answer per access: <em>if this task touches this address, what should happen?</em> The page tables of module 01 ch03 answer a narrower one — <em>how does the MMU translate this page right now?</em> — and hardware format allows no field for which pager backs a region or what fork does with it. So XNU (like Linux with its VMAs) keeps a per-task <strong>vm map</strong>: a tree of <strong>vm_map_entry</strong> records:</p>
+<pre><code class="language-text">vm_map_entry (one per region, page-aligned bounds):
+  vme_start .. vme_end       e.g. 0x102d00000 - 0x102d07000
+  protection / max_protection    rw- / rw-
+  inheritance                 SHARE | COPY | NOTHING  (what fork does)
+  wired_count                 pages locked in place (mlock)
+  object + offset             the backing VM object, and where in it</code></pre>
+<p>An entry is policy: ranges, rights, inheritance, backing. The <strong>pmap</strong> (the task's page tables) is a cache of the map's decisions — derivable, rebuilt on fault — which is why userspace tools can print the map while page tables stay invisible: the answer to the interview trap <em>the vm map is not the page table.</em> The PTE says "page 7 → frame F, read-only"; the entry says "this range is a COW inheritance of that object."</p>
+<p>Entries point into the second layer, <strong>VM objects</strong>. A <em>named object</em> has a pager — a vnode pager for file mappings, the shared cache's objects (ch04), or the compressor pager for anonymous memory on iOS (ch02). A <strong>shadow object</strong> is the COW bookkeeping: when fork splits a COPY-inherit entry, XNU interposes a shadow between the old object and the forked entries; both sides then see the original pages read-only, and the first write copies the page into the writer's side of the shadow — module 01 ch03's PTE-level COW (refcount &gt; 1 → copy), recorded at the object layer. The three layers, one diagram:</p>
+<pre><code class="language-text">LAYER 1: vm map (policy, 1/task)     LAYER 2: VM objects (sharing)   LAYER 3: physical
+"this range has these rights"        refcounted, pager-backed        pages (vm_page)
+
+task A (parent)                      O = anonymous object            +-----------+
++------------------------------+     pager: compressor (ch02)      | frame F2  |
+| entry 0x1000-0x9000          |     refcount: shared read-only    | vm_page   |
+|       rw, inherit COPY       |     resident: F1 F2 F3            | refct 2   |
+|       object: O -------------|-----+             ^  ^            +-----------+
++------------------------------+     |             |  |  A reads F2 (read-only)
+                                     |             |  |
+task B (child, after fork)          |  shadow S:   |  +-- B's read of F2 falls
++------------------------------+    |  +---------------------+     through S into O
+| entry 0x1000-0x9000 rw       |    |  | backing object: O   |
+|       object: S (shadow) ----|----+  | refcount: 1         |     +-----------+
++------------------------------+       | resident: F5        |     | frame F5  |
+                                      +---------------------+     | vm_page   |
+  B writes the page at 0x2000:                                   | refct 1   |
+  fault (PTE RO), page lives in O (refct 2) -&gt; allocate F5,     +-----------+
+  copy F2 into it, record F5 in shadow S, map F5 rw into B's
+  pmap ONLY.  A still reads F2; one entry, two objects.</code></pre>
+<p>Two more shapes: an entry may point at no object at all — a <strong>null mapping</strong>; that is all a stack guard page is, one 16K hole of <code>---</code> permissions (module 01 ch04's guard as kernel policy). And a map can contain a <strong>submap</strong>: the shared cache is one submap per task, so a single vm_map_entry buys every system framework — region counts stay in the hundreds, not thousands (ch04).</p>
+<h2 id="4-sixteen-kilobytes-at-a-time">4. Sixteen kilobytes at a time</h2>
+<p>The number: <code>hw.pagesize</code> is <strong>16384 on Apple Silicon</strong> — and iOS on 64-bit ARM since the first arm64 devices (A7, 2013) — versus <strong>4096 on Intel Macs</strong>. The wrinkle: Rosetta 2 processes also run 4K, because x86-64 binaries assume 4K — one kernel serving two page sizes at once, alone among mainstream kernels. Detect your side: <code>sysctl -n sysctl.proc_translated</code> (1 inside Rosetta). Why bigger? Two pieces of arithmetic.</p>
+<p><strong>TLB reach.</strong> Coverage = entries × page size: a 64-entry L2 TLB covers 256 KB at 4K and 1 MB at 16K (Apple's real TLB sizes are unpublished; the 4x is exact). Whatever fits under the TLB now fits 4x more of itself — and a phone running one foreground app with contiguous frameworks (ch04) is the common case.</p>
+<p><strong>Page-table density.</strong> ARM64, 48-bit VA, per-granule split:</p>
+<pre><code class="language-text">4K pages:   [ 9 | 9 | 9 | 9 | 12 ]     4 levels, 512-entry tables, 4K each
+16K pages:  [ 1 | 11 | 11 | 11 | 14 ]  L0 holds just TWO entries; tables 16K</code></pre>
+<p>An L3 table covers 512 × 4K = 2 MB at 4K, but 2048 × 16K = 32 MB at 16K. Densely mapping 1 GB costs 512 tables × 4K = <strong>2 MB of page tables</strong> at 4K versus 32 × 16K = <strong>512 KB</strong> at 16K — 4x denser.</p>
+<p><strong>The cost is internal fragmentation.</strong> The smallest unit of allocation, protection, and transfer quadruples: touch one byte in a sparse structure and you dirty 16K, not 4K — average waste on sparse regions is half a page per touch. Mobile tolerates it because the dominant mappings — framework text, heap arenas, the cache — are dense. A bet on density, and it won.</p>
+<p><strong>The compatibility story</strong> is where the bugs live. Code hardcoding 4K — <code>addr &amp; ~0xfff</code> masks, structs packed to 4096 bytes, buffers aligned for direct disk I/O — misbehaves only on Apple Silicon, only on some inputs. Apple's mitigations: the arm64 linker aligns Mach-O segments to 16K (<code>segalign 0x4000</code>, module 04 ch01), and Rosetta keeps the 4K fiction so unmodified x86 binaries run. Your code is what sits between those safety nets.</p>
+<h2 id="5-kernel-memory-is-rationed-in-zones">5. Kernel memory is rationed in zones</h2>
+<p>The kernel cannot <code>malloc</code> from the machinery it is still building. XNU's answer is <strong>kalloc</strong>: size-class zones — <code>kalloc.16</code>, <code>kalloc.32</code>, up past <code>kalloc.65536</code> in powers of two, plus intermediate sizes in recent XNU — each carving fixed-size elements from pages handed up by the VM layer. Specialized zones ride the same allocator (<code>zalloc</code>): every <code>task</code>, <code>thread</code>, <code>proc</code>, port, and VM object is itself a zone element. Watch them live: <code>sudo zprint</code>.</p>
+<p><strong>Zone exhaustion is a panic class.</strong> When a zone's refill fails — zone map full, or no memory left at that depth — <code>zalloc</code> panics by design (<code>zalloc: zone exhausted</code>). Why kill the kernel instead of returning an error? Callers at that depth cannot fail: allocating a thread's kernel stack mid-fork has no roll-back path, and a kernel on degraded internals can no longer enforce its invariants. For contrast: userspace allocation fails softly (NULL), and userspace <em>pressure</em> is handled by killing a process (ch02) — three escalation levels, one root cause.</p>
+<p><strong>The security saga.</strong> Zones were an exploitation accelerant: free lists handed the most-recently-freed element straight back (deterministic LIFO reuse), and one zone holds whatever objects match the size class — so a use-after-free could be reclaimed with attacker bytes of any same-size type. SockPuppet (CVE-2019-8605, iOS 12) was exactly that in the AWDL subsystem. The hardening came in stages: randomized free lists (macOS 10.15 / iOS 13 era), <code>zone_require</code> assertions (iOS 15), then <strong>kalloc_type</strong> (iOS 16 / macOS 13, 2022): type-segregated zones, per-boot randomized, so a freed <code>struct foo</code> is only reclaimable by another <code>struct foo</code> of the same class — cross-type reclaim primitives die there. Apple's security blog walks SockPuppet through an iOS 16 kernel and shows the chain breaking stage by stage ("What if we had the SockPuppet vulnerability in iOS 16?", May 2023).</p>
+<h2 id="6-two-number-spaces-one-instruction">6. Two number spaces, one instruction</h2>
+<p>Every user-to-kernel entry on Apple arm64 is the same instruction — <code>svc #0x80</code> — with the operation number in <code>x16</code> (x86-64: <code>syscall</code>, number in <code>rax</code>). The kernel branches on the <strong>sign</strong>:</p>
+<ul>
+<li><strong>positive</strong> → BSD syscall, indexed by <code>bsd/sys/syscalls.master</code> (4.4BSD numbering survives: 1 <code>exit</code>, 3 <code>read</code>, 4 <code>write</code>, 5 <code>open</code>);</li>
+<li><strong>negative</strong> → <strong>Mach trap</strong>, indexed by osfmk's <code>mach_trap_table</code>.</li>
+</ul>
+<p>The traps you meet in real code: <code>mach_msg</code> is trap 25 — on arm64, <code>mov x16, #0xffffffe7</code> (sign-extended −25) — <code>task_for_pid</code> is 26, and the <code>psynch_*</code> concurrency fast traps also live in the Mach space. The split persists: Mach traps are the kernel's RPC surface — message-shaped, type-checked by MIG stubs (ch03) — while BSD calls are the flat, errno-returning POSIX surface. One instruction, two protocols.</p>
+<p>A gift to anyone reading disassembly (module 04): the sign of the number in <code>x16</code>/<code>rax</code> classifies a stub instantly. <code>mov x16, #4; svc #0x80</code> is <code>write(2)</code>; a −25 loop is a <code>mach_msg</code> RPC pump — where one process hands data to another, hence where you hunt attack surface (ch03).</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>One kernel, two page sizes, live at once.</strong> Native arm64: 16K; Rosetta x86-64: 4K. <code>sysctl -n sysctl.proc_translated</code> says which side of the line a shell is on; <code>hw.pagesize</code> differs across it — the fastest terminal demo of the compat story.</li>
+<li><strong>The proc/task duality shows in every fork-path backtrace</strong> — frames alternate between <code>bsd/</code> and osfmk; panic logs name both vocabularies for one entity. <code>task_for_pid</code> (trap 26) is <em>gated</em> (<code>taskgated</code>, entitlements) because a task port is read/write access to a process's whole address space.</li>
+<li><strong>kalloc zone names appear verbatim in panics</strong> (<code>kalloc.512 exhausted</code>) and in <code>sudo zprint</code>. The size class gives the victim's size — often enough to identify the structure and the bug before any debugger opens.</li>
+<li><strong>Mach traps are negative numbers hiding in plain sight.</strong> <code>mach_msg</code> = −25, <code>task_for_pid</code> = −26; the <code>psynch_*</code> concurrency traps are Mach-space too — which surprises everyone who assumes anything POSIX-flavored is a BSD number.</li>
+<li><strong>What <code>vmmap</code> shows first is the header — and the header is the good part:</strong> name, pid, and <strong>Physical footprint</strong>, the number Jetsam actually kills on (ch02). Most people scroll past it and never come back. The shared cache is one submap per process — a single vm_map_entry stands in for the whole multi-GB artifact.</li>
+<li><strong>Count threads by counting <code>STACK GUARD</code> rows</strong> in <code>vmmap</code> — each is a 16K null mapping (<code>SM=NUL</code>, <code>---/rwx</code>) on Apple Silicon, one per thread.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Documented walkthrough — written from macOS 14 (arm64); no Mac was at hand while writing, so outputs below are representative and trimmed, and addresses differ every boot (ASLR). Commands run unmodified on macOS 12+.</p>
+<pre><code class="language-console">$ sysctl -n hw.pagesize
+16384                                     # 4096 on Intel Macs
+$ sysctl -n sysctl.proc_translated
+0                                         # in a Rosetta shell this prints 1
+
+$ vmmap $(pgrep -x Finder) | head -25
+Process:       Finder [531]
+Parent:        launchd [1]
+Physical footprint:       374.5M     &lt;-- the Jetsam number (ch02): read this first
+REGION TYPE              START - END     [ VSIZE RSDNT DIRTY SWAP] PRT/MAX SHRMOD DETAIL
+
+__DATA                  180470000-18047c000 [ 48K  48K  40K  0K] rw-/rw- SM=COW  dyld_shared_cache_arm64e
+__TEXT                  1803a1000-180470000 [828K 828K    0K  0K] r-x/r-x SM=COW  dyld_shared_cache_arm64e
+MALLOC_TINY             2b10000000-2b12000000 [  2M 512K 512K  0K] rw-/rw- SM=PRV
+MALLOC_SMALL            2b30000000-2b30800000 [512K 128K 128K  0K] rw-/rw- SM=PRV
+STACK GUARD             12ff04000-12ff08000 [ 16K    0K    0K  0K] ---/rwx SM=NUL  ... for thread 0
+Stack                   12ff08000-12ff87000 [508K   24K   24K  0K] rw-/rwx SM=PRV  thread 0</code></pre>
+<p>What to notice: (1) the columns — VSIZE is reserved virtual (the policy layer's opinion), RSDNT/DIRTY the physical truth, SM=COW copy-on-write shared, SM=PRV private, SM=NUL a guard. (2) the shared cache (grep it, read the span):</p>
+<pre><code class="language-console">$ vmmap $(pgrep -x Finder) | grep "dyld_shared_cache" | head -3
+__TEXT     180204000-1803a1000  [ ...] r-x/r-x SM=COW  /var/db/dyld/dyld_shared_cache_arm64e/...</code></pre>
+<p>— a contiguous multi-GB block in the low half of the address space, all <code>SM=COW</code>, <code>r-x</code> on text: one physical copy of every framework page, system-wide (ch04). (3) the malloc zones — <code>MALLOC_TINY</code>/<code>MALLOC_SMALL</code>/ <code>MALLOC_LARGE</code> are libmalloc's arenas (module 01 ch05, ch22): user-space allocators sit on kernel maps like any other mapping. (4) stack guards, one per thread:</p>
+<pre><code class="language-console">$ vmmap $(pgrep -x Finder) | grep -c "STACK GUARD"
+17</code></pre>
+<p>(5) the kernel's own side: <code>sudo zprint | head -25</code> lists live zones — find <code>kalloc.512</code>, ask which structure fits. (6) <code>mmap</code> 64 MB anonymous, untouched: the <code>VM_ALLOCATE 64M</code> row shows RSDNT/DIRTY near zero; touch every 16K and all three columns read 64M — module 01 ch03's demand-paging argument in one row.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Triage crash reports by subsystem.</strong> A panic naming a <code>kalloc</code> zone is a kernel memory bug (section 5); a Jetsam kill is ch02 policy; a guard-page <code>SIGSEGV</code> is a user-side overflow (module 01 ch04) — you know which chapter to open before reading the log.</li>
+<li><strong>Audit x86-to-arm64 ports for 4K assumptions.</strong> Grep for <code>0xfff</code>, <code>4096</code>, <code>PAGE_SIZE</code> near masks and page-packed records; test native <em>and</em> under Rosetta — the two disagree about the page size.</li>
+<li><strong>Read disassembly faster (module 04).</strong> The sign of the syscall number in <code>x16</code>/<code>rax</code> selects the table and the subsystem; −25 loops mark IPC pumps, and IPC pumps mark trust boundaries — where a bug becomes an exploit (ch03).</li>
+<li><strong>Explain the no-zygote design in interviews.</strong> iOS denies apps <code>fork()</code>, so warm state cannot be inherited by COW; instead every framework is pre-linked into one COW-mapped cache (ch04) — same economics as Android's zygote (pay once), different mechanism: a trust-model choice, not folklore.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch03 (page tables/COW)</strong> — the PTE walk and refcount mechanics run under everything here; the shadow object is the object-layer record of the COW fault you derived there; the null-mapping guard page is ch04's stack guard promoted to kernel policy.</li>
+<li><strong>Module 05 ch01-02 (Android boot, ART)</strong> — the contrast frame: the zygote's fork+COW warm start versus iOS's no-fork + shared cache; lmkd previews Jetsam. Same problems, opposite philosophies.</li>
+<li><strong>Module 06 ch02</strong> — the Physical footprint number from the vmmap header is the currency Jetsam kills on, and the compressor pager is the anonymous object's pager. <strong>ch03</strong> — the task's other half, the port table. <strong>ch04</strong> — the submap and shadow machinery at 1-3 GB scale. <strong>ch05</strong> — the page-in moment, where VM fuses with signatures.</li>
+<li><strong>Module 07 ch06 (macOS deep dive)</strong> — the same XNU machinery desktop-side: dynamic pager and swap (absent on iOS), purgeable tiers, unified memory, and the three-kernel comparison table.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><em>(concept)</em> A colleague shrugs: "XNU is just BSD with a Mach VM bolted on." Give two concrete behaviors that break under that model, using the structures of section 2.</li>
+<li><em>(concept)</em> A vm_map_entry and a PTE both describe memory. Name two things an entry records that a PTE cannot, and say why the hardware format forbids them.</li>
+<li><em>(predict the numbers)</em> A 64-entry L2 TLB and 1 GB of dense ARM64 mapping (48-bit VA): give the TLB coverage at 4K and 16K pages, the page-table bytes at 4K and 16K, and the factor both answers share — why?</li>
+<li><em>(predict the layout)</em> Task B is forked from A and writes one byte in a page of shared object O (refcount 2). How many VM objects serve B's entry afterwards, which holds the dirty page, and by how much does B's <code>vmmap</code> DIRTY grow on Apple Silicon?</li>
+<li><em>(bug diagnosis)</em> Ported x86 code masks pointers with <code>~0xfff</code> and copies exactly 4096 bytes per "page" from a mapped file; on an M-series Mac it sometimes misses data, sometimes reads a neighboring region. Why only on Apple Silicon, and why only some files?</li>
+<li><em>(bug diagnosis)</em> A fork bomb on a jailbroken iPhone ends in a panic reading <code>zalloc: zone kalloc.512 exhausted</code> rather than failed <code>fork()</code> calls. Why does the kernel choose death over an error return, and what does the zone name tell you?</li>
+<li><em>(bug diagnosis, module 04)</em> arm64 disassembly: <code>mov x16, #0xffffffe7 ; svc #0x80</code>, inside a loop copying from a shared buffer to a reply area. What operation is this, which table services it, and why is the loop a trust boundary?</li>
+<li><em>(cross-module, module 01 ch03)</em> <code>vmmap</code> shows shared cache <code>__TEXT</code> as <code>r-x</code>, <code>SM=COW</code>, mapped into 60 processes. How many physical copies of a given text page exist, and why does that entry never grow a shadow object — what would have to happen first?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Two views, one entity.</strong> (a) Every "process" is a Mach task wearing a proc (<code>task-&gt;bsd_info</code> ↔ <code>proc-&gt;p_task</code>); one fork chain crosses <code>bsd/</code> and <code>osfmk/</code> frames — a Unix-only reading of a trace is half-blind. (b) Ports are Mach: IPC, <code>task_for_pid</code>, and the driver channel all run through Mach ports.</li>
+<li><strong>Inheritance (SHARE/COPY/NOTHING), the backing VM object + offset, and max_protection — none of which a PTE has.</strong> PTEs are fixed by hardware: one page's translation plus a few state bits, no field for "which pager backs this region." Hence the policy layer, pmap as its rebuildable cache.</li>
+<li><strong>TLB: 256 KB at 4K, 1 MB at 16K. Tables:</strong> 4K — an L3 table covers 2 MB, so 1 GB needs 512 × 4K = 2 MB; 16K — an L3 table covers 32 MB, so 1 GB needs 32 × 16K = 512 KB. Both improve by the <strong>same 4x</strong>: each TLB entry and each PTE covers 4x more VA at the same per-entry cost.</li>
+<li><strong>Two objects — shadow S in front, O as backing; the dirty page lives in the shadow.</strong> The write faults on a read-only PTE; the kernel finds the page in O (refcount 2 &gt; 1), copies it to a fresh frame, records it in S, and maps it read-write into B's pmap only. DIRTY grows <strong>16 KB</strong> — one Apple Silicon page.</li>
+<li><strong>A page-size assumption, half-poisoned.</strong> On Apple Silicon the page is 16K: <code>~0xfff</code> rounds to a 4K boundary that is not a page boundary, and 4096-byte copies read a quarter of each page. It "works" under Rosetta (4K there) and where data sits in the first 4K of each 16K page — position-dependent failures, the hardcoded-page-size signature. Fix: <code>getpagesize()</code>, never a literal.</li>
+<li><strong>Fail-stop by design; the zone name is a fingerprint.</strong> Callers deep in fork/spawn cannot roll back a missing element, and a kernel on degraded internals cannot enforce its invariants — so XNU panics loudly. <code>kalloc.512</code> says 512-byte elements — task/proc/thread-adjacent structures — process-creation pressure or a leak.</li>
+<li><strong><code>mach_msg</code> — Mach trap 25</strong> (0xffffffe7 is sign-extended −25), serviced by osfmk's <code>mach_trap_table</code>, not <code>syscalls.master</code>. It is the RPC surface — one process handing typed data to another through the kernel — so a bug crosses a trust boundary; module 04 audits <code>mach_msg</code> pumps first (ch03).</li>
+<li><strong>One physical copy, no shadow ever.</strong> COW needs a write fault, which <code>r-x</code> text cannot take: all 60 processes' PTEs point at the same read-only frame (refcount 60, DIRTY 0). A shadow would require a <em>write</em> to those pages — doubly forbidden: the mapping is read-only, and page hashes are validated at page-in (ch05): altered code never materializes.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 06 — iOS internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lifecycle &amp; lmkd — deep-roots</title>
+<meta name="description" content="Chapter 04 of module 05: Lifecycle &amp; lmkd">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Lifecycle &amp; lmkd — deep-roots">
+<meta property="og:description" content="Chapter 04 of module 05: Lifecycle &amp; lmkd">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Lifecycle &amp; lmkd — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of module 05: Lifecycle &amp; lmkd">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 05 &middot; an OS designed by memory constraints</div>
+<h1 class="post-title">Lifecycle &amp; lmkd</h1>
+<div class="post-meta">chapter 04 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A phone has no disk swap — flash writes are slow, wear the media, and cost battery — so when RAM runs out, the reclaim ladder ends not in paging but in a kill. Android makes that tolerable by turning "who dies first" into policy: every process carries an <code>oom_score_adj</code> from −1000 (never kill) to 999 (kill first), assigned by ActivityManager from lifecycle state — top activity 0, foreground service ~200, cached process 900+. A userspace daemon, <strong>lmkd</strong>, watches pressure, not free memory: PSI (kernel 4.14+) measures the <em>time</em> tasks lose to memory stalls; workingset refault flags reclaim evicting pages that come right back. When pressure crosses a threshold (70 ms of stall per 1 s window, by default), lmkd kills the highest-adj, largest-RSS victim and repeats until pressure subsides. Cached processes are also frozen (cgroup v2 — 0 CPU) and squeezed through zram (compressed RAM, ~3:1): everything here exists to make killing cheap, rare, and invisible.</blockquote>
+<h2 id="no-swap-therefore-kill">No swap, therefore kill</h2>
+<p>Desktop Linux treats the OOM killer as an emergency exit (module 01 ch03): the reclaim ladder runs drop-clean-pages → shrink caches → swap → and only then does the kernel score processes for death. Android amputates the middle: flash writes burn endurance, a random flash read costs hundreds of µs to milliseconds (a 10 ms page fault is an ANR in the making), and the I/O costs battery. So the ladder becomes: reclaim caches → compress what zram holds → <strong>kill a process</strong>.</p>
+<p>On a desktop, "the OOM killer fired" is an incident; on Android it is Tuesday — cached processes die thousands of times a day, and the user must never notice. Three mechanisms buy that:</p>
+<ol>
+<li><strong>Importance is decided before pressure exists.</strong> The number comes from lifecycle state, not heap size or CPU use; pressure merely <em>executes</em> the ranking.</li>
+<li><strong>Relaunch is cheap</strong> (module 05 ch01): a dead app re-forks from the warm Zygote — framework pages already resident and shared — so cold start is hundreds of ms, not tens of seconds.</li>
+<li><strong>State survives by contract.</strong> Recents keeps the task with a snapshot; the relaunched activity gets its <code>onSaveInstanceState</code> bundle back; sticky services restart.</li>
+</ol>
+<p>Android's process lifecycle is a <em>garbage collector for processes</em>: reachability = user-visible importance, collected under pressure, lost state pushed into the app's serialization duties.</p>
+<h2 id="oom-score-adj-importance-as-a-single-integer">oom_score_adj: importance as a single integer</h2>
+<p>The kernel already has the slot: <code>/proc/&lt;pid&gt;/oom_score_adj</code> runs −1000 (never pick) to +1000 (kill first). Desktop Linux leaves it near 0 and computes "badness" at kill time; Android inverts the split: <strong>the kernel keeps the priority, userspace owns the policy.</strong> AMS (in system_server) computes importance — which activity is on top, who binds whom, which services run, who was used last — maps it to a band, and writes it into the process's <code>/proc</code> entry on every transition: <code>onPause</code>/<code>onStop</code> are not just callbacks, they are <em>sensor readings</em> that move the process between bands.</p>
+<p>The bands (AOSP <code>ProcessList.java</code>; classic values, Android 8-era):</p>
+<pre><code class="language-text"> protected side (kernel will not pick these)          killable first
+ adj     band               who lives there                     example
+ -1000   NATIVE             not managed by AMS                 surfaceflinger, audioserver
+  -900   SYSTEM             the framework server                system_server (AMS, WMS, PMS)
+  -800   PERSISTENT         persistent apps + their services    com.android.phone
+     0   FOREGROUND         top activity                        your app, on screen
+  0..99  VISIBLE+layer      visible but not top                 split-screen peer, behind-dialog
+   200   PERCEPTIBLE        user sees or hears it               foreground-service music, bound-by-FG
+   300   BACKUP / 250 LOW   lower-priority visible work
+   400   HEAVY_WEIGHT       heavy-weight app backgrounded
+   500   SERVICE            long-idle started service           sync adapter work
+   600   HOME               the launcher                        com.android.launcher3
+   700   PREVIOUS_APP       the app you just left               keeps "back" instant
+   800   SERVICE_B          recent started services             leftover background work
+ 900-999 CACHED             invisible, no live components       everything else — budget: 32</code></pre>
+<p>Two version notes: pre-9, <em>visible</em> was its own band at 100 and perceptible 200 (the "100–200" still quoted); Android 9 merged visible into 0 with <em>layer offsets</em> 0–99, so an activity one layer behind the top survives longer than one three deep. And cached is a slope, not a cliff: each cached process gets its own sub-slot in 900–999, more recently used nearer 900 — recency buys a few points of survival, nothing more.</p>
+<p>That range has a <strong>budget</strong>: 32 cached processes (<code>DEFAULT_MAX_CACHED_PROCESSES = 32</code>, <code>ActivityManagerConstants.java</code>, Android 10–14; tunable via DeviceConfig key <code>activity_manager_constants/max_cached_processes</code>). Cached <em>and empty</em> processes (no live components, kept as a relaunch cache) share it. When the 33rd goes cached, AMS kills the least-recently-used one itself — budget enforcement is ordinary housekeeping. Low-RAM devices (<code>ro.config.low_ram=true</code>) run smaller.</p>
+<p>One-sentence derivation: <strong>survivability ∝ how much the user would notice the process vanish.</strong> An audio glitch is noticed; a dead background tab isn't, so long as relaunch looks instant.</p>
+<h2 id="lmkd-from-free-memory-thresholds-to-pressure">lmkd: from free-memory thresholds to pressure</h2>
+<p>The first kill switch lived <em>in the kernel</em>: the <code>drivers/staging/android/lowmemorykiller</code> driver, a shrinker callback with two tunable arrays (<code>/sys/module/lowmemorykiller/parameters/{minfree,adj}</code>). When free pages fell below <code>minfree[i]</code>, it killed the process with the highest <code>oom_score_adj</code> above <code>adj[i]</code>. Simple, cheap — and broken three ways:</p>
+<ol>
+<li><strong>Free memory stopped meaning anything.</strong> A kernel with zram and an eager page cache <em>wants</em> free memory near zero — free is wasted RAM. Static thresholds misfired early or never, and every vendor forked its own numbers.</li>
+<li><strong>Policy was frozen in kernel space.</strong> Improving importance ordering meant rebuilding the kernel, not updating the framework.</li>
+<li><strong>Levels can't see duration.</strong> 50 MB free for 3 ms is nothing; 50 MB for 800 ms is a dropped frame budget. A threshold reports a level, not time spent in distress.</li>
+</ol>
+<p>Android 9 moved the killer to userspace — <strong>lmkd</strong>, an init-launched critical daemon (<code>system/memory/lmkd</code>). AMS registers each process (pid + adj) over a socket; lmkd owns only the watch and the kill. Android 10 gave it the right sensor: <strong>PSI, Pressure Stall Information</strong> (upstream Linux 4.20; backported to Android common 4.14+).</p>
+<p>PSI answers the only question a user feels: <em>how much time is the system losing to memory?</em> <code>/proc/pressure/memory</code> reports two lines:</p>
+<pre><code class="language-text">some avg10=0.12 avg60=0.08 avg300=0.05 total=481234567
+full avg10=0.00 avg60=0.00 avg300=0.00 total=0</code></pre>
+<p><code>some</code> is the percentage of time <em>at least one</em> task was stalled on memory; <code>full</code> is the time <em>all non-idle</em> tasks were stalled at once — the machine effectively stopped. Averages are over 10/60/300 s, <code>total</code> is cumulative µs. This measures the symptom (jank, ANR) directly: PSI says "reclaim is not keeping up"; free memory says "the kernel is using RAM as a cache," which it always is.</p>
+<p>PSI events are <em>edge-triggered</em>: write <code>"some 70000 1000000"</code> to <code>/proc/pressure/memory</code> and a poll on it wakes when 70 ms of <code>some</code>-stall accumulate in a 1 s window. lmkd arms two triggers by default — <strong>partial</strong> at 70 ms/1 s, <strong>critical</strong> at 700 ms/1 s (<code>ro.lmk.psi_partial_stall_ms</code>, <code>ro.lmk.psi_complete_stall_ms</code>, Android 10–14) — then cross-checks two oracles:</p>
+<ul>
+<li><strong>zram fill</strong> — a nearly-full zram (default gate <code>ro.lmk.swap_util_max</code>, ~80%) means compression has stopped helping.</li>
+<li><strong>workingset refault rate</strong> — from <code>/proc/vmstat</code>, <code>workingset_refault</code> (evicted pages that fault right back in) over activations — the "are pages usefully used?" oracle. High refault means reclaim is evicting <em>the wrong pages</em>: memory is full of working set, not garbage, and the honest responses are kill or uncompress, not evict harder. Above ~60% counts as thrashing (<code>ro.lmk.thrashing_limit</code>, Android 10+).</li>
+</ul>
+<p>The kill decision, then:</p>
+<pre><code class="language-text">  PSI event: "some 70ms in 1s" (or 700ms critical)
+        │
+        v
+  lmkd wakes, reads /proc/meminfo + vmstat + zram fill
+        │
+        v
+  classify pressure level ──&gt; adj floor for candidates
+        │
+        v
+  victim = argmax over registered procs of:
+        1. oom_score_adj          (kill the least important first)
+        2. tie-break: RSS          (free the most pages per kill)
+        3. Android 12+: per-process zram swap-in cost (cold = cheaper)
+        │
+        v
+  SIGKILL victim → notify AMS → re-read pressure ──&gt; still high? repeat</code></pre>
+<p>That arithmetic is the whole policy: <strong>adj dominates, RSS breaks ties, and on newer builds cold, compressed pages make a process a better victim than a smaller one whose pages keep refaulting</strong> — "better" meaning pages freed per unit of importance destroyed. Note what is <em>absent</em>: no heap size, no CPU usage, no age. lmkd is the executor, not the judge.</p>
+<p>The user sees no dialog, no crash report, no tombstone. The binder driver notices the <code>/dev/binder</code> fd dying and delivers death notifications (module 05 ch03); AMS removes the record, keeps the Recents snapshot, and schedules restarts by component semantics — <code>START_STICKY</code> services restart with a null Intent, <code>START_NOT_STICKY</code> services do not, jobs reschedule.</p>
+<h2 id="death-the-freezer-and-zram-s-one-concession">Death, the freezer, and zram's one concession</h2>
+<p>Between "alive" and "killed" Android now has a third state: <strong>frozen</strong> (Android 11+ on cgroup v2 kernels; upstream freezer since 5.3). Writing <code>1</code> to <code>/sys/fs/cgroup/uid_&lt;uid&gt;/pid_&lt;pid&gt;/cgroup.freeze</code> stops the process at the kernel boundary — scheduled off the CPU, <em>unable</em> to run: no timers, no broadcasts, no binder thread churn, no wakelocks. Frozen cached processes cost 0 CPU — most of a cached app's residual battery drain, gone. The sharp edge is binder: a transaction aimed at a frozen process must not silently wait, so libbinder gained freeze handling (<code>BINDER_FREEZE</code>, <code>BR_FROZEN_REPLY</code>, Android 12) and AMS thaws before delivering anything that matters. Frozen does not change adj — still a kill candidate — freezing only stops the <em>running</em> cost.</p>
+<p>And the one concession to swap: <strong>zram</strong> — a block device whose backing store is RAM. Pages written to it are compressed (lz4/zstd); "swap" never touches flash, so there is no wear and the worst-case fault is a decompress, not disk I/O. It is a ratio lever: at a typical ~3:1, 2 GiB of zram holds 2 GiB of pages in ~667 MiB of RAM. Android commits hard — <code>vm.swappiness</code> pinned at 100 (Android 9–11), 160 on Pixel-class builds since Android 12, versus the desktop default 60 — and lmkd treats zram saturation as a pressure input. zram buys ~1.3 GiB of headroom on a 4 GiB phone and delays each kill; when pressure still wins, the answer remains kill.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The daemon logs under the tag <code>lowmemorykiller</code></strong> — the kernel driver it replaced is gone, but LOG_TAG was kept for filter compatibility. <code>adb logcat -s lowmemorykiller</code> is <em>the</em> kill-feed.</li>
+<li><strong>The cached budget is 32</strong> (<code>DEFAULT_MAX_CACHED_PROCESSES</code>, <code>ActivityManagerConstants.java</code>, Android 10–14), live-tunable via <code>device_config put activity_manager_constants max_cached_processes N</code> — the standard trick for faking a low-RAM device.</li>
+<li><strong>PSI's two lines differ</strong>: <code>some</code> high with <code>full</code> zero is one task thrashing (often one app, not the system); <code>full</code> nonzero means the whole CPU stopped on memory — an emergency. Triggers: partial 70 ms/1 s, critical 700 ms (<code>ro.lmk.psi_partial_stall_ms</code> / <code>ro.lmk.psi_complete_stall_ms</code>).</li>
+<li><strong>A foreground service holds adj ~200, below the 900 cliff</strong> — that, not "being in use", is what keeps music playing under pressure. It's also why Android 14 requires declared FGS types: the adj perk was abused as a keep-alive.</li>
+<li><strong>Frozen ≠ killed</strong>: check <code>/sys/fs/cgroup/uid_*/pid_*/cgroup.freeze</code> before diagnosing "background work stopped with no crash" — 1 means 0 CPU, timers included, with the process still alive in Recents.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><em>Documented walkthrough — no device was attached at write time; fragments show AOSP 14 output shape, expect label drift. Any API 34+ emulator reproduces them.</em></p>
+<pre><code class="language-sh"># 1. The kernel-side truth (any Android):
+adb shell pidof com.android.example.app     # e.g. 5678
+adb shell cat /proc/5678/oom_score_adj
+# with the app on screen:
+0
+# after Home + ~10 s (AMS demotes on the cached transition):
+906</code></pre>
+<pre><code class="language-sh"># 2. AMS's scoreboard:
+adb shell dumpsys activity oom | grep -m5 "adj="
+#  Proc # 0: adj=   0 ... # 1287:com.android.example/u0a123 (top-activity)
+#  Proc # 3: adj= 200 ... # 3112:com.music.player/u0a88 (fgs-service)
+#  Proc # 8: adj= 906 ... # 5678:com.android.example/u0a123 (cached)</code></pre>
+<p>The same numbers also live inside each ProcessRecord block of <code>dumpsys activity processes</code> — <code>oom</code> is just the condensed view.</p>
+<p>The two kill lines (wording drifts by version — grep the tag, not the sentence):</p>
+<pre><code class="language-text">I ActivityManager: Killing 7789:com.browser/u0a51 (adj 906): cached #17
+I lowmemorykiller: Killing 'com.android.example' (5678) to free 118204kB rss</code></pre>
+<p><code>(adj 906): cached #17</code> is the <em>budget</em> path — #17 is the cached slot; the lmkd line is the <em>pressure</em> path.</p>
+<pre><code class="language-sh"># 3. Pressure, live:
+adb shell cat /proc/pressure/memory
+# some avg10=0.12 avg60=0.08 avg300=0.05 total=481234567
+# full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+adb shell cat /proc/vmstat | grep -E "workingset_(refault|activate)"
+# workingset_refault_anon 531223
+# workingset_activate_anon 118734</code></pre>
+<pre><code class="language-sh"># 4. Cached budget + build overrides (empty = default in force):
+adb shell getprop | grep -iE 'lmk|low_ram'
+# [ro.config.low_ram]: [false]
+# [ro.lmk.psi_partial_stall_ms]: []
+adb shell device_config put activity_manager_constants max_cached_processes 6
+adb logcat -s lowmemorykiller ActivityManager   # launch &gt;6 apps, watch kills
+adb shell device_config delete activity_manager_constants max_cached_processes</code></pre>
+<pre><code class="language-sh"># 5. The freezer (uid = 10000 + appId, so u0a123 -&gt; 10123; module 05 ch05):
+adb shell cat /sys/fs/cgroup/uid_10123/pid_5678/cgroup.freeze
+# 1        &lt;- frozen: 0 CPU, still listed in Recents, still killable
+
+# 6. zram's ratio (mm_stat: orig_data_size  mem_used_total  ...):
+adb shell cat /proc/swaps
+# /dev/block/zram0  partition  1535996  512436  5
+adb shell cat /sys/block/zram0/mm_stat
+# 790511616 263137280 0 263137280 ...
+# 790 MB of pages held in 263 MB of RAM  -&gt;  3.0:1</code></pre>
+<p>For deterministic testing: <code>adb shell am kill com.android.example</code> kills <em>only if</em> the process is cached — use it to test your <code>onSaveInstanceState</code> round-trip exactly as an lmkd kill would.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>OOM-kill triage from logs alone.</strong> An <code>ActivityManager: Killing ... (adj N)</code> line with adj below 200 on a non-foreground process is a <em>policy</em> bug — something visible was demoted, and the reason string says which sensor failed. A <code>lowmemorykiller: ... to free NkB</code> line at adj 900+ is the system working as designed; the fix belongs in the app, not the build.</li>
+<li><strong>Decide foreground-service vs. cached deliberately.</strong> The 200/900 cliff is the whole decision. Ongoing user-perceived work (audio, navigation, a transfer the user started) justifies adj 200 plus the freezer exemption; background bookkeeping does not — and Android 12+ gates starting FGS from the background, so "promote on a timer" no longer works. Design for being killed: persist, restart, reschedule.</li>
+<li><strong>Build a low-RAM repro rig.</strong> <code>device_config put activity_manager_constants max_cached_processes 6</code> turns any flagship into a budget device for cached-process churn; combine with <code>am kill</code> for deterministic death tests in CI.</li>
+<li><strong>Read PSI as a leading indicator.</strong> <code>some</code> avg10 spiking with <code>full</code> still zero says reclaim is losing before users file ANRs; workingset refault climbing says the footprint just crossed the useful-cache line. And a relaunch to the home screen instead of the user's deep screen is the downstream symptom: an lmkd kill plus a missing persist path.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch03 (virtual memory &amp; OOM)</strong> — the reclaim ladder Android amputated: no swap tier, so the OOM step became routine; COW/Zygote is what makes the kills cheap to recover from.</li>
+<li><strong>Module 05 ch02 (ART's heap)</strong> — ART's collector governs memory <em>inside</em> one process; lmkd governs the set of processes. A pristine heap never protects a cached app; <code>heapgrowthlimit</code> keeps one app from forcing kills of the others.</li>
+<li><strong>Module 05 ch03 (Binder)</strong> — death notifications deliver the kill news; the freezer's <code>BINDER_FREEZE</code> handshake is binder meeting cgroups.</li>
+<li><strong>Module 06 ch02 (the Jetsam comparison)</strong> — same premise (no swap), different scoreboard: iOS memorystatus/Jetsam bands vs <code>oom_score_adj</code>.</li>
+<li><strong>Module 07 ch05 (the Linux OOM killer)</strong> — the desktop counterpart: badness computed at kill time, watermark-triggered, per-zone — compare who owns the priority and why Android split it out.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Desktop Linux reaches its OOM killer rarely and treats it as an incident; Android kills cached processes continuously and users don't notice. Name the mechanisms that make routine killing acceptable, and derive why each is necessary.</li>
+<li>Why exactly is "free memory below N MB" a broken kill trigger on a zram-equipped phone, while "70 ms of some-stall per 1 s window" is sound? What does each metric claim to measure?</li>
+<li>lmkd must free memory now. Candidates: A (adj 906, RSS 300 MB), B (adj 912, RSS 90 MB), C (adj 700, RSS 500 MB). Which dies first under classic ordering, and why doesn't the 500 MB C die despite freeing the most?</li>
+<li><code>/proc/pressure/memory</code> reads <code>some avg10=7.5 avg60=2.0 avg300=0.1 total=...</code>. lmkd's partial trigger is armed as "70 ms of some-stall in a 1 s window". Does the trigger fire? Show the arithmetic.</li>
+<li>zram <code>mm_stat</code> shows <code>orig_data_size</code> = 768 MiB, <code>mem_used_total</code> = 256 MiB; the device configures a 2 GiB zram. What does it hold at this ratio, what does it cost in RAM, and what is the net capacity gain?</li>
+<li>A user reports: "podcasts stop when I browse the web; when I reopen the app it's back on the episode list, not my playback position." Logcat shows <code>ActivityManager: Killing 5678:com.pod/u0a45 (adj 906): cached #14</code>. Diagnose the causal chain and give the two-part fix.</li>
+<li>An app's 15-minute periodic work silently stops on an idle device. No crash, no kill line, the app still appears in Recents. <code>cat /sys/fs/cgroup/uid_10456/pid_2311/cgroup.freeze</code> prints <code>1</code>. What state is the process in, and why did the work stop?</li>
+<li>(Module 05 ch02 + this chapter) Your team cut the app's ART heap 40% by tuning the concurrent copying collector, yet it is still killed at adj 906 at the same moments as before. Why didn't the GC change the kill behavior, and what <em>would</em> change it?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Relaunch must be cheap, state must survive, the ranking must pre-exist.</strong> Zygote fork (module 05 ch01) recreates the process in hundreds of ms — framework pages already resident and COW-shared; Recents snapshots plus the <code>onSaveInstanceState</code> bundle make death look like a relaunch at the same screen; and the adj ladder is computed <em>before</em> pressure exists, so the kill is policy, not panic. Remove any one and a kill becomes user-visible.</li>
+</ol>
+<ol>
+<li><strong>Free memory is a level; stall time is a rate.</strong> With zram the kernel keeps free memory near zero <em>by design</em> — anon pages compress, file pages cache — so "below threshold" is the steady state, not distress. PSI measures what users feel: time tasks spend blocked in reclaim (<code>some</code> = at least one task, <code>full</code> = all non-idle). 70 ms per second says reclaim is not keeping up — pressure's definition — regardless of how much is cached or compressed.</li>
+</ol>
+<ol>
+<li><strong>B.</strong> Classic ordering is adj descending: 912 &gt; 906, so the 90 MB process dies before the 300 MB one — importance dominates, RSS only breaks ties. C (previous-app, 700) is not a candidate: the system won't trade instant back-navigation for 500 MB. The Android 12+ refinement: a huge <em>cold</em> process can out-rank a slightly higher-adj small one — pages freed per unit of importance destroyed is the real objective.</li>
+</ol>
+<ol>
+<li><strong>It fires.</strong> <code>avg10=7.5</code> means 7.5% of the last 10 s was some-stall = 75 ms per second on average; the trigger needs 70 ms in a 1 s window, so a window at the average already exceeds it. <code>avg10=1.0</code> (10 ms/s) would not fire; lmkd triggers on short windows — <code>avg60</code>/<code>avg300</code> are context, not triggers.</li>
+</ol>
+<ol>
+<li><strong>Holds 2 GiB of pages, costs ~667 MiB, nets ~1.33 GiB.</strong> The observed ratio is 768/256 = 3.0:1; disksize caps what zram <em>stores</em> (2 GiB of pages), while the physical cost is that data compressed (2 GiB ÷ 3). Net extra effective RAM, paid in CPU per compress/decompress — and when zram saturates (<code>swap_util_max</code>), the answer is still kill.</li>
+</ol>
+<ol>
+<li><strong>No foreground service, so playback didn't anchor its importance.</strong> Behind the browser it went invisible → cached (adj 906); under pressure or the 32-process budget it was killed (cached slot #14). Restart was a cold Zygote fork with only the saved bundle; playback position lived in RAM, so relaunch shows the episode list. Fix 1: a typed foreground service while playing (adj ~200, freezer-exempt). Fix 2: persist position on every transition — the FGS delays the kill, persistence removes the sting.</li>
+</ol>
+<ol>
+<li><strong>Frozen, not dead.</strong> <code>cgroup.freeze=1</code> parks the process at the kernel boundary: 0 CPU, so timers and scheduled work never run, while the process record, adj, and Recents entry remain. It resumes only when something unfreezes it (AMS on an importance transition, or the user). The fix: don't rely on periodic timers in a cached process — use JobScheduler/WorkManager within the app's standby window.</li>
+</ol>
+<ol>
+<li><strong>lmkd ranks processes, not heaps.</strong> The kill was budget or pressure enforcement on a <em>cached</em> process — importance class plus system pressure; the app's internal heap hygiene is invisible to both. A smaller RSS shifts tie-breaks and total pressure only marginally. What would change it: lifecycle policy — a foreground service or visible interaction moves the process below the 900 cliff — or persistence so the kill is harmless. The collector optimizes module 05 ch02's scoreboard; the kill follows this chapter's.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 05 — Android internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

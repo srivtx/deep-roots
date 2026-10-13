@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The numeric &amp; parsing family — deep-roots</title>
+<meta name="description" content="Chapter 04 of module 03: The numeric &amp; parsing family">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The numeric &amp; parsing family — deep-roots">
+<meta property="og:description" content="Chapter 04 of module 03: The numeric &amp; parsing family">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The numeric &amp; parsing family — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of module 03: The numeric &amp; parsing family">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 03 &middot; the four families and the machinery that finds them</div>
+<h1 class="post-title">The numeric &amp; parsing family</h1>
+<div class="post-meta">chapter 04 &middot; ~13 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Every number is a decision — how many bits, signed or not, base 2 or base 10 — and this family is what happens when those decisions disagree. Signed overflow in C is undefined behavior, a license the optimizer cashes to delete your checks; unsigned overflow is a clock — defined, silent. Floats are binary fractions, so 0.1 does not exist and money drifts. Parsers turn untyped bytes into typed values — overflow there is silent success, and byte-wise slicing cuts characters in half. Time is a number pretending to be simple: 23-hour days, 61-second minutes, and a signed 32-bit clock that ends in January 2038.</blockquote>
+<h2 id="overflow-signed-is-a-contract-violation-unsigned-is-a-clock">Overflow: signed is a contract violation, unsigned is a clock</h2>
+<p>Module 01 ch08's raw deal: an <code>int</code> is 4 bytes (x86-64/ARM64, "LP64": <code>int</code> 32, <code>long</code> 64), two's complement, range −2,147,483,648 … +2,147,483,647. Add 1 to the top and you need bit 32, which does not exist. What <em>should</em> happen?</p>
+<ul>
+<li><strong>Unsigned:</strong> C11 §6.2.5 ¶9 <em>defines</em> the result — arithmetic mod 2^32. <code>UINT32_MAX + 1 == 0</code>. A clock: portable, silent, a bug only because you believed it was a number line.</li>
+<li><strong>Signed:</strong> C11 §6.5 ¶5 says <strong>undefined</strong>. Not "wraps" — no requirement at all.</li>
+</ul>
+<p>Why? The optimizer wants algebra: <code>i + 1 &gt; i</code> holds on a number line, so the compiler may <em>assume</em> it — and at <code>-O2</code> (GCC 14, x86-64) a guard written <code>if (t + 1 &lt; t)</code> compiles to nothing: the assumption makes it provably false. UB-as-license is the mechanism (module 10 ch02 shows the passes; here you need the rule: <em>never write a check whose truth requires the UB</em>). Use <code>__builtin_add_overflow</code>, or <code>-fwrapv</code> to force wrap.</p>
+<h3>The promotion ladder: where the overflow actually happens</h3>
+<p>Most integer math never happens in the declared types. C11 §6.3.1.1 forces <strong>integer promotion</strong> — anything narrower than <code>int</code> computes in <code>int</code>; §6.3.1.8 (<em>usual arithmetic conversions</em>) then unifies mixed pairs:</p>
+<pre><code class="language-text"> the promotion ladder (C11 §6.3.1.1 / §6.3.1.8; x86-64 Linux, int = 32 bits)
+
+   you wrote        computed as     rule                      the bite
+   -------------    ------------    -----------------------   ------------------------
+   u16 + u16   -&gt;   int             integer promotion         max 131,070: fits
+   u16 * u16   -&gt;   int             integer promotion         65,535 x 65,535 =
+                                                              4,294,836,225 &gt; INT_MAX:
+                                                              SIGNED UB
+   int + u32   -&gt;   u32             usual arith. conversions  the int converts; wrap is
+                                                              defined, the sign is gone
+   u32 * u32   -&gt;   u32             both already wide         wraps mod 2^32, silently</code></pre>
+<p>The famous row: two 16-bit values whose product overflows a <em>signed 32-bit intermediate</em>. The cast cannot save you — <code>(uint32_t)(a * b)</code> applies after the UB — and no warning fires (GCC 14, <code>-Wall -Wextra -O2</code>: silent): to the compiler it's just "an <code>int</code> times an <code>int</code>." Only UBSan sees it (lab below).</p>
+<h3>The malloc shape: <code>a*b*c</code></h3>
+<p>The modern CVE shape is a size computation:</p>
+<pre><code class="language-c">struct pixel *buf = malloc(w * h * sizeof(struct pixel));  /* int math */</code></pre>
+<p>Attacker picks <code>w</code>, <code>h</code> so <code>w * h * sizeof</code> wraps to a small positive value — say 3,000. <code>malloc(3000)</code> succeeds; the loop writes <code>w * h</code> pixels through the window: heap overflow (module 02 ch04's exploitation view). Dozens of decoder CVEs share this line. The fix is type discipline: compute in <code>size_t</code> and check each factor — <code>if (h != 0 &amp;&amp; w &gt; SIZE_MAX / h / sizeof *buf) return NULL;</code>.</p>
+<h3>Ariane 5, derived</h3>
+<p>June 4, 1996, flight 501: 37 s after liftoff the rocket veered and self-destructed. From the official inquiry: the inertial reference system (Ada) converted a 64-bit float — horizontal bias, an alignment correction inherited from Ariane 4 — into a <strong>16-bit signed integer</strong>. Ariane 5's early trajectory was faster; the value passed 32,767; Ada raised an exception on a conversion whose protecting handler had been disabled, and both redundant SRIs went down:</p>
+<pre><code class="language-c">double bh = 64_bit_float;        /* range ~1.8e19 */
+int16_t scaled = (int16_t) bh;   /* range ±32,767 — ratio 2.8e14 : 1  */
+/* Ariane 4 analysis "proved" bh &lt; 32767. Ariane 5 broke the proof; the
+   cast had no runtime guard.                                       */</code></pre>
+<p>A conversion is a range compression; it needs either a proof that holds for all future inputs or a runtime check. C's float→int cast when the value doesn't fit is again UB; Ada raises. The languages differ; the ratio doesn't.</p>
+<h2 id="floats-numbers-that-are-not-on-the-number-line">Floats: numbers that are not on the number line</h2>
+<p>An IEEE-754 <code>double</code> (8 bytes everywhere here) is a binary fraction: only denominators that are powers of 2 are exact. 1/2, 1/4: exact. 1/10 = 0.000110011… <em>repeating</em> — like 1/3 in decimal. Rounded to 52 fraction bits:</p>
+<pre><code class="language-python"># CPython 3.12; any IEEE-754 float64 (C, Java, JS, Go) gives identical bits
+0.1 + 0.2          # 0.30000000000000004
+0.1 + 0.2 == 0.3   # False
+0.1 * 3 == 0.3     # False</code></pre>
+<p><strong>The money rule:</strong> never store money in binary floats. The ~10^-17 error per operation aggregates — 10,000 additions carry 10,000 roundings, and rounding the <em>final</em> sum snaps an already-wrong number. Correct homes: integer cents (<code>int64_t</code> cents overflows past $92 quadrillion) or a real decimal type — Python <code>decimal.Decimal</code>, Java <code>BigDecimal</code>, SQL <code>NUMERIC</code>, COBOL COMP-3 (module 08 ch03), which is why ledgers never left base 10.</p>
+<p><strong>Patriot, February 25, 1991</strong> (Dharan): the clock advanced in 0.1-second ticks, counted in a <strong>24-bit</strong> register. 0.1 is infinitely long in binary; truncated to 24 bits, each tick is short by 0.000000095 s. After 100 hours: 3,600,000 ticks × 9.5e-8 ≈ <strong>0.3433 s</strong>. The range gate was computed 0.34 s stale; at ~1,676 m/s the Scud was <strong>687 m</strong> outside it. Miss; 28 dead. The error lived in the <em>representation of a constant</em>; the tick counter multiplied it three million times.</p>
+<h3>The values that break <code>==</code></h3>
+<pre><code class="language-python">nan = float("nan")
+nan == nan                            # False — NaN is "unordered" by spec
+other = float("inf") - float("inf")   # a DIFFERENT NaN object
+[1.0, nan, 2.0].remove(nan)           # works -&gt; [1.0, 2.0]
+[1.0, other, 2.0].remove(nan)         # ValueError: x not in list
+[nan] == [nan]                        # True   (same object)
+[nan] == [float("nan")]               # False  (different objects)</code></pre>
+<p>Three behaviors, one cause: collections don't use <code>==</code>, they use an <em>equality protocol</em>. CPython's <code>PyObject_RichCompareBool</code> (behind <code>remove</code>/<code>index</code>/<code>in</code>) short-circuits on identity first: <code>x is y or x == y</code>. Same object → hit; different NaN → miss. Java is the mirror image: <code>ArrayList.remove(Object)</code> routes through <code>Double.equals</code>, which compares bits — the Javadoc states <code>Double.NaN.equals(Double.NaN)</code> is <em>true</em> while <code>==</code> is false. NaN must never reach a keyed collection or comparator; filter it at the boundary.</p>
+<p><strong>−0.0</strong> is numerally <code>==</code> to 0.0, but the sign bit is set (<code>struct.pack("&gt;d", -0.0)</code> → <code>8000000000000000</code> vs <code>0000000000000000</code>), and <code>1 / -0.0</code> is <code>-inf</code> where <code>1 / 0.0</code> is <code>+inf</code>. Equality passed; the sign survived.</p>
+<h2 id="parsing-the-boundary-where-types-are-born">Parsing: the boundary where types are born</h2>
+<p>Parsing is chapter 01's bug definition made literal: the <em>spec</em> for "3000000000" is "three billion"; the <em>behavior</em> depends on the function:</p>
+<pre><code class="language-c">/* glibc 2.41, GCC 14, x86-64 — verified below */
+int d = 0;
+int n = sscanf("3000000000", "%d", &amp;d);   /* n = 1 (success!), d = -1294967296 */</code></pre>
+<p>The standard makes <code>%d</code> overflow <strong>undefined</strong> (C11 §7.21.6.2 ¶10); glibc wraps mod 2^32 and <em>reports success</em> — the caller cannot tell. The defined tool is:</p>
+<pre><code class="language-c">errno = 0;
+long v = strtol("99999999999999999999", NULL, 10);
+/* v = LONG_MAX (9223372036854775807), errno = ERANGE  (C11 §7.22.1.4) */</code></pre>
+<p>Parse with <code>strtol</code>-family or your language's checked equivalent; test <code>errno</code> <em>and</em> the end pointer; then narrow with an explicit range check — Ariane's lesson applies to your <code>int64 → int32</code> step too.</p>
+<h3>Bytes are not characters</h3>
+<p>UTF-8 stores one code point in 1–4 bytes: ASCII is 1; <code>é</code> is 2 (<code>0xC3 0xA9</code>), announced by the lead byte (<code>110xxxxx</code>), continued by <code>10xxxxxx</code>:</p>
+<pre><code class="language-python">b = "café".encode()   # b'caf\xc3\xa9' — 5 bytes, 4 characters
+b[:4]                 # b'caf\xc3' — lead byte severed from its continuation
+b[:4].decode()        # UnicodeDecodeError: 'utf-8' codec can't decode byte
+                      # 0xc3 in position 3: unexpected end of data
+b.decode("latin-1")   # 'cafÃ©' — mojibake: UTF-8 bytes read as Latin-1</code></pre>
+<p>Two faces of one bug: the <em>crash</em> (invalid continuation) and the <em>silent</em> mojibake, where the bytes decode under a wrong single-byte encoding and the damage propagates. <code>truncate(80)</code> on a status field, <code>log_line[:120]</code> — byte-wise in Go <code>[]byte</code>, Python <code>bytes</code>, C <code>char*</code>. Rule: slice on characters (Python <code>str</code>, Go <code>[]rune</code>, Rust <code>is_char_boundary</code>), or verify the cut point isn't a continuation byte — and declare the encoding at every boundary; mis-declared Latin-1/UTF-8 is <em>the</em> mojibake generator.</p>
+<p><strong>Identifier/length limits</strong> are the same class at another layer: every tier has its own maximum. C11 §5.2.4.1 requires only 31 significant characters in external identifiers; ext4 caps filenames at 255 bytes; RFC 5321 caps the email local part at 64 octets. A frontend allowing a 256-byte username over a column that silently truncates to 255 merges two users, or turns <code>user@example.com</code> into <code>user@examp</code>. Check length at the parser against the <em>strictest</em> limit downstream, and fail loudly.</p>
+<h2 id="time-the-number-that-pretends-to-be-simple">Time: the number that pretends to be simple</h2>
+<p>Unix time is one integer: seconds since 1970-01-01T00:00:00 UTC. Then the width and the calendar answer back.</p>
+<p><strong>2038, derived.</strong> Signed 32-bit <code>time_t</code> counts at most 2^31 − 1 = 2,147,483,647 s. A year is ~31,556,952 s (365.2425 days), so the budget is 2,147,483,647 / 31,556,952 ≈ 68.1 years — 1970 + 68.1 lands in <strong>January 2038</strong>, exactly 2038-01-19 03:14:07 UTC. One second later the sign bit flips and the value reads −2^31 = <strong>1901-12-13 20:45:52</strong> — which is why 32-bit systems show files dated 1901, not crashes:</p>
+<pre><code class="language-text"> time_t, signed 32-bit — the last normal second
+
+   bit:   31   30                             0
+        +----+--------------------------------+
+        | S  |   31 magnitude bits           |   S=0: 0 .. 2147483647 s
+        +----+--------------------------------+        = 1970 .. 2038-01-19
+   2147483647 = 0x7FFFFFFF -&gt; 2038-01-19 03:14:07 UTC (last future tick)
+   2147483648 = 0x80000000 -&gt; S=1, value -2^31  -&gt; 1901-12-13 20:45:52 UTC</code></pre>
+<p>On 64-bit Linux <code>sizeof(time_t) == 8</code>: the wall is 292 billion years out. The 32-bit exposure is embedded systems; <code>_TIME_BITS=64</code> (glibc 2.34+) migrates them. Note the shape: an <em>unsigned</em> 32-bit counter would merely run out in 2106; the signed reading turns the corner into 1901.</p>
+<p><strong>Timezones/DST</strong> are local law, not physics. US Eastern, 2025-03-09: 02:00 becomes 03:00; that wall-clock day is <strong>23 hours</strong> (82,800 s) and local 02:30 never happens; fall-back makes a <strong>25-hour</strong> day and 01:30 happens twice. Derive the bugs: a job at 02:30 skips a day each year; differences of local timestamps are off by an hour twice a year; durations must be computed on UTC instants. CPython 3.12 hides a trap here — subtracting two <code>datetime</code>s sharing one <code>tzinfo</code> object ignores the zone, so the 23-hour day computes as 24; use <code>.timestamp()</code> (lab below).</p>
+<p><strong>Leap seconds:</strong> UTC occasionally inserts <code>23:59:60</code> — a 61-second minute (27 insertions since 1972) — but POSIX defines a day as exactly 86,400 s and <em>ignores</em> them; kernels reconcile by repeating or smearing a second (Google's 24-hour smear stretches each second ~11.6 ppm). Clocks that reconcile differently disagree by 1 s — enough to mis-order event logs.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The promotion rule, exactly:</strong> on any 32-bit-<code>int</code> target no <code>u16</code> arithmetic ever executes — §6.3.1.1 computes in <code>int</code>. The <code>u16 * u16</code> danger is <em>signed</em> UB in the intermediate; the cast arrives one instruction too late.</li>
+<li><strong>UB overflow policy per language:</strong> C/C++ signed = UB, unsigned = wrap; Java = wrap by spec, <code>Math.addExact</code> throws; C# = wrap unless <code>checked</code>; Rust = panic in debug, wrap in release (<code>overflow-checks = true</code> flips it); Go = wrap by spec; JS integers are float64, exact only to 2^53 − 1; Python never overflows (arbitrary precision, module 01 ch14).</li>
+<li><strong>The money-in-decimal rule:</strong> cents in <code>int64</code> or a true decimal — <code>Decimal</code>, <code>BigDecimal</code>, <code>NUMERIC</code>, COMP-3. Binary floats fail at 0.1 <em>by construction</em>; output rounding doesn't undo accumulated input error.</li>
+<li><strong>The UTF-8 slicing rule:</strong> a cut is safe only where the next byte is not <code>10xxxxxx</code>. Rust <code>str::is_char_boundary</code>, Go <code>utf8.RuneStart</code>, Python slicing on <code>str</code> (never <code>bytes</code>) encode exactly that check.</li>
+<li><strong>Collections don't use <code>==</code>:</strong> CPython's <code>list.remove</code>/<code>in</code> fast-path on identity; Java's <code>Double.equals</code> compares bits — NaN behaves differently inside a collection than inside an expression, in both languages, in opposite directions.</li>
+<li><strong>Patriot's actual numbers:</strong> 24-bit register, 0.1 s short by 9.5e-8 s, 0.3433 s after 100 hours, 687 m of gate error at ~1,676 m/s.</li>
+<li><strong>glibc <code>sscanf("%d")</code> on overflow:</strong> UB per the standard, but glibc 2.41 wraps mod 2^32 and returns success (n = 1); <code>strtol</code> saturates and sets <code>errno = ERANGE</code> — that's the parser you want.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Four traps, one laptop. Stack: GCC 14.2, glibc 2.41, CPython 3.12, Debian x86-64 (LP64); outputs from exactly it.</p>
+<p><strong>1. The promotion overflow no warning catches:</strong></p>
+<pre><code class="language-bash">$ cat &gt; promo.c &lt;&lt;'EOF'
+#include &lt;stdio.h&gt;
+#include &lt;stdint.h&gt;
+int main(void) {
+    uint16_t a = 65535, b = 65535;
+    printf("c = %u, sizeof(a*b) = %zu\n", (uint32_t)(a * b), sizeof(a * b));
+    return 0;
+}
+EOF
+$ gcc -Wall -Wextra -O2 -o promo promo.c &amp;&amp; ./promo
+c = 4294836225, sizeof(a*b) = 4
+$ gcc -O1 -g -fsanitize=undefined -o promo_ub promo.c &amp;&amp; ./promo_ub
+c = 4294836225, sizeof(a*b) = 4
+promo.c:5:56: runtime error: signed integer overflow: 65535 * 65535 cannot be
+represented in type 'int'</code></pre>
+<p><code>-Wall -Wextra -O2</code>: silent. Only UBSan's per-operation check sees it — the wrapped value matching the unsigned product is luck UB <em>permits</em>, not a guarantee. <code>sizeof(a*b) = 4</code> is the promotion.</p>
+<p><strong>2. Float money and the NaN protocols:</strong></p>
+<pre><code class="language-bash">$ python3 -c "print(0.1 + 0.2); print(0.1 * 3 == 0.3); \
+from decimal import Decimal; print(Decimal('0.10') + Decimal('0.20') == Decimal('0.30'))"
+0.30000000000000004
+False
+True
+$ python3 -c "nan = float('nan'); print(nan == nan, [nan] == [nan], \
+[nan] == [float('nan')])"
+False True False</code></pre>
+<p><strong>3. Byte-slicing a UTF-8 string:</strong></p>
+<pre><code class="language-bash">$ python3 -c "b = 'café'.encode(); print(b, len(b)); print(b[:4]); \
+print(b[:4].decode())"
+b'caf\xc3\xa9' 5
+b'caf\xc3'
+Traceback ...: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xc3
+in position 3: unexpected end of data
+$ python3 -c "print('café'.encode().decode('latin-1'))"
+cafÃ©</code></pre>
+<p>One cut crashes the decoder; a mis-declared encoding never crashes — decide which failure you prefer.</p>
+<p><strong>4. Parsing and the 23-hour day:</strong></p>
+<pre><code class="language-bash">$ cat &gt; parse.c &lt;&lt;'EOF'
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;errno.h&gt;
+int main(void) {
+    int d = 0, n = sscanf("3000000000", "%d", &amp;d);
+    printf("sscanf: n=%d d=%d\n", n, d);
+    errno = 0;
+    long v = strtol("99999999999999999999", NULL, 10);
+    printf("strtol: v=%ld errno=%d\n", v, errno);
+    return 0;
+}
+EOF
+$ gcc -o parse parse.c &amp;&amp; ./parse
+sscanf: n=1 d=-1294967296
+strtol: v=9223372036854775807 errno=34
+$ python3 -c "from datetime import datetime; from zoneinfo import ZoneInfo; \
+NY = ZoneInfo('America/New_York'); \
+s1 = datetime(2025,3,8,12,tzinfo=NY).timestamp(); \
+s2 = datetime(2025,3,9,12,tzinfo=NY).timestamp(); \
+print('spring wall-clock day:', int(s2-s1), 'seconds')"
+spring wall-clock day: 82800 seconds</code></pre>
+<p>82800 = 23 × 3600: the day the clock skips. And <code>n = 1</code> means "success" — the only wrong thing in the program is the number.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Code review triage:</strong> every <code>malloc(a * b)</code>, narrowing cast, <code>float</code> near a currency symbol, <code>[:80]</code> on user text, and local-time subtraction now reads as a decision to verify — with a one-line question: <em>what is the widest value that reaches this line?</em></li>
+<li><strong>Incident analysis:</strong> "totals off by 3 cents," "usernames collide," "logs mis-ordered by a second," "files dated 1901" — each symptom names its mechanism here; you find the line in minutes.</li>
+<li><strong>Detector choice:</strong> UBSan for signed overflow and bad conversions, decimal diff tests for money, decode round-trips at encoding boundaries, <code>.timestamp()</code>-based tests around DST dates — and fuzzing for parser boundaries (chapter 05).</li>
+<li><strong>Interview answers that derive themselves:</strong> signed overflow is UB because the optimizer buys algebra; 0.1 + 0.2 ≠ 0.3 because 1/10 is infinite in base 2; 2038 is January because 2^31 − 1 s ≈ 68.1 years; NaN breaks collections because their equality protocol isn't <code>==</code>.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch08 (C: the explicit model)</strong> — this chapter is that contract in motion: UB as the price of raw bytes with no runtime checks.</li>
+<li><strong>Module 03 ch01 (the bug from first principles)</strong> — the four-family taxonomy; this is family three: spec-vs-behavior divergence at type boundaries.</li>
+<li><strong>Module 03 ch05 (how bugs are found)</strong> — UBSan's per-operation checks and parser fuzzing are the detectors named throughout this chapter.</li>
+<li><strong>Module 08 ch03 (COBOL data division)</strong> — COMP-3 packed decimal: exact base-10, the ledger world's answer to the float half of this chapter.</li>
+<li><strong>Module 10 ch02 (UB as license)</strong> — the optimizer passes that consume signed-overflow UB, from the compiler author's side.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> C defines unsigned overflow to wrap but leaves signed overflow undefined. What does each choice buy, and why does <code>if (t + 1 &lt; t)</code> compile to nothing at <code>-O2</code>?</li>
+<li><strong>Concept.</strong> Why is <code>uint16_t a = 65535, b = 65535; a * b</code> <em>signed</em> undefined behavior while <code>uint32_t x = 65535, y = 65535; x * y</code> is well-defined? Name the rule.</li>
+<li><strong>Predict the output.</strong> glibc 2.41, x86-64: what do <code>n</code> and <code>d</code> hold after <code>int d = 0; int n = sscanf("3000000000", "%d", &amp;d);</code>? What does <code>strtol("3000000000", NULL, 10)</code> return here, and on a 32-bit-<code>long</code> platform?</li>
+<li><strong>Predict the output.</strong> CPython 3.12, one object <code>nan = float("nan")</code>: <code>0.1 + 0.2 == 0.3</code>, <code>[nan] == [nan]</code>, <code>[nan] == [float("nan")]</code>, <code>-0.0 == 0.0</code>?</li>
+<li><strong>Predict the output.</strong> <code>b = "café".encode()</code>: what is <code>len(b)</code>, and what does <code>b[:4].decode()</code> raise (give the reason string)?</li>
+<li><strong>Bug diagnosis.</strong> A billing service sums millions of row amounts as <code>double</code>, rounds the final sum to cents, and is off by cents on some days. Why doesn't rounding at the end fix it, and what is the minimal correct change?</li>
+<li><strong>Bug diagnosis.</strong> <code>malloc(w * h * 4)</code> succeeds for attacker-chosen <code>w = 40,000, h = 20,000</code>, then the pixel loop <code>for (i = 0; i &lt; w*h; i++)</code> corrupts the heap. Where did the failure <em>begin</em>, and what check belongs before the <code>malloc</code>?</li>
+<li><strong>Cross-chapter.</strong> A 32-bit embedded system guards its <code>time_t</code> with <code>if (t + 1 &lt; t) reboot();</code>. Using module 10 ch02's "UB as license" plus this chapter's derivation: why may the guard be dead code, what date does the unguarded value reach, and what does it become one second later?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>Defined wrap makes unsigned arithmetic pure mod-2^N math — cheap, portable, no machine check. UB buys the optimizer number-line algebra: <code>i + 1 &gt; i</code>, loop induction without carry checks. Under "signed overflow never happens," <code>t + 1 &lt; t</code> is provably false, so GCC <code>-O2</code> deletes the branch — the license the guard polices erases the guard. Use <code>__builtin_add_overflow</code> or <code>-fwrapv</code>.</li>
+<li>C11 §6.3.1.1 integer promotion: <code>a</code> and <code>b</code> compute in <code>int</code>; 4,294,836,225 &gt; INT_MAX → signed overflow → UB. <code>x * y</code> are already <code>int</code>-rank, stay <code>uint32_t</code>, and §6.2.5 ¶9 defines mod-2^32 wrap — harmlessly here. The cast in <code>(uint32_t)(a * b)</code> applies after the UB, so it rescues nothing.</li>
+<li><code>n = 1</code>, <code>d = -1294967296</code> (3,000,000,000 mod 2^32, signed reading) — UB per the standard, wrapped silently by glibc with success reported. <code>strtol</code> saturates: on LP64 it returns 3000000000, errno = 0 (fits); on 32-bit <code>long</code>, LONG_MAX = 2,147,483,647 with <code>errno = ERANGE</code> — the detectable contract <code>sscanf</code> lacks.</li>
+<li><code>False</code> — 0.1 and 0.2 each round, and the sum's nearest float64 is 0.30000000000000004. <code>True</code> — list comparison uses <code>PyObject_RichCompareBool</code>, which fast-paths on identity — same object. <code>False</code> — different NaN objects reach <code>==</code>, and NaN is unordered. <code>True</code> — −0.0 is numerally 0.0; the sign bit differs (<code>1/-0.0</code> = −inf).</li>
+<li><code>len(b) = 5</code>: 4 characters, but <code>é</code> is two bytes. <code>b[:4]</code> is <code>b'caf\xc3'</code> — a 2-byte lead byte cut from its continuation — so decode raises <code>UnicodeDecodeError: 'utf-8' codec can't decode byte 0xc3 in position 3: unexpected end of data</code>.</li>
+<li>The error is inside the <em>inputs</em>: <code>double</code> has no exact 0.01, every add rounds, millions of adds accumulate cents of drift, and the final round snaps an already-wrong sum. Minimal change: accumulate <code>int64_t</code> cents (or decimal/<code>NUMERIC</code>) end to end — the stored values become exact, so the drift disappears.</li>
+<li>In the <code>malloc</code> argument: 40,000 × 20,000 × 4 = 3.2e9 &gt; INT_MAX — signed UB in <code>int</code> math; it wraps to a small value, the allocation succeeds at the wrong size, and the loop writes 800,000,000 pixels through the undersized window (module 02 ch04's target). Check before the call, per factor, in <code>size_t</code>: <code>if (h != 0 &amp;&amp; w &gt; SIZE_MAX / h / 4) return NULL;</code>.</li>
+<li><code>t + 1</code> is signed overflow — UB — so the optimizer may assume it never happens and delete the comparison (module 10 ch02): the reboot never runs. Unguarded, the counter reaches 2^31 − 1 s after the epoch — 2038-01-19 03:14:07 UTC. One second later the sign bit flips, the value reads −2^31, and dates jump to 1901-12-13 20:45:52 UTC. Fix: widen <code>time_t</code> (<code>_TIME_BITS=64</code> on 32-bit glibc 2.34+); never check with arithmetic whose truth requires the overflow.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 03 — Software bugs: the taxonomy of failure</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

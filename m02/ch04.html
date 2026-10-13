@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heap exploitation — deep-roots</title>
+<meta name="description" content="Chapter 04 of module 02: Heap exploitation">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Heap exploitation — deep-roots">
+<meta property="og:description" content="Chapter 04 of module 02: Heap exploitation">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Heap exploitation — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of module 02: Heap exploitation">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 02 &middot; the dark mirror of module 01</div>
+<h1 class="post-title">Heap exploitation</h1>
+<div class="post-meta">chapter 04 &middot; ~15 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Module 01 chapter 19 praised dlmalloc's descendants for keeping bookkeeping <em>inside</em> the heap: zero side tables, one 16-byte header. This chapter reads that decision adversarially. The chunk header (<code>prev_size</code>, <code>size</code> plus the <code>PREV_INUSE</code>/<code>IS_MMAPPED</code>/<code>NON_MAIN_ARENA</code> bits) and the <code>fd</code>/<code>bk</code> links that freed chunks carry in <em>your</em> old data are within reach of an overflow — and the allocator <em>trusts</em> them: it dereferences the pointers you can overwrite and merges chunks using sizes you can forge. A heap overflow upgrades into "make the allocator allocate where I choose" — an arbitrary write. The weapon families are tcache poisoning, fastbin dup, the unsorted-bin leak, and the House-of-* lore; the hardening history (double-free keys in 2.29, safe-linking in 2.32, hook removal in 2.34) reads best as each attack's obituary. Defensive framing throughout: you cannot reason about mitigations you have never derived from the attack.</blockquote>
+<h2 id="the-header-is-in-the-blast-radius">The header is in the blast radius</h2>
+<p>Start from the layout chapter 19 derived (glibc 2.35, x86-64): <code>malloc</code> returns <code>mem = p + 16</code> for a chunk at <code>p</code>. The header is 16 bytes — <code>prev_size</code> (8 bytes) and <code>size</code> (8 bytes, flags in the low bits). Usable space is <code>size - 8</code>: the last 8 bytes of user data legally overlap the <em>next</em> chunk's <code>prev_size</code>, meaningful only when this chunk is free.</p>
+<pre><code class="language-text">   one glibc 2.35 chunk on x86-64, request 0x68 -&gt; chunk size 0x70
+
+   p = chunk address                      mem = p + 16 = what malloc returned
+   |                                      |
+   v                                      v
+   +----------------+----------------+---------------------------------+
+   | prev_size (8B) | size + flags(8B)| user data (104 usable bytes)   |
+   +----------------+----------------+---------------------------------+
+
+   chunk size = (request + 8 + 15) &amp; ~15, minimum 0x20 (32 bytes)
+   usable     = size - 8
+
+   flags packed in the 3 low bits of the size word (0x71 = 0x70 | PREV_INUSE):
+     P (0x1) PREV_INUSE     - previous chunk in use. If 0, THIS chunk's
+                              prev_size is meaningful and free() will walk
+                              backward by that many bytes to merge (consolidate)
+     M (0x2) IS_MMAPPED     - free() munmap()s instead of binning
+     A (0x4) NON_MAIN_ARENA - chunk belongs to an mmap'd arena, not the brk arena
+
+   The SAME 104 user bytes, three ways (what the allocator writes into them):
+
+   ALLOCATED             FREED into unsorted/small/       FREED into tcache
+   (your data)           large bin (doubly-linked)        (glibc 2.26+, LIFO)
+   +-------------+       +-------------+                  +-------------+
+   | your data   |       | fd (8B)     |                  | next (8B)   |
+   |             |       | bk (8B)     |                  | key  (8B)   |
+   +-------------+       +-------------+                  +-------------+
+     nothing             bin head lives in main_arena     next MANGLED since
+     allocator-          INSIDE LIBC: lone chunk's        glibc 2.32:
+     written            fd = bk = main_arena+0x60         next = raw ^ (addr&gt;&gt;12)
+                       (a libc address: the leak)         key: double-free tag,
+                                                       2.29 = tcache struct
+                                                       ptr, 2.34+ = random</code></pre>
+<p>Now the attacker's arithmetic. The next chunk's <code>size</code> field sits at <code>mem + (size - 8)</code> — exactly at offset <em>usable</em>. A copy that runs <strong>1 byte past the usable size</strong> writes the least significant byte of the neighbor's <code>size</code> word: a trailing NUL lands as <code>size &amp;= ~0xff</code>, clearing <code>PREV_INUSE</code> and zeroing the low size byte — the heap's version of chapter 02's poison NULL byte, and the seed of House of Einherjar below. Writing past the <em>requested</em> size but within the usable size hits only slack: the overflow must exceed <strong>usable</strong>, not request.</p>
+<p>Every field is a control-flow decision made from attacker-writable data. <code>free()</code> reads the next chunk's P bit to decide whether to merge backward using <code>prev_size</code> — a forged <code>prev_size</code> plus a planted fake chunk makes consolidation link memory <em>you</em> designed into a bin; the M bit routes <code>free()</code> to <code>munmap</code> instead of the bins; and the freed chunk's first 16 user bytes become <code>fd</code>/<code>bk</code> or tcache <code>next</code>/<code>key</code> — a use-after-free <em>read</em> sees them (the chapter 05 crossover), a use-after-free <em>write</em> replaces them.</p>
+<h2 id="tcache-the-cache-that-added-an-attack-surface">tcache: the cache that added an attack surface</h2>
+<p>tcache arrived in glibc 2.26 for the performance reason chapter 19 derived: a same-size free/malloc pair should cost two indexed writes and no lock. The per-thread structure is 64 bins indexed by chunk size (32..1040 bytes), each a LIFO stack capped at <strong>7 chunks</strong> (the <code>tcache_count</code> default), with a <code>counts[]</code> occupancy array (<code>uint16_t</code> per bin since glibc 2.30; <code>char</code> in 2.26-2.29). Free pushes, malloc pops — and on the pop, glibc 2.35 verifies <strong>only alignment</strong>: the bin index was decided at free time, so whoever controls the links controls the next allocation.</p>
+<p><strong>Tcache poisoning, derived.</strong> Free two same-size chunks: <code>entries[i]</code> points to b, <code>b-&gt;next</code> to a (mangled, more below). If an overflow or UAF write replaces <code>b-&gt;next</code> with an attacker-chosen value, the <em>second</em> <code>malloc</code> of that size hands the attacker the pointer they chose:</p>
+<pre><code class="language-text">   tcache bin for 0x70 chunks, after free(a); free(b):      count = 2
+
+   entries[5] --&gt; b --next--&gt; a --next--&gt; NULL
+   overwrite b-&gt;next with TARGET (stored as TARGET ^ (b &gt;&gt; 12) on glibc &gt;= 2.32;
+   raw TARGET on 2.26-2.31):
+
+   entries[5] --&gt; b --next--&gt; TARGET
+   malloc #1  --&gt; returns b            count = 1
+   malloc #2  --&gt; returns TARGET       count = 0
+   the program then WRITES through TARGET: arbitrary write</code></pre>
+<p>Before glibc 2.29 the tcache path had <em>no</em> integrity checks — a double free ("tcache dup") got two live pointers to one allocation. The counter-moves, each a version number:</p>
+<ul>
+<li><strong>2.29 — the key field.</strong> <code>free()</code> stamps the chunk's second word with a per-thread key; freeing a chunk that still carries it aborts with <code>free(): double free detected in tcache 2</code>. The key was the tcache struct's own address in 2.29-2.33 — guessable with a heap leak — and became a random <code>getrandom()</code> value in 2.34.</li>
+<li><strong>2.32 — safe-linking.</strong> <code>next</code> is stored mangled: <code>PROTECT_PTR(pos, ptr) = (pos &gt;&gt; 12) ^ ptr</code>, <code>pos</code> being the slot's own address. This is obfuscation, not encryption: the XOR key is 12 bits of shifted <em>slot address</em> — exactly what a heap leak gives you. Read one entry and you can decode every other; know the chunk's address and you can forge the mangled form. What it kills is the zero-knowledge forgery of 2.26-2.31; what it does <em>not</em> hide is the mangled NULL — literally <code>chunk_address &gt;&gt; 12</code>, a small recognizable value (the lab shows it). Partial overwrites of the low bytes still work — the key's high bits in the stored word are untouched. 2.32 also added alignment checks (<code>malloc(): unaligned tcache chunk detected</code>), so a forged target must be 16-byte aligned.</li>
+</ul>
+<p>The lesson generalizes: a cache added for threads added a <em>second</em> metadata format in user-reachable bytes, with fewer checks on the hot path.</p>
+<h2 id="below-the-cache-fastbins-and-the-unsorted-bin">Below the cache: fastbins and the unsorted bin</h2>
+<p><strong>Fastbins</strong> (chunk sizes 0x20-0x80, glibc 2.35 default <code>max_fast</code> = 128) are singly-linked LIFO stacks with deliberately deferred consolidation — the speed trade chapter 19 documented. When the tcache bin is full, the 8th same-size free lands here. Two properties matter adversarially:</p>
+<ul>
+<li>The pop <strong>checks the size word</strong>: the chunk coming off the fastbin must map back to that fastbin's index, or <code>malloc(): memory corruption (fast)</code> aborts. An overflow targeting fastbins must forge a <em>consistent</em> size, not just a pointer.</li>
+<li>The double-free check (<code>double free or corruption (fasttop)</code>) fires only when the chunk being freed is <em>already at the fastbin head</em>. So <code>free(a); free(b); free(a)</code> sails through — a is in the list twice, and two later <code>malloc</code>s return the same pointer to two different owners: <strong>fastbin dup</strong>, the classic recipe for overlapping allocations and the ancestor of chapter 05's "same pointer, two types" confusions. Fastbin <code>fd</code> pointers got the same safe-linking mangling as tcache in 2.32.</li>
+</ul>
+<p><strong>The unsorted bin is the leak.</strong> Free a mid-size chunk (above fastbin size, below the 128 KiB mmap threshold, with an allocated neighbor so it cannot merge into top) and it is consolidated and parked in the unsorted bin — a doubly-linked list whose head is not in the heap at all: it is <code>main_arena+0x60</code>, and <code>main_arena</code> is a static structure <strong>inside libc's data segment</strong> (glibc 2.31-2.41 x86-64; offset varies per build). A lone chunk in that bin carries <code>fd = bk =</code> a libc address. Read those 8 bytes — through a UAF or a dangling pointer the program still prints — and ASLR's libc half is defeated: <code>libc_base = leak - known_build_offset</code>. That single read is why heap write-ups pair a "heap leak" with a "libc leak": together they turn chapter 03's ret2libc and ROP into payload.</p>
+<p>The unsorted bin's <code>bk</code> was also an arbitrary-write primitive before 2.29: the <strong>unsorted bin attack</strong> overwrote a freed chunk's <code>bk</code> with <code>target - 0x10</code>, so removing the chunk executed <code>bck-&gt;fd = unsorted_chunks(av)</code> — writing <code>main_arena+0x60</code> into <code>target</code> (the folklore target: <code>global_max_fast</code>). glibc 2.29 added the integrity check (<code>malloc(): corrupted unsorted chunks 3</code>) that killed the classic form; the <em>leak</em> through fd/bk is unfixable, because the values must point at libc for the bin to work at all.</p>
+<h2 id="the-house-of-museum-one-line-per-exhibit">The House-of-* museum, one line per exhibit</h2>
+<p>The named techniques of the last two decades are all the same sentence with the metadata field swapped: <em>overflow X, the allocator's bookkeeping trusts it, the allocator now writes where I say</em> — each pinned to the glibc it worked on.</p>
+<ul>
+<li><strong>House of Force</strong> (named in Phantasmal Phantasmagoria's "Malloc Maleficarum", 2005; mass CTF sightings 2016): smash the top chunk's <code>size</code> to <code>(size_t)-1</code>, <code>malloc</code> an enormous value so the top pointer wraps onto a target address, and the <em>next</em> <code>malloc</code> returns memory there. Dead since glibc 2.29 (<code>malloc(): corrupted top size</code>).</li>
+<li><strong>House of Spirit</strong> (Maleficarum 2005; modern write-up in Phrack 66's "Malloc Des-Maleficarum", 2009): craft a fake chunk — plausible size word, fake next chunk — at an address you control, <code>free()</code> it, and later <code>malloc</code> hands your fake address back. Alive in spirit ever since: tcache-era variants only need the fake header to survive free-time checks.</li>
+<li><strong>House of Orange</strong> (born in HITCON CTF 2016): corrupt the top chunk's size so the next large <code>malloc</code> calls <code>sysmalloc</code>, which frees the <em>old top</em> into the unsorted bin — a free you never performed — then rides unsorted-bin writes into FILE-structure exploitation (<code>_IO_list_all</code>, fake vtable) for code execution with no heap free under your control. Shaped by glibc 2.24's vtable validation; the classic chain predates 2.26.</li>
+<li><strong>House of Einherjar</strong> (published by st4g3r; how2heap's tcache-aware glibc-2.32 variant still works): one NUL byte into the neighbor's <code>size</code> clears <code>PREV_INUSE</code>; a forged <code>prev_size</code> you planted makes <code>free()</code> consolidate <em>backward onto a fake chunk below the heap</em>, yielding overlapping allocations. The heap's poison-NULL-byte cousin of chapter 02.</li>
+</ul>
+<p>Treat the museum as vocabulary, not a toolkit: what matters is the grammar — which field, which check, which version killed it.</p>
+<h2 id="allocator-choice-is-a-security-decision">Allocator choice is a security decision</h2>
+<p>Every technique above is an <em>implementation</em> attack on glibc's specific in-band metadata: change the allocator and the cookbook does not transfer — which is why hardened targets switched:</p>
+<ul>
+<li><strong>Firefox 3 (2008) adopted jemalloc</strong>, officially for its measured fragmentation wins (chapter 19); the security dividend is that its extent metadata lives <em>out of band</em>, away from the data an overflow reaches. Modern Firefox still ships a hardened jemalloc fork.</li>
+<li><strong>Chrome moved to PartitionAlloc</strong> (rolled out 2019-2021): allocations partitioned by type into separate pools with encoded freelist pointers and bounds-checks — a fake-chunk overflow lands in the wrong pool and dies.</li>
+<li><strong>Android 11 (2020) switched its system allocator from jemalloc to Scudo</strong>, which adds metadata checksums and a quarantine that delays reuse.</li>
+<li><strong>mimalloc</strong> (Microsoft Research, 2019) offers a secure mode with randomized, encoded freelists — the same property holds.</li>
+</ul>
+<p>Be honest: swapping allocators raises the <em>cost</em> of exploitation, not the bug count. Overflow, use-after-free, and double-free are portable primitives — they lose only the ready-made metadata forgery that ptmalloc's in-band bookkeeping handed the attacker.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The version ledger, memorized as years:</strong> tcache glibc 2.26; tcache key (double-free detection) 2.29; <code>counts[]</code> widens from <code>char</code> to <code>uint16_t</code> 2.30; safe-linking <code>ptr ^ (pos &gt;&gt; 12)</code> — tcache <em>and</em> fastbins — 2.32; random <code>tcache_key</code> plus removal of <code>__malloc_hook</code>/<code>__free_hook</code> from the API 2.34 — the classic one-gadget arbitrary-write targets vanished from every pre-2021 exploit chain.</li>
+<li><strong>tcache's 7-per-bin default is a check boundary, not just a performance knob.</strong> The 8th same-size free bypasses tcache entirely and meets the fastbin's weaker, head-only double-free check — exploit grooming sequences count frees for this reason.</li>
+<li><strong>Safe-linking is xor-with-a-leakable-key.</strong> <code>PROTECT_PTR(pos, ptr) = (pos &gt;&gt; 12) ^ ptr</code>; the key is derived from the slot's own address, so any single heap leak unmasks the whole list — and the mangled NULL is always <code>chunk_addr &gt;&gt; 12</code>, a tell-tale small value (the lab shows <code>0x555555559</code>).</li>
+<li><strong>The key-field double-free check (2.29) fires only if the key survived.</strong> A UAF write that zeros or scrambles <code>e-&gt;key</code> between the two frees, or seven intervening same-size frees that flush the bin, both route the bug past tcache into lower, weaker layers.</li>
+<li><strong>Hardened targets swap allocators to change the attack surface, not to fix bugs:</strong> Firefox's jemalloc (2008), Chrome's PartitionAlloc, Android 11's Scudo all move metadata out of overflow reach — the glibc metadata-forgery cookbook dies, the overflow/UAF primitives survive.</li>
+<li><strong>Heap labs always call <code>setbuf(stdout, NULL)</code> first.</strong> Otherwise the first <code>printf</code> allocates a stdio buffer mid-experiment and silently rewrites the chunk layout you were about to dump — every how2heap file starts with it.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>The lab watches glibc write the metadata this chapter attacks. Outputs are from glibc <strong>2.41</strong> (Debian 13, x86-64) — on Ubuntu 22.04's glibc 2.35 the shape is identical, only addresses and the <code>main_arena</code> offset differ. gdb disables ASLR by default.</p>
+<pre><code class="language-c">/* heaplab.c */
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+int main(void) {
+    setbuf(stdout, NULL);              /* keep stdio out of the heap story */
+    char *big   = malloc(0x500);       /* 0x510 chunk: above tcache range  */
+    char *guard = malloc(0x90);        /* separates big from the top chunk */
+
+    char *t[9];
+    for (int i = 0; i &lt; 9; i++)
+        t[i] = malloc(0x68);           /* 0x70 chunks: tcache AND fastbin */
+    for (int i = 0; i &lt; 8; i++)
+        free(t[i]);                    /* 7 fill tcache; t[7] -&gt; fastbin   */
+    free(big);                         /* -&gt; unsorted bin                 */
+
+    printf("checkpoint 1\n");          /* (gdb) break here                */
+    void *r1 = malloc(0x68), *r2 = malloc(0x68), *q[7];
+    for (int i = 0; i &lt; 7; i++) q[i] = malloc(0x68);
+    printf("r1=%p r2=%p q4=%p q5=%p q6=%p\n", r1, r2, q[4], q[5], q[6]);
+    return 0;
+}</code></pre>
+<pre><code class="language-text">$ gcc -g -O0 -o heaplab heaplab.c &amp;&amp; gdb ./heaplab
+(gdb) break 18                        /* checkpoint 1 */
+(gdb) run
+checkpoint 1
+(gdb) x/4gx t[0]-16                   /* first chunk freed -&gt; bottom of stack */
+0x555555559840:  0x0000000000000000  0x0000000000000071
+0x555555559850:  0x0000000555555559  0x962af71aca295b0a</code></pre>
+<p>Read that second line — it is the <em>user area</em> of the freed chunk: <code>next = 0x555555559</code> is the <strong>mangled NULL</strong> (<code>chunk address &gt;&gt; 12</code>, safe-linking since 2.32); <code>0x962af71aca295b0a</code> is the random <code>key</code> (2.34+) — the <em>same</em> value on every entry this thread frees; that is what makes it a tag. Now the stack head and its decode:</p>
+<pre><code class="language-text">(gdb) x/4gx t[6]-16                   /* last freed -&gt; top of the stack */
+0x555555559ae0:  0x0000000000000000  0x0000000000000071
+0x555555559af0:  0x000055500000cfd9  0x962af71aca295b0a
+(gdb) p/x *(unsigned long *)t[6] ^ ((unsigned long)t[6] &gt;&gt; 12)
+$1 = 0x555555559a80                   /* = t[5]: safe-linking unmangled */</code></pre>
+<p>One xor with a known heap address recovers the pointer: obfuscation, verified. The 8th free and the unsorted bin:</p>
+<pre><code class="language-text">(gdb) x/4gx t[7]-16                   /* tcache was full -&gt; fastbin */
+0x555555559b50:  0x0000000000000000  0x0000000000000071
+0x555555559b60:  0x0000000555555559  0x0000000000000000   &lt;- mangled NULL,
+                                                         raw 0 pre-2.32
+(gdb) x/4gx big-16                    /* unsorted bin */
+0x555555559290:  0x0000000000000000  0x0000000000000511
+0x5555555592a0:  0x00007ffff7fa1b20  0x00007ffff7fa1b20   &lt;- fd = bk = the
+                                       unsorted bin head = main_arena+0x60
+(gdb) info proc mappings             /* then find the libc mapping */
+    0x7ffff7dbc000  0x7ffff7f3b000  ...  libc.so.6
+(gdb) p/x 0x7ffff7fa1b20 - 0x7ffff7dbc000
+$2 = 0x225b20                         /* leak minus build offset = base */</code></pre>
+<p>That is the libc leak end-to-end: 8 readable bytes in a freed chunk minus a per-build constant equals ASLR's libc base (0x225b20 on this Debian 2.41 build; Ubuntu 22.04's 2.35 has its own constant — with <code>libc6-dbg</code> installed, <code>p &amp;main_arena</code> names it directly). Now the three tiers serve reuse in order:</p>
+<pre><code class="language-text">(gdb) continue
+r1=0x555555559af0 r2=0x555555559a80 q4=0x555555559850 q5=0x555555559b60 q6=0x5555555592a0</code></pre>
+<p><code>r1 = t[6]</code>, <code>r2 = t[5]</code>, <code>q4 = t[0]</code> — tcache pops, LIFO, deterministic. <code>q5 = t[7]</code> — only after seven pops drained the tcache does the fastbin serve one. <code>q6 = big</code> — with both caches empty, the unsorted-bin chunk is split. Three caches, three check regimes, one malloc call site.</p>
+<p>The 2.29 check, as a runtime message — <code>df.c</code> is <code>malloc(0x68); free(p); free(p);</code>:</p>
+<pre><code class="language-text">$ gcc -o df df.c &amp;&amp; ./df
+free(): double free detected in tcache 2
+Aborted (core dumped)</code></pre>
+<p>On glibc 2.27 (Ubuntu 18.04) this program prints nothing — the second free succeeds and the bug becomes an exploit ingredient. Rerun any lab with <code>GLIBC_TUNABLES=glibc.malloc.tcache_count=0</code> (chapter 19's knob): tcache off, every address changes.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Triage heap-corruption crashes by abort string.</strong> <code>tcache 2</code> means a same-thread double free after 2.29; <code>fasttop</code> a fastbin head repeat; <code>memory corruption (fast)</code> a corrupted size word on a pop; <code>corrupted unsorted chunks 3</code> bin-list integrity.</li>
+<li><strong>Inspect a suspect heap in gdb with two commands.</strong> <code>x/4gx ptr-16</code> reads the chunk's size and flags (sane multiple of 0x10? does the P bit match the neighbor?); the one-line xor decodes a freed chunk's <code>next</code> to see whether the freelist still points at heap memory.</li>
+<li><strong>Review the shapes that feed this chapter.</strong> A fixed-size copy into a <code>malloc</code>'d buffer where the request equals the usable size makes the <em>first</em> overflow byte the neighbor's size LSB — the Einherjar seed. Off-by-one bounds on heap buffers are not cosmetic.</li>
+<li><strong>Put allocator choice on the security review agenda.</strong> For a C/C++ network service, linking jemalloc/mimalloc or running Scudo moves metadata out of overflow reach — and test under the <em>production</em> allocator, because "works on my machine" is an allocator statement (module 03 chapter 02's theme).</li>
+<li><strong>Answer interview questions by derivation.</strong> "Explain tcache poisoning" should start at the chunk diagram — in-band metadata, the LIFO stack, the two-malloc consequence — and end at the version ledger.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch05</strong> — the toy free-list heap, read here with hostile eyes.</li>
+<li><strong>Module 01 ch19</strong> — the allocator machinery in friendly mode: chunk layout, bin ladder, tcache design; this chapter is ch19 re-run adversarially.</li>
+<li><strong>Module 02 ch02</strong> — stack exploitation: same in-band-adjacent-metadata pattern (canary next to return address vs. header next to data).</li>
+<li><strong>Module 02 ch03</strong> — the unsorted-bin leak is the libc-base half that turns ROP/ret2libc from theory into payload.</li>
+<li><strong>Module 02 ch06</strong> — the mitigation ladder: safe-linking, tcache keys, and allocator swaps are rungs; MTE is the structural answer to this chapter.</li>
+<li><strong>Module 03 ch02</strong> — the memory-bug family: the overflow/double-free/UAF shapes in code review that supply every primitive used here.</li>
+<li><strong>Module 04 ch04</strong> — recovering C++: the vtable pointers heap attackers forge are the ones RE reconstructs; grooming plans need those layouts.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<p><strong>Q1 (concept).</strong> Derive why in-band metadata is an attack surface: which allocator <em>decisions</em> are made from the chunk header fields, and what does a 1-byte overflow past the usable size overwrite?</p>
+<p><strong>Q2 (predict the pointers).</strong> glibc 2.35, x86-64: <code>malloc(0x68)</code> nine times into <code>t[0..8]</code>, then <code>free(t[0])</code> through <code>free(t[7])</code>. Which chunk goes to the fastbin, and what do the next three <code>malloc(0x68)</code>s return?</p>
+<p><strong>Q3 (predict the number).</strong> A program on glibc 2.41 frees a 0x510 chunk into the unsorted bin (allocated neighbor, no top merge) and prints the freed pointer's first 8 bytes via a dangling pointer. What value family appears, and how does it become the libc base?</p>
+<p><strong>Q4 (predict the value).</strong> In the same program, <code>t[0]</code> was the <em>first</em> chunk freed into an empty tcache bin. What does its <code>next</code> word read in the dump, and why that exact value?</p>
+<p><strong>Q5 (bug diagnosis).</strong> A service on glibc 2.35 aborts with <code>free(): double free detected in tcache 2</code>. Which mechanism fired — and name two ways the same double free evades that message on the same glibc.</p>
+<p><strong>Q6 (bug diagnosis).</strong> An exploit writer on glibc 2.34 overwrites a freed chunk's tcache <code>next</code> with the raw target address <code>0x404060</code> (16-byte aligned) and calls <code>malloc</code> twice. The program crashes inside malloc, not at the target. Diagnose the mistake and give the correct stored value.</p>
+<p><strong>Q7 (bug diagnosis).</strong> An application aborts with <code>malloc(): memory corruption (fast)</code>. What check fired, and which bug shape (from this chapter's museum) most likely produced it?</p>
+<p><strong>Q8 (cross-chapter).</strong> Module 01 ch19 presented tcache as a performance win; chapter 02 presented stack canaries as a mitigation. Argue why glibc 2.29-2.34 (key, safe-linking, random key, hook removal) is the heap's own mitigation ladder — and why Firefox's 2008 jemalloc switch belongs on the same ladder as chapter 06's rungs.</p>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The allocator trusts bytes the program can write.</strong> From the header it decides: merge backward or not (P bit + <code>prev_size</code>), consolidate forward (next chunk's size), <code>munmap</code> instead of bin (M bit), which arena's bins (A bit), and — once freed — what to link and pop (<code>fd</code>/<code>bk</code>/<code>next</code>). A 1-byte overflow past <em>usable</em> size (not past the request — 8 bytes of slack) lands on the LSB of the next chunk's <code>size</code> word: <code>size &amp;= ~0xff</code> clears <code>PREV_INUSE</code> — the poison-NULL-byte seed of House of Einherjar.</li>
+</ol>
+<ol>
+<li><strong><code>t[7]</code> goes to the fastbin; malloc returns <code>t[6]</code>, <code>t[5]</code>, <code>t[4]</code>.</strong> The first seven frees fill the tcache bin (default 7); the eighth overflows to the fastbin. The three <code>malloc</code>s pop the tcache LIFO stack — last freed first. <code>t[7]</code> returns only on the <em>eighth</em> malloc, after tcache drains; deterministic every run.</li>
+</ol>
+<ol>
+<li><strong>A libc address: <code>main_arena+0x60</code>.</strong> A lone chunk carries <code>fd = bk =</code> the bin head in <code>main_arena</code>, a static struct in libc's data segment (x86-64, glibc 2.31-2.41 era; build dependent). <code>libc_base = leak - offset_of(main_arena+0x60)</code> for the exact build (0x225b20 on the lab's Debian 2.41) — one 8-byte UAF read defeats the libc half of ASLR, the prerequisite for chapter 03's ret2libc/ROP.</li>
+</ol>
+<ol>
+<li><strong><code>0x555555559</code> — the mangled NULL.</strong> <code>t[0]</code> was freed into an <em>empty</em> bin, so its <code>next</code> must be NULL; with safe-linking (glibc 2.32+) the stored form is <code>(slot_address &gt;&gt; 12) ^ 0 = slot_address &gt;&gt; 12</code>. The small value in a dump tells you both "first chunk freed" and "the heap lives at 0x555555559xxx".</li>
+</ol>
+<ol>
+<li><strong>The tcache key check.</strong> <code>free()</code> (2.29+) stamps each tcache entry's second word with the per-thread key; a chunk arriving with the key still present — and still on the bin's list — aborts as a double free. Two escapes: (a) a UAF write between the frees that overwrites the key, or (b) seven intervening same-size frees so the bin is full and the second free routes to the fastbin, where fasttop catches only head repeats.</li>
+</ol>
+<ol>
+<li><strong>Safe-linking was ignored.</strong> Since 2.32 the stored value must be <code>target ^ (slot_address &gt;&gt; 12)</code> — the raw pointer decodes to a garbage "next", and the pop aborts or writes through a wild pointer. Correct form: read the slot's own address <code>pos</code> (heap leak required), store <code>PROTECT_PTR(pos, target)</code>; the target must also be 16-byte aligned — <code>0x404068</code> would die as <code>unaligned tcache chunk detected</code>.</li>
+</ol>
+<ol>
+<li><strong>The fastbin pop's size check.</strong> A chunk was popped from a fastbin whose <code>size</code> word does not map back to that fastbin's index — some chunk <em>on a fastbin list</em> had a corrupted or forged size word. The likely producer: a heap overflow into the neighbor's <code>size</code> field (the House of Spirit/Force family requirement — a consistent forged size, not just a pointer).</li>
+</ol>
+<ol>
+<li><strong>Both are "make trusted metadata costlier to forge."</strong> The glibc ledger raises the forgery price stepwise — key (needs a UAF write), safe-linking (needs a heap leak), random key (a fresh leak), hook removal (kills the payoff target) — as canaries did for the stack, and neither stops a sufficient primitive. Firefox's jemalloc switch is the same rung: metadata relocated out of the overflow's reach — chapter 06's definition of a mitigation.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 02 — Memory security &amp; exploitation</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

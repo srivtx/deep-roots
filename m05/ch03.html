@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Binder — deep-roots</title>
+<meta name="description" content="Chapter 03 of module 05: Binder">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Binder — deep-roots">
+<meta property="og:description" content="Chapter 03 of module 05: Binder">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Binder — deep-roots">
+<meta name="twitter:description" content="Chapter 03 of module 05: Binder">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 05 &middot; an OS designed by memory constraints</div>
+<h1 class="post-title">Binder</h1>
+<div class="post-meta">chapter 03 &middot; ~13 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Every Android process is a separate address space (module 01 ch03), so "processes talking" is a memory problem. A socket costs two copies — one into the kernel, one out. Shared memory costs zero copies but leaves you to build the referee. Binder is the deliberate middle: each process mmaps one ~1 MiB kernel-owned pool, and a transaction is a <em>single</em> copy from the sender's userspace straight into pages of the <strong>receiver's</strong> mapping, where the receiver reads it in place. Parcels are length-prefixed bytes plus an offsets table of kernel-fixup records (binder objects, file descriptors), so the driver rewrites per-process numbers without parsing your payload. AIDL compiles to a dispatch switch, up to 15 binder threads drain the queue, handle 0 names servicemanager — and that 1 MiB pool, shared by everything in flight, is why a 2 MB Intent dies as <code>TransactionTooLargeException</code>.</blockquote>
+<h2 id="two-copies-zero-copies-one-copy">Two copies, zero copies, one copy</h2>
+<p>Two processes cannot name each other's memory: virtual addresses are per-process translations (module 01 ch03). Any byte that crosses must pass through the one address space both trust — the kernel. Count copies.</p>
+<p>A pipe or socket: <code>write(fd, p)</code> triggers <code>copy_from_user</code> into an <code>sk_buff</code>; the receiver's <code>read()</code> triggers <code>copy_to_user</code> into its own buffer. Two copies, the second into memory that didn't exist before — fine for a shell, brutal for a UI thread making thousands of RPCs per second.</p>
+<p>Shared memory (<code>shm</code>/<code>ashmem</code>): zero copies — both processes map the same physical pages. But now you own everything the socket stack did: where a message <em>starts</em>, who signals availability, what stops a malicious peer from scribbling mid-struct. Zero copies bought a synchronization and trust problem with no referee: copying is dumb and safe, sharing is fast and lawless.</p>
+<p>Binder's insight: the kernel can do the copy <em>into shared pages</em>. At startup, every process's <code>ProcessState</code> opens <code>/dev/binder</code> and mmaps a transaction pool — <code>BINDER_VM_SIZE = 1 MiB − 2 pages = 1,040,384 B</code> with 4 KiB pages (AOSP frameworks/native, Android 14): the fabled "1 MB", slightly under. When A calls B, the driver does one <code>copy_from_user</code> of A's parcel, landing the bytes <strong>directly into pages of B's already-mapped pool</strong>, queues the transaction, and wakes one of B's binder threads. B's <code>IPCThreadState</code> wraps the parcel <em>in place</em> — no second copy, because the kernel wrote into memory B can already see. One copy, with the kernel as referee for queueing, identity, and teardown.</p>
+<pre><code>        SOCKETS / PIPES: 2 copies             BINDER: 1 copy
+        ============================          ================================
+
+ sender (userspace)   kernel            receiver (userspace)
+ +----------------+ copy #1: copy_  +-----------+ copy #2: copy_  +-----------+
+ | write(fd, p)   | from_user -----&gt;| sk_buff   | to_user -------&gt; | read(fd,q)|
+ +----------------+                 +-----------+                  +-----------+
+
+ sender (userspace)            kernel                receiver (userspace)
+ +----------------+  the ONE   +----------------+   +------------------------------+
+ | ioctl(/dev/    |  copy:     | binder driver  |   | 1 MiB mmap'd txn pool       |
+ | binder, BINDER_| copy_from_ | lands bytes    |   | (1,040,384 B = 1 MiB - 2    |
+ | WRITE_READ,    | user ----- | DIRECTLY in    |--&gt;| pages; AOSP, 4 KiB pages,   |
+ | Parcel)        |            | the receiver's |   | Android 14)                 |
+ +----------------+            | pool pages     |   +------------------------------+
+  calling thread parks          +----------------+   | [sync txns pending][free]   |
+  in the ioctl until             | wake one of     |  async budget: at most half  |
+  the reply                      | B's binder      |  the pool = 520,192 B        |
+                                 | threads         +------------------------------+
+                                                      receiver reads the Parcel IN
+                                                      PLACE through its own
+                                                      mapping: copy #2 never
+                                                      happens</code></pre>
+<p>Two budget rules, kernel policy not knobs (binder driver, 5.15-era, Android 14):</p>
+<pre><code> receiver's pool: ONE per process, shared by ALL in-flight transactions
+ (not 1 MiB *per call* — the mistake everyone makes):
+
+ +---------------------------------------------------------------------------+
+ | [sync txn pending] [sync txn pending] [ free ..........................]  |
+ +---------------------------------------------------------------------------+
+   async (oneway) budget = pool / 2 = 520,192 B: outstanding oneway
+   transactions together may never exceed half the pool, so oneway spam
+   cannot starve sync callers. A budget, not a partition: oneway bytes still
+   come out of the same free space.</code></pre>
+<p>Synchronous transactions may use the whole free pool, but each holds its allocation until the reply is consumed — so four concurrent 300 KB calls (1.2 MB) into one process fail while each alone "fits". Either budget blown → <code>BR_FAILED_REPLY</code> → Java's <code>TransactionTooLargeException</code>, a name that undersells it: too large for the receiver's <em>shared</em> pool, not for a per-call limit.</p>
+<p>Since Treble (Android 8.0) there are three devices, three namespaces — <code>/dev/binder</code> (framework), <code>/dev/hwbinder</code> (HAL), <code>/dev/vndbinder</code> (vendor) — same driver, separate handle universes.</p>
+<h2 id="parcels-a-wire-format-the-kernel-only-half-parses">Parcels: a wire format the kernel only half-parses</h2>
+<p>A <code>Parcel</code> is a byte stream of length-prefixed, 4-byte-aligned primitives: <code>writeInt</code> is a raw 4 bytes; <code>writeString</code> writes an <code>int32</code> length (in UTF-16 code units), the UTF-16LE bytes, a 16-bit NUL terminator, then pads to a 4-byte boundary (libbinder <code>String16</code> format, 64-bit, Android 14). Alignment buys cheap field access; length prefixes buy skip-ability without a schema.</p>
+<p>The kernel must not understand any of it — except where <em>it</em> has work: binder references and file descriptors both need fixups. Each travels as a <code>flat_binder_object</code> (24 B on 64-bit) embedded <em>somewhere</em> in your bytes, and the parcel carries an <strong>offsets table</strong> after the data — 8-byte <code>binder_size_t</code> offsets, one per object — so the driver rewrites exactly those records without parsing your payload:</p>
+<pre><code> one Parcel on the wire (simplified; sizes in bytes, 64-bit):
+
+ +0        +4          +4+2*len   +2             pad-to-4
+ +---------+-----------+----------+--------------+-----------
+ | int32   | int32     | len x    | 00 00        | 2 B pad   |
+ | len=2   | len=3     | UTF-16LE | NUL          | if needed |
+ +---------+-----------+----------+--------------+-----------
+   writeInt(2)   writeString("abc"): 4 + 6 + 2 = 12 B, no pad needed
+
+   ... more length-prefixed primitives; the driver never parses these ...
+
+ +--------------------------------------------------------------+
+ | offsets_count | binder_size_t offsets[0..n-1], 8 B each      | &lt;- fixup
+ +--------------------------------------------------------------+    table
+ at payload offset offsets[0] sits a flat_binder_object (24 B, 64-bit):
+ +--------------+--------------+-----------------+-----------------+
+ | type u32     | flags u32    | handle / ptr u64| cookie u64      |
+ | BINDER_TYPE_ | priority     | KERNEL REWRITES | aux pointer     |
+ | HANDLE/FD/...| bits         | this field      | (local Binder*) |
+ +--------------+--------------+-----------------+-----------------+</code></pre>
+<h3>Why fds ride alongside the buffer, never inside it</h3>
+<p>An fd <em>number</em> is an index into the current process's private file table. Write <code>int fd = 37</code> into the payload and the receiver reads 37 — an index into <em>its own, unrelated</em> table. So the fd travels as a <code>BINDER_TYPE_FD</code> flat object: the sender's kernel does <code>fget(37)</code> to pin the <code>struct file</code>; delivery installs a <em>new</em> fd number in the <strong>receiver's</strong> table (<code>get_unused_fd</code> + <code>fd_install</code>). Numbers are per-process; only the kernel can translate them — the <code>SCM_RIGHTS</code> choreography. Hence <code>SharedMemory</code>/ashmem for big data: bytes through a shared region, only the fd (24 B) through Binder.</p>
+<p><code>BINDER_TYPE_HANDLE</code> gets the same treatment: your process-local <code>Binder*</code> becomes a small integer handle in the peer's kernel-managed ref table. Handles are capabilities — holding one is the <em>only</em> way to address that object, and the driver (plus SELinux binder hooks, stamped with the sender's uid/pid) polices every hop.</p>
+<h2 id="aidl-a-switch-table-you-have-already-met">AIDL: a switch table you have already met</h2>
+<p>Nobody writes parcels by hand: describe the interface in AIDL and the generator emits both sides — a <code>Stub</code> with an <code>onTransact</code> dispatch switch, and a <code>Proxy</code> that packs and unpacks. It is the exact idiom of module 04 ch02's loader walking relocation records <code>switch (r_type)</code>: one case per record type, data-driven dispatch over a wire format. Here the record type is the transaction code:</p>
+<pre><code class="language-java">// AIDL-generated, trimmed: com/example/IVersionService.java (Android 14)
+public static abstract class Stub extends Binder implements IVersionService {
+    static final int TRANSACTION_getVersion = IBinder.FIRST_CALL_TRANSACTION + 0;
+
+    @Override
+    public boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
+        switch (code) {                       // the dispatch table
+            case TRANSACTION_getVersion: {
+                data.enforceInterface(DESCRIPTOR);   // catch version skew
+                int result = this.getVersion();      // your real method
+                reply.writeNoException();
+                reply.writeInt(result);
+                return true;
+            }
+        }
+        return super.onTransact(code, data, reply, flags);
+    }
+}</code></pre>
+<p>Codes start at <code>FIRST_CALL_TRANSACTION</code> (1) and increment per method in declaration order — reordering AIDL methods is a wire compatibility break. The proxy is the mirror: allocate parcels, <code>writeInterfaceToken</code>, marshal, one <code>mRemote.transact(code, data, reply, 0)</code>, unmarshal. Oneway passes <code>FLAG_ONEWAY</code>, skips the reply, returns immediately — the async budget now applies to your bytes.</p>
+<h2 id="the-thread-pool-and-the-sixteenth-thread">The thread pool and the sixteenth thread</h2>
+<p>Copy economics solved delivery; someone must <em>run</em> the code. At pool start (<code>ProcessState::startThreadPool</code>, plus the main thread's <code>BC_ENTER_LOOPER</code>), one thread sits in the binder loop. When a transaction arrives with every looped thread busy, the driver sends <code>BR_SPAWN_LOOPER</code> and userspace registers another — capped at <code>DEFAULT_MAX_BINDER_THREADS = 15</code> (frameworks/native, Android 14). Main + 15 = <strong>16 inbound binder handlers per process</strong>, fixed.</p>
+<p>Now the deadlock lore. A synchronous binder call <em>consumes</em> its calling thread — it parks inside the <code>ioctl</code> until the reply. Say all 15 binder threads each handle a request whose handler makes a synchronous call <em>out</em> to system_server, and those remote calls synchronously call back <em>in</em>. The inbound transaction needs a 17th looped thread; the driver would spawn one, but 15 is the cap. Every thread waits on a reply that can never be delivered — deadlock, no lock in sight. Which is why <code>setThreadPoolMaxThreadCount()</code> exists and framework callbacks are oneway.</p>
+<h2 id="handle-0-the-root-namespace-and-death-notifications">Handle 0: the root namespace and death notifications</h2>
+<p>Every process's handle table starts empty except one entry: <strong>handle 0</strong>, the context manager — <code>servicemanager</code>, an init-started process that won the kernel's <code>BINDER_SET_CONTEXT_MGR</code> ioctl (SELinux-gated). It is the root namespace, a flat string→object map ("activity", "window", "package"): <code>ServiceManager.getService("activity")</code> is just a parcel to handle 0; the reply's <code>BINDER_TYPE_HANDLE</code> is installed as a new handle in <em>your</em> table. Every AMS/WMS/PMS call descends from one such lookup — module 05 ch01's system_server, reached this way.</p>
+<p>Handles are references, so they dangle: the peer process can die. <code>linkToDeath</code> (<code>BC_REQUEST_DEATH_NOTIFICATION</code>) registers interest; when the owner's <code>/dev/binder</code> fd closes and its last ref drops, the kernel queues <code>BR_DEAD_BINDER</code> to every recipient — Java surfaces it as <code>binderDied()</code> on a <code>DeathRecipient</code>. That is the whole mechanism behind a stale cached service proxy: no polling — the kernel knew, because it owns the refcounts.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The 1 MiB is per <em>process</em> — and it's the receiver's.</strong> <code>BINDER_VM_SIZE</code> = 1 MiB − 2 pages = 1,040,384 B (AOSP, Android 14, 4 KiB pages); <code>TransactionTooLargeException</code> blames the sender but measures the <em>callee's</em> shared pool — a system service fails on payloads your own process could send itself.</li>
+<li><strong>The async half rule.</strong> Outstanding oneway transactions together may not exceed pool/2 = 520,192 B (kernel binder driver, 5.15-era). Log spam of dropped oneway calls with no exception is this budget, not the full 1 MiB.</li>
+<li><strong>15 binder threads, +1 main, hard cap.</strong> <code>DEFAULT_MAX_BINDER_THREADS = 15</code>; the 16th-thread starvation deadlock above is the lore. ANR traces show it as every "(binder)" thread parked in <code>transactNative</code>.</li>
+<li><strong>fds are the side channel that works.</strong> Numbers are per-process indexes; only <code>BINDER_TYPE_FD</code> fixups (kernel <code>fget</code>/<code>fd_install</code>, like <code>SCM_RIGHTS</code>) make them portable — hence <code>SharedMemory</code> for bulk data, and a leaked fd is a genuine sandbox crossing (ch05 previews this).</li>
+<li><strong>Handle 0 is the only pre-installed handle in every process</strong>, and only <code>servicemanager</code> may hold it (<code>BINDER_SET_CONTEXT_MGR</code>, SELinux-gated). <code>adb shell service list</code> is literally a dump of that root namespace.</li>
+<li><strong>Every binder call is one <code>ioctl(BINDER_WRITE_READ)</code></strong> — watch real IPC traffic in <code>strace</code> as a stream of them; write and read batches fused into one syscall is a big part of the speed.</li>
+<li><strong>The reply crashes elsewhere.</strong> When a pending transaction fails, the classic symptom is <code>E/JavaBinder: !!! FAILED BINDER TRANSACTION !!! (parcel size = N)</code> on the <em>callee</em> and a crash in code the callee never wrote.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>No device was attached while writing this: the fragments below are documented walkthroughs from AOSP sources (Android 14, API 34, kernel 5.15). Shapes are right; your counts will differ. Everything but the root-only stats files runs on any device.</p>
+<p><strong>1. The driver's own accounting.</strong> Older kernels expose <code>/proc/binder/</code>; Android 11+ devices usually mount <strong>binderfs</strong> instead:</p>
+<pre><code class="language-console">$ adb shell ls /dev/binderfs/            # or: adb root on a userdebug build
+binder  binder-control  hwbinder  vndbinder
+$ adb shell cat /dev/binderfs/binder/stats    # root: mode 0400; older: /proc/binder/stats
+binder stats:
+BC_INCREFS 23341, BC_ACQUIRE 26102, BC_ENTER_LOOPER 1204, ...
+BC_TRANSACTION 1845537, BC_REPLY 1842903, ...
+proc
+  1660 system_server
+    ...</code></pre>
+<p>Notice <code>BC_TRANSACTION</code> vs <code>BC_REPLY</code> (roughly equal — most calls are synchronous) and the per-process entries: exactly the processes holding <code>/dev/binder</code> open. And the file nobody reads at 2 a.m. but should — <code>binder/failed_transaction_log</code>, the kernel's timestamped, sized ledger of every <code>BR_FAILED_REPLY</code>.</p>
+<p><strong>2. Reproduce the 1 MiB wall.</strong> No permissions, any device:</p>
+<pre><code class="language-kotlin">// MainActivity.kt — one intent, 2 MiB of payload, one binder transaction
+val blob = ByteArray(2 * 1024 * 1024) { 'A'.code.toByte() }  // 2 MiB
+val intent = Intent(this, TargetActivity::class.java)
+    .putExtra("blob", blob)          // marshalled into the intent's Parcel
+startActivity(intent)                // -&gt; IActivityTaskManager.startActivity()</code></pre>
+<p>The transaction needs 2 MiB in a 1,040,384 B pool; you get the classic pair:</p>
+<pre><code class="language-text">E/JavaBinder: !!! FAILED BINDER TRANSACTION !!!  (parcel size = 2097772)
+E/AndroidRuntime: FATAL EXCEPTION: main
+  android.os.TransactionTooLargeException: data parcel size 2097772 bytes
+      at android.os.BinderProxy.transactNative(Native Method)
+      at android.os.BinderProxy.transact(BinderProxy.java:601)
+      at android.app.IActivityTaskManager$Stub$Proxy.startActivity(...)</code></pre>
+<p>The parcel size is slightly over 2 MiB — length prefixes, the offsets table, and the interface token ride along. Try 500 KB (it succeeds: a lone sync transaction owns the whole pool), then four concurrent 300 KB transactions — the pool is shared by everything in flight, so the fourth dies.</p>
+<p><strong>3. Userspace's view of the wiring.</strong></p>
+<pre><code class="language-console">$ adb shell dumpsys activity services com.example.app
+ACTIVITY MANAGER SERVICES (dumpsys activity services)
+* ServiceRecord{9c1f7e u0 com.example.app/.Remote}
+    intent={cmp=com.example.app/.Remote}
+    packageName=com.example.app processName=com.example.app:remote
+  * Client app=ProcessRecord{7a2b1c u0 a123 com.example.client/com.example.client}</code></pre>
+<p>Each <code>ServiceRecord</code> is a <code>BINDER_TYPE_HANDLE</code> in clothing: the <code>* Client app=</code> lines are binder refs other processes hold, and <code>:remote</code> means those refs cross a process boundary. Run it before and after killing the service process — you are watching handle/ref lifecycle from 10,000 feet.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Design IPC payloads against the shared pool, not the per-call size.</strong> Budget a few hundred KB total across everything in flight to that process; ship bulk data by fd (<code>SharedMemory</code>). The failure to design away is a burst, not a size.</li>
+<li><strong>Crash triage from logs alone.</strong> A <code>TransactionTooLargeException</code> whose stack frames you don't recognize means a <em>reply</em> or pending transaction failed — <code>!!! FAILED BINDER TRANSACTION !!!</code> and <code>failed_transaction_log</code> tell you which side and size.</li>
+<li><strong>Read ANR traces quantitatively.</strong> Count threads named <code>(binder)</code> parked in <code>transactNative</code> — 15 of them plus a nested sync call is the sixteenth-thread deadlock in an ANR costume.</li>
+<li><strong>Whiteboard the interview answer.</strong> "Why is Binder fast?" — one copy, not two: receiver-mmap'd pool, kernel <code>copy_from_user</code> lands in place, dispatch fused into one <code>ioctl</code>. The 1 MiB number and its provenance (<code>BINDER_VM_SIZE</code>) is the credibility flourish.</li>
+<li><strong>Debug IPC with the kernel's ledger, not printf.</strong> <code>binderfs</code> stats and the failed-transaction log see every process at once; printf in two processes sees a race-free fiction.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch03 (virtual memory)</strong> — the one-copy trick <em>is</em> mmap: kernel writes a page through its mapping, receiver reads it through another mapping of the same physical page.</li>
+<li><strong>Module 04 ch02 (linking &amp; loading)</strong> — <code>onTransact</code>'s code switch is the same idiom as the loader's <code>switch (r_type)</code>: dispatch over a wire format, with only the fixup records structured.</li>
+<li><strong>Module 05 ch01 (boot &amp; the Zygote)</strong> — the launch path deliberately uses a UNIX <em>socket</em>, not Binder — binder threads, mmaps, and handle tables are not fork-safe; binder joins after fork+specialize.</li>
+<li><strong>Module 06 ch03 (Mach ports &amp; XPC)</strong> — the comparison pair: both give kernel-mediated capabilities (handle tables vs port rights); Mach messages <em>transfer</em> rights with ownership semantics, Binder holds kernel refcounts with death notification instead.</li>
+<li><strong>Module 09 ch04 (actors &amp; channels)</strong> — Android's actor feel (<code>Handler</code>, <code>MessageQueue</code>, main-thread discipline) rides on oneway binder transactions: an async channel whose only backpressure is the 520,192 B budget.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>The pool could live in the <em>sender's</em> mmap instead: copy from sender userspace to sender kernel pages, then a second copy to the receiver. What does the receiver-side placement eliminate, and how can the kernel write into pages the receiver maps?</li>
+<li>An AIDL method takes one <code>String</code> of 1,000 ASCII chars, marshalled with <code>writeString</code> (libbinder <code>String16</code>, 64-bit, Android 14). How many bytes does the string occupy on the wire?</li>
+<li>An app makes a single <strong>oneway</strong> call carrying a 700 KB byte array; nothing else is in flight and 700 KB &lt; 1 MiB. It fails anyway. Which budget, what size, and what is it protecting?</li>
+<li>A media app sends four concurrent synchronous AIDL calls of 300 KB each (from four threads) into a service process. The fourth throws <code>TransactionTooLargeException</code>; each call is under every single-call limit you can find. Diagnose.</li>
+<li>Process P's 15 binder threads each execute a request whose handler makes a <em>synchronous</em> call out to Q, and each of those calls at Q synchronously calls back into P. Explain the stall and why the driver cannot rescue it.</li>
+<li>A developer writes <code>parcel.writeInt(fd)</code>; the peer's <code>readInt</code> returns a number that fails in every <code>read()</code> the peer attempts. Why, and what mechanism makes fds work instead?</li>
+<li>The receiver never <code>read()</code>s the transaction bytes, yet its loads return kernel-written data. Name the module 01 ch03 mechanism making one physical page visible under two mappings, and state which side ever dirties the pages.</li>
+<li>In Mach (module 06 ch03), a message can <em>transfer</em> a port send right into the receiver. What is Binder's analogue when you pass a binder object, and what differs about who tracks liveness?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Receiver-side placement eliminates copy #2.</strong> A sender-side pool means kernel pages the receiver cannot address, so delivery needs a <code>copy_to_user</code> into receiver memory — the socket fate. With the pool in the receiver's mapping, the single <code>copy_from_user</code> lands in physical pages the receiver's page tables already translate; the kernel writes through its own alias, the receiver wraps the bytes in place. Only the kernel's copy dirties the pages.</li>
+</ol>
+<ol>
+<li><strong>2,008 bytes.</strong> int32 prefix (4) counts UTF-16 units; 1,000 ASCII chars = 2,000 bytes of UTF-16LE; 16-bit NUL terminator (2) → 2,006, padded to 4 → <strong>2,008</strong>. The traps: 1 byte per char, or a forgotten terminator.</li>
+</ol>
+<ol>
+<li><strong>The async budget: pool/2 = 520,192 B</strong> (kernel <code>binder_alloc</code>). 700 KB &gt; 520 KB, so the driver refuses it even with the pool otherwise empty; Java typically surfaces the failed oneway call as <code>DeadObjectException</code>, or loses it silently. The rule protects sync callers — oneway spam can never take more than half the pool, so a sync call always has somewhere to land.</li>
+</ol>
+<ol>
+<li><strong>The pool is shared by all in-flight transactions to that process.</strong> 4 × 300 KB = 1.2 MB &gt; 1,040,384 B: the fourth reservation fails though each call is individually fine. And the pool belongs to the <em>receiver</em> — "my app is under 1 MB" was never the test. Fix: serialize, chunk, or move the bytes behind an fd (<code>SharedMemory</code>).</li>
+</ol>
+<ol>
+<li><strong>Sixteenth-thread starvation.</strong> A sync call consumes its calling thread until the reply. All 15 binder threads (plus a busy main thread) are parked in outbound <code>transact</code>, each waiting on a reply Q only produces by calling back <em>into</em> P — which needs an inbound looped thread. The driver would spawn thread 16, but the cap is 15, so it queues: everyone waits, nobody runs. Hence nested synchronous IPC is forbidden in framework code and callbacks are oneway.</li>
+</ol>
+<ol>
+<li><strong>fd numbers are per-process table indexes.</strong> <code>37</code> names entry 37 of the <em>sender's</em> file table; in the peer it names something unrelated (often nothing — EBADF). Fds work via a <code>BINDER_TYPE_FD</code> object: the sender's kernel resolves it with <code>fget()</code> to the shared <code>struct file</code>; delivery installs a fresh fd in the receiver (<code>get_unused_fd</code> + <code>fd_install</code>). The number changes, the file doesn't — <code>SCM_RIGHTS</code> choreography.</li>
+</ol>
+<ol>
+<li><strong>mmap: one physical page under two mappings.</strong> The driver maps pool pages into the receiver's address space (module 01 ch03 — the page is the unit of sharing); the kernel writes through its mapping, the receiver reads through its own. Only the kernel's delivery copy dirties the pages — the receiver only reads, so no COW, no copy: the data is simply already there.</li>
+</ol>
+<ol>
+<li><strong>Analogue: writing a binder object into a parcel</strong> emits a <code>BINDER_TYPE_HANDLE</code> fixup; the driver installs a new, refcounted handle in the receiver's ref table — a capability appears on the peer. Difference: Mach moves <em>ownership</em> with the message (the sender may lose the right); Binder keeps both sides as independent refs in one kernel table, deriving liveness from the owner's <code>/dev/binder</code> fd closing — the death-notification path.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch02.html"><span class="cn-label">previous</span><span class="cn-title">Ch 02</span></a>
+<a class="next" href="ch04.html"><span class="cn-label">next</span><span class="cn-title">Ch 04</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 05 — Android internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

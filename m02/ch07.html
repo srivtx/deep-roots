@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Side channels — deep-roots</title>
+<meta name="description" content="Chapter 07 of module 02: Side channels">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Side channels — deep-roots">
+<meta property="og:description" content="Chapter 07 of module 02: Side channels">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Side channels — deep-roots">
+<meta name="twitter:description" content="Chapter 07 of module 02: Side channels">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 02 &middot; the dark mirror of module 01</div>
+<h1 class="post-title">Side channels</h1>
+<div class="post-meta">chapter 07 &middot; ~18 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Every attack so far corrupts bytes. This chapter is about attacks that corrupt nothing: attacker and victim share silicon — caches, DRAM rows, branch predictors — and the victim's <em>use</em> of that hardware leaves physical traces that timing reveals. Prime+Probe, Flush+Reload, and Evict+Reload turn the cache into a radio station broadcasting the victim's access pattern; Spectre weaponizes speculation to touch data the program never architecturally accessed and encode it into cache state; Meltdown did the same to kernel memory and forced KPTI; Rowhammer flips bits in DRAM with nothing but access patterns. The defense — constant-time code plus partitioning — is only ever partial: while two trust domains share a machine, timing is a function of the work each side did, and work leaks.</blockquote>
+<h2 id="the-boundary-that-isn-t">The boundary that isn't</h2>
+<p>Chapter 01 drew the trust boundary through the <em>address space</em>: page tables, pointers, file descriptors. Every exploit chain in chapters 02–05 crosses it by writing bytes it should not own. First-principles question: what else do attacker and victim share, and is any of it covered by the boundary?</p>
+<p>Nearly everything, and none of it. The two processes share the core's L1/L2 when the scheduler alternates them, the shared L3 whenever they coexist, the DRAM banks, the branch predictors, the execution ports. The page-table boundary is enforced only in the memory <em>map</em> — below it, the hardware is one machine with no concept of your security policy. Caches are indexed by physical address and hold lines from every process on the box.</p>
+<p>A <strong>side channel</strong> is a channel whose medium is a shared physical resource and whose signal is the victim's use of it. The transmitter needs no bug and sends nothing voluntarily — which breaks Chapter 01's bug → primitive → exploit → impact chain: impact with no vulnerability, because the "vuln" is that hardware performance depends on inputs. (A <strong>covert channel</strong> is the same physics used by two colluding processes to talk, e.g. across an air-gap VM boundary.) The founding result is Kocher 1996, who recovered RSA keys by timing the <em>math</em>: modular exponentiation runs faster on exponents with fewer set bits, and the exponent was the secret. The general law: any computation whose work varies with secret data leaks that data through its running time. Cache attacks are the same idea with bandwidth turned up from bits-per-minute to kilobytes-per-second.</p>
+<h2 id="the-cache-attacker-family">The cache-attacker family</h2>
+<p>Derive the attacks from two facts you own: a set has N ways and a line maps to exactly one set (module 01 ch02), and a hit costs ~4–70 cycles while a DRAM miss costs ~200–400+ (the lab printed 52 vs 374). If the victim's access to some line changes <em>the attacker's own timing</em>, that is an oracle.</p>
+<p><strong>Prime+Probe</strong> (Osvik, Shamir, Tromer 2006) needs no shared page — only the same L3. Fill every way of one set with your lines, let the victim run, reload your fillers. A filler that now goes to DRAM was evicted, and only lines mapping to that same set can evict it:</p>
+<pre><code>one L3 set (say 16 ways)          attacker's timeline
++-------------------------------------------+
+| A A A A A A A A A A A A A A A A |  1. PRIME: fill every way
++-------------------------------------------+
+        (victim runs, elsewhere or later)
++-------------------------------------------+
+| A A A A A A A A A A | V | A A A A A |  2. victim's line V maps to
++-------------------------------------------+     this set -&gt; one evicted
++-------------------------------------------+
+| A A A A A A A | ....slow.... | A A A A |  3. PROBE: reload each filler;
++-------------------------------------------+     one DRAM-bound reload = leak</code></pre>
+<p>The resolution is a <em>set</em>, not a line: an 8 MB 16-way L3 has 8,192 sets, so one probe distinguishes 13 bits of set index but nothing about which line inside the set — and your own kernel traffic fills sets too, so noise is high.</p>
+<p><strong>Flush+Reload</strong> (Gullasch et al. 2011; Yarom &amp; Falkner 2014) is the scalpel. x86's <code>clflush</code> is unprivileged and evicts one line, by virtual address, from every cache level. But to probe <em>the victim's</em> line you must have it mapped — and because caches are physically indexed, that means the same physical line, i.e. a shared page. This same-line requirement defines the attack surface:</p>
+<pre><code>      ONE SHARED PHYSICAL PAGE (e.g. a page of libc mapped in both
+       processes: the page cache keeps ONE physical copy, so both
+       address spaces hit the same lines)
+
+ attacker (spy)               victim                      line X state
+ ----------------------------------------------------------------------
+ 1. clflush(line X)                                       line X: cold
+ 2. (attacker idles)                                      line X: cold
+ 3.                          if (secret_bit) touch(X);   bit=1 -&gt; X warm
+                             else              touch(Y); bit=0 -&gt; X cold
+ 4. t = timed reload of line X
+      t ~  50-150 cycles =&gt; HIT  =&gt; victim touched X  =&gt; bit = 1
+      t ~ 200-400 cycles =&gt; MISS =&gt; victim skipped X  =&gt; bit = 0
+ ----------------------------------------------------------------------
+ measured on this chapter's machine: 52 vs 374 cycles (see the lab)</code></pre>
+<p>That picture is the whole attack class: the victim's secret-dependent <em>whether-to-touch</em> becomes the attacker's <em>how-fast-did-my-reload-come-back</em>. Yarom and Falkner used it to steal a 2048-bit GnuPG RSA key from one decryption: exponentiation touches different lines for "square" versus "multiply" steps (module 01 ch21 makes the same observation benignly).</p>
+<p>Where do shared pages come from? Three default routes: shared libraries — every process mapping <code>libc.so</code> or <code>libcrypto.so</code> shares physical lines with every other; the page cache maps the same file pages into everyone who <code>mmap</code>s a file; and <strong>KSM</strong>, the kernel's content-based dedup, merges identical anonymous pages <em>across VMs</em>, which took Flush+Reload into the cloud. "Shared pages" and "attack surface" are the same sentence.</p>
+<p><strong>Evict+Reload</strong> (Gruss et al. 2015) replaces <code>clflush</code> with eviction: fill the set with conflicting addresses so the victim's line falls out, then reload. You need it whenever flushing is unavailable — from JavaScript, or on ARM platforms where user-mode cache maintenance traps (Apple Silicon is the canonical case, which is why x86-64 demos do not port).</p>
+<p>One piece of arithmetic: a Flush+Reload round leaks <code>log2(64 / element_size)</code> bits — the line, not the byte, is the resolution. A secret index into a byte table leaks 6 bits per access; into a <code>uint64_t</code> table, 3.</p>
+<h2 id="clocks-and-the-noise-floor">Clocks, and the noise floor</h2>
+<p>The read-out is a timing measurement, so measurement is the bottleneck: separate ~50-cycle hits from ~400-cycle misses on a machine that lies at every scale.</p>
+<ul>
+<li><strong><code>rdtsc</code>/<code>rdtscp</code></strong> read the cycle counter directly — cycle resolution (~0.3 ns at 3.3 GHz), but not serializing. <code>rdtscp</code> waits for prior instructions to retire, yet the timed load can still slip past the second read, so serious code uses <code>lfence; rdtsc; &lt;load&gt;; rdtscp; lfence</code>. Under virtualization the hypervisor can scale or offset the TSC, and migration between cores with unsynchronized TSCs makes deltas garbage (want <code>constant_tsc nonstop_tsc</code> in <code>/proc/cpuinfo</code>; still no guarantee inside VMs).</li>
+<li><strong><code>perf_event_open</code>/<code>perf stat</code></strong> is kernel-mediated: migration-correct, with hardware counters (<code>cycles</code>, <code>L1-dcache-load-misses</code>). The tradeoff: it counts over a region, not per access, and it is gated by <code>/proc/sys/kernel/perf_event_paranoid</code> — this chapter's box ships 2 (user-space counting only); Ubuntu 22.04+ ships 4, which blocks unprivileged perf outright. Practical attackers in 2024 use <code>rdtscp</code> plus their own statistics.</li>
+</ul>
+<p>The statistics <em>are</em> the attack engineering. Between flush and probe the core takes interrupts, gets preempted, the SMT sibling streams video, the frequency governor rescales the clock. Each event <em>inflates</em> a timing — noise adds, never subtracts — so the toolkit is: repeat, take the minimum or a low percentile, and set the threshold from a calibration histogram of known-hit vs known-miss runs. Flush+Reload's ~350-cycle gap sits comfortably above the ~30–60-cycle jitter floor; Prime+Probe's gap (tens of cycles) is why its traces need thousands of samples where Flush+Reload needs one. The lab prints exactly such a two-blob histogram.</p>
+<h2 id="transient-execution-the-machine-that-never-happened">Transient execution: the machine that never happened</h2>
+<p>Speculation is the performance engine of every modern core (module 01 ch20 builds on it): the branch predictor guesses, execution charges ahead, a mispredict squashes the pipeline. The ISA contract says mispredicted work never happened — registers roll back, transient faults never fire. That contract covers <em>architectural state</em>. The cache is not architectural state: a transient load brings a line in, and the squash does not undo cache fills.</p>
+<p>Draw the consequence. A transient instruction can (a) compute with data the program was never allowed to read, (b) encode the result into which cache line is warm, and (c) leave no architectural trace. Step (c) fails only because of step (b) — the encoding is the Flush+Reload oracle from the previous section. That is the entire Spectre class (Kocher et al. and Google Project Zero, disclosed January 2018).</p>
+<p><strong>Bounds-check bypass</strong> (Spectre v1, CVE-2017-5753) is the minimal case. Victim code:</p>
+<pre><code class="language-c">if (x &lt; array1_size)                    // the guard
+    y = array2[array1[x] * 4096];       // the gadget</code></pre>
+<p>The attacker cannot call this with <code>x</code> out of bounds — the guard is correct. But it can train the predictor:</p>
+<pre><code> 1. TRAIN: call the victim many times with in-bounds x
+         cmp x, size -&gt; taken, taken, taken ...   predictor: "always taken"
+ 2. SETUP: clflush every line of array2, and clflush &amp;array1_size
+         (slowing the guard's load widens the speculation window)
+ 3. ATTACK: call the victim with x far out of bounds
+         cmp x, size -------&gt; mispredicted "taken" (it was trained)
+         [transient] load array1[x]      &lt;- reads OOB before cmp resolves
+         [transient] load array2[v*4096] &lt;- v = stolen byte; one line
+                                              of array2 warms per v
+         cmp resolves: x &gt;= size -&gt; squash -&gt; y vanishes, no fault
+         (the cache fill is NOT rolled back)
+ 4. READOUT: Flush+Reload over array2 -&gt; the warm line's index = v</code></pre>
+<p>The 4096-byte slot stride is deliberate — one target per page stops the TLB and the prefetcher from coupling slots, the same trap the lab dodges. The transient window is ~100–200 µops, plenty for two loads. Published PoCs leak tens to a few thousand bytes per second depending on variant and noise.</p>
+<p>Fixes are partial and layered: compilers insert <code>lfence</code> speculation barriers after bounds checks (GCC 8+ has <code>__builtin_speculation_safe_value</code>); branch-target injection (v2, CVE-2017-5715) got <strong>retpolines</strong> (2018, kernel 4.15) and later hardware modes (Intel eIBRS, 2022). The class keeps producing — MDS/Fallout/ZombieLoad 2019, LVI 2020, RetBleed 2022, Downfall/Inception 2023 — because the root cause, speculation that leaves microarchitectural state, <em>is</em> the performance model. As of 2024 no shipped CPU family removes the class; they shrink instances of it.</p>
+<p><strong>Meltdown, in one paragraph.</strong> Meltdown (CVE-2017-5754, 2018) exploited a checks-late pipeline on 2015–2017 Intel cores: the kernel was mapped into every user page table (so syscalls skipped a TLB flush); a user load of a kernel address faulted <em>eventually</em>, but the transient window let the value flow into the same <code>array2[v*4096]</code> encoding before the fault retired — unprivileged code reading kernel memory a byte per round. KPTI (Linux 4.15, 2018, from the Graz "KAISER" idea) answers by keeping two page tables per process, one with almost no kernel mapping, at a real cost — ~5–30% on syscall-heavy workloads, softened by PCID. KPTI fixed Meltdown (its fault was architectural) but not Spectre (nothing architectural was violated) — the honest one-line summary of 2018.</p>
+<h2 id="rowhammer-the-dram-grid-as-an-attack-surface">Rowhammer: the DRAM grid as an attack surface</h2>
+<p>Module 01 ch01 built DRAM from capacitors that leak, arranged in rows, opened by a word line and sense amps, refreshed every ~64 ms. Hammering is what happens when one row's activation disturbs its neighbors: opening and closing row A−1 a hundred thousand times within a refresh window (Kim et al., ISCA 2014) drains capacitors in row A until a sense-amp decision flips — <em>without A ever being accessed</em>:</p>
+<pre><code> DRAM bank, side view (rows of 1-transistor 1-capacitor cells)
+
+ row A-1  |||||||||||||||||||||||   &lt;- hammer: ~10^5 activations in &lt;64 ms
+ row A    ------ 1 ---------  --    &lt;- victim row: charge leaks in/out
+ row A+1  |||||||||||||||||||||||   &lt;- hammer ("double-sided": both neighbors)
+            each hammer opens A's neighbor; the word-line/sense-amp swing
+            disturbs A's cells until one flips -- A is never addressed</code></pre>
+<p>Double-sided hammering (A−1 and A+1) roughly doubles the disturbance rate; combined with flushing the victim row out of the row buffer between hammers — <code>clflush</code> on the addresses — it became reliable. Rowhammer.js (2015) triggered it from browser JavaScript, where <code>clflush</code> is unavailable so eviction does the flushing (Evict+Reload's trick again). Exploitation is a memory-map attack: Drammer (CCS 2016) groomed Android's physical allocator so a flipped bit landed in a <em>page-table entry</em>, redirecting one mapping onto the page tables themselves — arbitrary read/write, then root. Google's 2021 "Glitch" chain used Rowhammer to take over a Chromebook from a sandboxed context.</p>
+<p>Every defense is partial. ECC detects and corrects single flips, but ECCploit (2018–2019) showed patient hammering flips multiple bits inside one correction window. <strong>TRR</strong> (Target Row Refresh, DDR4 from ~2019) moved defense into the DRAM chip — on detecting hammering, refresh the neighbors — but each vendor's TRR is undocumented heuristics, and TRRespass (USENIX 2020) showed <em>non-uniform</em> patterns bypass it on 13 of 42 DDR4 modules tested; Blacksmith (2022) fuzzed patterns and dropped more. As of 2024 no mainstream DDR4/DDR5 module family has a complete public defense: the physics (charge sharing between adjacent rows) cannot be patched, only monitored. Note the difference from the rest of the chapter: cache attacks leak <em>information</em>; Rowhammer corrupts <em>state</em> — while still corrupting no bytes the attacker owns.</p>
+<h2 id="the-defender-s-menu-and-why-it-never-fully-closes">The defender's menu, and why it never fully closes</h2>
+<p><strong>Constant-time code</strong> is a rule set, not a library: (1) no secret-dependent <em>control flow</em> — no branches, early returns, or loop trip counts that vary with secrets; (2) no secret-dependent <em>memory addresses</em> — no secret-indexed tables, since the warmed line is observable; (3) no secret-dependent <em>arithmetic latency</em> — x86 integer <code>div</code> finishes early for some operands, so a secret divisor is a leak; (4) libraries too — table-based AES left OpenSSL after the 2005–2010 cache attacks, for constant-time code and then AES-NI. Implementation patterns: branchless selects with masks, bitsliced algorithms, data-independent algorithm shapes (Montgomery ladder, multiply-always) plus blinding. Verification exists: <code>ctgrind</code> repurposes valgrind by treating secrets as uninitialized (secret-dependent addresses trip it), <code>dudect</code> runs a Welch's t-test on timing distributions, libsodium ships TIMECOP on the same idea.</p>
+<p><strong>Partitioning</strong> removes the sharing: Intel <strong>CAT</strong> (Cache Allocation Technology, Xeon since Broadwell-EP 2016; AMD Zen too) gives each class-of-service a contiguous bitmask of L3 ways via the <code>resctrl</code> filesystem (Linux 4.10+); ARM's MPAM (ARMv8.4) is the analog, sparsely deployed as of 2024. Software page coloring partitions sets by controlling which physical pages each domain gets — research-grade bookkeeping.</p>
+<p><strong>Shared-page hardening</strong> shrinks the Flush+Reload surface: disable KSM (<code>/sys/kernel/mm/ksm/run</code>), and load private copies of crypto libraries into key-handling processes. For SMT — two hyperthreads share L1/L2 and execution ports — OpenBSD has shipped with SMT off by default since 2019 (a ~20–40% throughput cost most vendors refused), and Linux 5.14 (2021) added core scheduling, which only co-schedules one trust domain's threads per core.</p>
+<p>Why does the menu never close? Timing is physics: the running time of a finite computation is a function of the work it did, and the only program whose timing leaks nothing is one whose work is independent of its secrets. Constant-time code buys that for one function at a performance cost — and a channel opens a level down anyway (DRAM bank contention, port contention, predictor state, power). You can drive bandwidth toward zero only by removing secret-dependence or removing sharing; removing sharing means not co-locating attacker and victim — the cloud's entire economic premise. Every defense here is a mitigation, and the chapter's first derivation — the boundary that isn't — is permanent.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>Flush+Reload needs <em>physical</em> line sharing, so "disable dedup" fixes the wrong third.</strong> Killing KSM removes cross-VM anonymous-page sharing, but shared libraries and the page cache still hand every process a line-level window into every other. Real hardening for a key-handling process: a private copy of the crypto library, or pages nobody else maps.</li>
+<li><strong><code>rdtsc</code> vs <code>perf</code> is a tradeoff with flags to check</strong>: <code>rdtscp</code> gives per-access cycle resolution but is hypervisor-scaled and migration-sensitive (<code>constant_tsc nonstop_tsc</code>, plus pin with <code>sched_setaffinity</code>); perf is migration-correct but region-granular and gated by <code>perf_event_paranoid</code> (2 here; Ubuntu 22.04+: 4, no unprivileged perf). Attackers use rdtscp with minimum-of-N statistics.</li>
+<li><strong>Constant-time has three sins to grep for</strong>: branches on secrets, secrets in array indexes, secrets in variable-latency ops (x86 <code>div</code>). The branchless-select idiom <code>r = (x &amp; m) | (y &amp; ~m)</code> replaces an <code>if</code> for 2–3 instructions.</li>
+<li><strong>TRR/TRRespass status</strong>: TRR ships in essentially all DDR4 since ~2019 and in DDR5, but is per-vendor secret heuristics; TRRespass (2020) bypassed it on 13/42 tested DDR4 modules, Blacksmith (2022) generalized the fuzzing. Plan for "mitigated, not solved."</li>
+<li><strong>CAT availability is SKU politics</strong>: server Xeons since Broadwell-EP (2016) and AMD Zen have it; many client SKUs lack or firmware-disable it; ARM MPAM is paper-sparse. On Linux, check for the <code>resctrl</code> mount before designing around it.</li>
+<li><strong>One trace is often enough</strong>: Yarom-Falkner recovered a full 2048-bit GnuPG RSA key from a <em>single</em> decryption's trace; Bernstein's 2005 AES attack ran remotely over a network with statistical averaging. Bandwidth is the attacker's convenience, not feasibility.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>A real Flush+Reload oracle, two processes, one shared page. The child (victim) touches one line chosen by a random secret byte; the parent (attacker) never reads that byte — it flushes a line, waits for the victim, times the reload. Save as <code>fr.c</code>:</p>
+<pre><code class="language-c">// fr.c -- Flush+Reload oracle across a fork() boundary.
+// Build: gcc -O2 -o fr fr.c     (x86-64 Linux: rdtscp + clflush)
+// The MAP_SHARED page stands in for a shared library page: after
+// fork(), parent and child hit the same physical lines.
+#define _GNU_SOURCE
+#include &lt;stdint.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;sched.h&gt;
+#include &lt;sys/mman.h&gt;
+#include &lt;sys/wait.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;unistd.h&gt;
+#define LINES 16
+#define PAGESZ 4096
+static volatile uint8_t *buf;
+static inline uint64_t now(void)
+{   unsigned lo, hi;
+    asm volatile("rdtscp" : "=a"(lo), "=d"(hi) :: "rcx");
+    return ((uint64_t)hi &lt;&lt; 32) | lo; }
+static inline void flush(volatile uint8_t *p)
+{   asm volatile("clflush (%0)" :: "r"(p)); }
+static inline uint64_t probe(volatile uint8_t *p)    /* timed reload */
+{   uint64_t t0 = now(); uint8_t v = *p; uint64_t t1 = now(); (void)v;
+    return t1 - t0; }
+static void spin(int n) { volatile int j = 0; while (n--) j += n; }
+
+int main(void)
+{
+    /* trap 3: pin to one CPU -- the L3 is per-socket; a victim scheduled
+       on the other socket is invisible to the attacker's probes        */
+    cpu_set_t one; CPU_ZERO(&amp;one); CPU_SET(0, &amp;one);
+    sched_setaffinity(0, sizeof(one), &amp;one);
+    buf = mmap(NULL, LINES*PAGESZ, PROT_READ|PROT_WRITE,
+               MAP_SHARED|MAP_ANONYMOUS, -1, 0);
+    /* trap 1: fault the pages in with WRITES. Until then they map the
+       shared zero page; the victim's first store faults in a fresh page
+       whose kernel zeroing warms EVERY line and drowns the signal      */
+    for (int i = 0; i &lt; LINES; i++) buf[i*PAGESZ] = 1;
+
+    /* calibration: the two timing distributions on THIS CPU           */
+    long h[6] = {0}, m[6] = {0};
+    uint64_t bh = ~0ull, bm = ~0ull;
+    for (int i = 0; i &lt; 300; i++) {
+        uint64_t c = probe(buf);
+        if (c &lt; bh) bh = c;
+        h[c/100 &gt; 5 ? 5 : c/100]++;
+        flush(buf);
+        spin(2000);                    /* let the writeback drain      */
+        uint64_t mm = probe(buf);
+        if (mm &lt; bm) bm = mm;
+        m[mm/100 &gt; 5 ? 5 : mm/100]++;
+    }
+    uint64_t th = bh + (bm - bh)/2;
+    printf("calibration: hit &gt;= %lu, miss &gt;= %lu, threshold = %lu\n",
+           bh, bm, th);
+    printf("  hit  bins x100cyc: %ld %ld %ld %ld %ld %ld\n",
+           h[0],h[1],h[2],h[3],h[4],h[5]);
+    printf("  miss bins x100cyc: %ld %ld %ld %ld %ld %ld\n",
+           m[0],m[1],m[2],m[3],m[4],m[5]);
+
+    /* the oracle: one line, one question, one timed reload            */
+    int go[2], done[2], tell[2];
+    pipe(go); pipe(done); pipe(tell);
+    int correct = 0, trials = 100;
+    for (int trial = 0; trial &lt; trials; trial++) {
+        pid_t pid = fork();
+        if (pid == 0) {                          /* ---- victim ---- */
+            uint8_t c, s;
+            int ur = open("/dev/urandom", O_RDONLY);
+            read(ur, &amp;s, 1); close(ur);
+            s &amp;= 15;                     /* secret: which line to touch */
+            for (int r = 0; r &lt; LINES; r++) {
+                read(go[0], &amp;c, 1);      /* wait for the attacker      */
+                buf[s*PAGESZ] = 1;       /* THE secret-dependent access*/
+                write(done[1], "D", 1);
+            }
+            read(go[0], &amp;c, 1);
+            write(tell[1], &amp;s, 1);       /* reveal, for scoring only   */
+            _exit(0);
+        }
+        int g = -1;                              /* ---- attacker ---- */
+        for (int r = 0; r &lt; LINES; r++) { /* trap 2: ONE line per round */
+            flush(&amp;buf[r*PAGESZ]);       /* 1. FLUSH                  */
+            write(go[1], "G", 1);        /* 2. victim runs            */
+            read(done[0], &amp;(char){0}, 1);
+            uint64_t t = probe(&amp;buf[r*PAGESZ]);   /* timed reload     */
+            if (t &lt; th) g = r;           /* warm = the victim touched */
+        }
+        write(go[1], "V", 1);
+        uint8_t s; read(tell[0], &amp;s, 1);
+        if (g == s) correct++;
+        waitpid(pid, NULL, 0);
+    }
+    printf("recovered %d/%d secret line indices = %.1f%%\n",
+           correct, trials, 100.0*correct/trials);
+    return 0;
+}</code></pre>
+<pre><code class="language-console">$ gcc -O2 -o fr fr.c &amp;&amp; ./fr
+calibration: hit &gt;= 52 cyc, miss &gt;= 374 cyc, threshold = 213
+  hit  bins (x100 cyc): 300 0 0 0 0 0
+  miss bins (x100 cyc): 0 0 0 187 54 59
+recovered 100/100 secret line indices = 100.0%</code></pre>
+<p>(Run on an Intel Xeon 4th-gen-Scalable "Sapphire Rapids" vCPU under KVM, kernel 5.10; your numbers will differ — that is the point of printing the calibration. On a laptop expect a hit near 50–150 and a miss near 200–400; under a VM the miss often inflates toward 500+.) What to notice:</p>
+<ul>
+<li><strong>The histogram is the channel</strong>: two blobs, a ~320-cycle gap, threshold at the midpoint. No secret is copied, returned, or signaled — timing is the transmission. Zero bytes corrupted; the parent still recovers 100% of the secret nibbles.</li>
+<li><strong>The three commented traps are not decoration.</strong> Un-pinned, this exact program scored 1/100 on an earlier run (the victim kept landing on the other socket). Skip the pre-fault writes and the kernel's page-zeroing warms the whole target set. Probe all 16 lines in a tight loop and the prefetcher warms the page for you.</li>
+<li><strong>Production shape</strong>: replace the anonymous page with a page of a file both processes <code>mmap</code> — say a range of <code>/usr/lib/x86_64-linux-gnu/libc.so.6</code> (offset from <code>/proc/&lt;pid&gt;/maps</code>) — and you have a line-level window into the child's execution of any shared library, exactly how Yarom-Falkner watched GnuPG.</li>
+<li>On <strong>ARM64/Apple Silicon</strong> there is no <code>clflush</code>, and user cache-maintenance traps on Apple's cores: replace the flush with an eviction set and you have rewritten the toy as Evict+Reload — a genuinely different program.</li>
+</ul>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Audit crypto by shape, not math</strong>: three grep-able questions — does any branch depend on key material? any array index? any loop bound or division? A "yes" is a side-channel finding even when the algorithm is provably correct.</li>
+<li><strong>Read transient-execution news in 60 seconds</strong>: when the next Spectre-class bug lands, map it onto the template — shared state, what executes transiently, how it is encoded, how it is read out. Every paper in the class fits; filling it in is how you decide whether your threat model cares.</li>
+<li><strong>Make cloud threat-model decisions from mechanism</strong>: KSM, SMT siblings, and shared library pages are each either acceptable risk or must-be-off on a multi-tenant box, and you can now argue each with numbers (core scheduling's throughput cost, CAT's SKU availability) instead of vendor FUD.</li>
+<li><strong>Explain Spectre on a whiteboard</strong> — train, flush, attack, probe — the interview-grade version: derived, not memorized, and every step is a mechanism you can name under follow-up questions.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01, Chapter 01</strong> — the DRAM physics (leaking capacitors, rows, refresh) that Rowhammer abuses; the sense amp is the attack's engine.</li>
+<li><strong>Module 01, Chapter 02</strong> — set-associativity, the 64-byte line, and the latency table are the entire machinery of Prime+Probe/Flush+Reload; the lab's prefetcher traps are that chapter's lore read adversarially.</li>
+<li><strong>Module 01, Chapter 20</strong> — MESI explains why <code>clflush</code> evicts <em>everywhere</em> (one coherence object per line), and speculation's rollback semantics launch this chapter.</li>
+<li><strong>Module 02, Chapter 01</strong> — the bug → primitive → exploit → impact chain: side channels break its first link, which is why they get their own chapter.</li>
+<li><strong>Module 02, Chapter 06</strong> — the mitigation ladder assumes memory <em>corruption</em>; against side channels every rung is irrelevant, and new rungs (constant-time, KPTI, retpolines, CAT) had to be invented.</li>
+<li><strong>Module 09, Chapter 01</strong> — happens-before defines what a <em>sanctioned</em> observer may see; side channels are what an unsanctioned observer sees anyway.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Flush+Reload requires the attacker to share a cache line with the victim; Prime+Probe does not. Explain why, in terms of what each attack measures and how caches are indexed.</li>
+<li><strong>Concept.</strong> On a Spectre mispredict the CPU "squashes" the transient work — yet the attack succeeds. Distinguish what the squash restores from what it cannot, and why the ISA contract does not cover the difference.</li>
+<li><strong>Predict the number.</strong> A victim computes RSA with left-to-right square-and-multiply over a 2048-bit exponent (top bit always 1). A Flush+Reload trace logs 2,897 executions of the loop body, of which 2,047 are the always-executed square step. How many 1-bits are in the exponent, and why is "multiply-always" immune to this exact trace?</li>
+<li><strong>Predict the output.</strong> A (bad) library indexes <code>uint8_t table1[256]</code> and <code>uint64_t table8[256]</code>, in both cases with a secret byte. Given one clean Flush+Reload observation of each access, how many bits of the secret does each table leak, and where does the granularity come from?</li>
+<li><strong>Bug diagnosis.</strong> Code review finds: <code>if (key[i] &amp; 0x80) acc ^= 1;</code> — a conditional branch, no secret-indexed array. Name the two distinct channels this one line opens (one needs the branch predictor), and give the constant-time rewrite.</li>
+<li><strong>Bug diagnosis.</strong> A team replaced table-based AES with constant-time bitsliced AES; <code>dudect</code> passes. A pen-test still recovers key bits by timing whole decryptions from a co-located VM. Name the most likely remaining leak, and the two cheapest mitigations.</li>
+<li><strong>Bug diagnosis.</strong> A hardened host disabled KSM, keeps hyperthreading on, and gives each tenant its own glibc copy — yet a Flush+Reload spy still recovers a victim's keystroke timing. Which sharing route almost certainly remains, and why did "disable dedup" not cover it?</li>
+<li><strong>Cross-chapter.</strong> Rowhammer sits outside Chapter 06's mitigation ladder in two ways: no rung applies, and its target is not bytes in the attacker's address space. Using module 01 ch01's cell physics, explain what the hammer disturbs, why refresh does not save you, and whether MTE-style tagging would defend against it by accident.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>Flush+Reload evicts and probes one specific line, named by virtual address — but lines are placed by <em>physical</em> address, so the attacker's address names the same line only if it is the same physical page (shared library, page cache, KSM, <code>MAP_SHARED</code>). Its signal is "is THIS line warm," resolving up to 6 bits per probe for a byte table. Prime+Probe fills and re-reads <em>its own</em> lines in one set; the signal is "was my filler evicted," which requires only that the victim's accesses map to the same set of the same shared L3 — any process qualifies — but resolves only the set, not the line.</li>
+<li>The squash restores <em>architectural state</em>: registers, flags, fault status — <code>y</code> never exists, no exception for the OOB load fires. It cannot restore <em>microarchitectural state</em>: cache fills (and predictor state, TLB entries, fill buffers) are performance structures the ISA does not model; unwinding them would require provenance tracking the hardware does not keep. Spectre lives entirely in that gap: architecturally nothing happened, physically a line is warm.</li>
+<li>Left-to-right square-and-multiply squares once per remaining bit (2,047) and multiplies once per additional 1-bit: 2,897 = 2,047 squares + 850 multiplies, so the popcount is 851. Multiply-always executes the multiply every iteration (dummy operand when the bit is 0): a fixed 2 × 2,047 loop body, so the same trace carries zero bits. (Blinding randomizes the exponent per run — the trace then leaks bits of a value that is discarded.)</li>
+<li>The observable is the 64-byte line, so one access leaks <code>log2(64/element_size)</code> bits: <code>table1</code> packs 64 entries per line → 6 bits; <code>table8</code> packs 8 → 3 bits. The granularity is the line fetch (module 01 ch02): the cache shows <em>which line</em> warmed, never which byte.</li>
+<li>(a) The taken/not-taken pattern trains the branch predictor — and branch outcomes are observable: the two paths execute different code, so different <em>code lines</em> warm in the shared library, which Flush+Reload on the library's own text reads. (b) Even with a perfect predictor, path-dependent instruction streams have path-dependent timing. Rewrite: <code>acc ^= (key[i] &gt;&gt; 7) &amp; 1;</code> — pure arithmetic, identical instructions and timing either way.</li>
+<li>The leak is shared hardware below the ISA — most likely DRAM bank/row-buffer contention from the co-located tenant (SMT port contention is the runner-up). <code>dudect</code> passes because the <em>code</em> is constant-time, not the <em>machine</em>. Cheapest mitigations: partition — CAT ways via resctl if the SKU has it, or core-scheduling / SMT-off for that workload — and schedule the crypto on cores no tenant shares. Blinding and random delays only add noise.</li>
+<li>The page cache: any file both processes map — and the spy deliberately maps the victim's <code>.so</code> files too — shares one physical copy, and that is not "dedup" but the normal file-mapping path. Disabling KSM stopped merging <em>anonymous</em> pages by content. The remaining window is the victim's execution footprint in whatever library both still map, hence the rule: private copies of anything a key-handling process executes.</li>
+<li>The hammer disturbs <em>charge</em> in the victim row's capacitors (word-line and sense-amp swings on neighbor activations), so the flip happens in silicon the attacker never addresses — which is why NX, ASLR, RELRO, CFI, and PIE are all irrelevant: none govern DRAM cell charge. Refresh loses because it restores charge on a ~64 ms schedule while disturbance accumulates <em>between</em> refreshes: enough activations inside one window outpace it. MTE-style tagging would not defend: a bit flip in a page-table entry's PFN lands in someone else's metadata with a well-formed tag; at best a tag <em>mismatch</em> catches a corrupted pointer after the fact, by accident.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch06.html"><span class="cn-label">previous</span><span class="cn-title">Ch 06</span></a>
+<a class="next" href="index.html"><span class="cn-label">next</span><span class="cn-title">Module index</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 02 — Memory security &amp; exploitation</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

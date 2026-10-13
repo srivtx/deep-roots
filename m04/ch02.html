@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linking &amp; loading — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 04: Linking &amp; loading">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Linking &amp; loading — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 04: Linking &amp; loading">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Linking &amp; loading — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 04: Linking &amp; loading">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 04 &middot; reading what compilers leave behind</div>
+<h1 class="post-title">Linking &amp; loading</h1>
+<div class="post-meta">chapter 02 &middot; ~12 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> <code>main</code> is not where a program begins. Between <code>exec()</code> and <code>main</code>, the kernel hands control to a <em>userspace</em> program — <code>ld.so</code> — which maps the segments page-aligned, zeroes BSS, repairs every address ASLR invalidated (relocations), resolves imports through the GOT/PLT, runs initializers, then jumps to your entry point. Lazy binding, the resolution order, <code>LD_PRELOAD</code> interposition, and <code>dlopen</code> namespaces make shared libraries possible — and an attack surface.</blockquote>
+<h2 id="exec-the-handoff-to-a-userspace-loader">exec(): the handoff to a userspace loader</h2>
+<p>Program headers are the <em>loader's</em> view of the ELF file (Chapter 01's two-tables insight). After <code>execve</code> verifies the <code>\x7fELF</code> magic, the kernel maps exactly one thing — <strong><code>PT_INTERP</code></strong>, the string <code>/lib64/ld-linux-x86-64.so.2</code> (28 bytes at file offset 0x394 in our demo) — and gives it control. The loader has no interpreter, so the recursion ends: one kernel-mapped program maps everything else, guided by the auxiliary vector (<code>AT_PHDR</code>, <code>AT_ENTRY</code>, <code>AT_RANDOM</code>). Relocation and symbol resolution are policy, not mechanism — they live in userspace, where they can be traced. Reference: <code>ld.so</code> 2.41 (glibc 2.41, Debian 13, x86-64).</p>
+<p>The mapping itself is pure Module 01 Chapter 03: one <code>mmap</code> per <code>PT_LOAD</code> (the demo has four: <code>R</code>, <code>R E</code>, <code>R</code>, <code>RW</code>). It only works because the linker keeps the congruence rule <strong><code>p_offset ≡ p_vaddr (mod 4096)</code></strong>: file page N must land on virtual page N, or one page of address space would need bytes from two file pages, and one-mmap-per-segment collapses.</p>
+<p>One detail is the BSS. The <code>RW</code> load carries <code>filesz 0x260, memsz 0x268</code>: the last 8 bytes (<code>.bss</code>, <code>NOBITS</code>, at 0x4030) do not exist in the file. The loader maps the page anyway and the kernel's zero page fills the tail — BSS zeroing costs no I/O; the first <em>write</em> is what faults in a real page.</p>
+<p>Then <code>e_entry</code> (0x1080) — <em>not</em> <code>main</code> but <code>_start</code>, which calls <code>__libc_start_main</code> (an eager <code>GLOB_DAT</code> import), which runs <code>.init_array</code> constructors, calls <code>main</code>, and on return runs <code>.fini_array</code> and <code>exit</code>. Everything here happens inside that chain.</p>
+<h2 id="relocations-the-repair-bill-aslr-sends-you">Relocations: the repair bill ASLR sends you</h2>
+<p>ASLR (Module 01 Chapter 03) loads the image at a random base, so every absolute pointer the linker wrote is now wrong by the same offset — the load bias. The linker cannot fix them (it doesn't know the base), so it leaves a repair list: the relocation records.</p>
+<pre><code class="language-console">$ objdump -R demo | head -3
+OFFSET           TYPE              VALUE
+0000000000003dd0 R_X86_64_RELATIVE  *ABS*+0x0000000000001160
+0000000000003dd8 R_X86_64_RELATIVE  *ABS*+0x0000000000001120</code></pre>
+<p><code>R_X86_64_RELATIVE</code> is the whole ASLR-fixup mechanism in one line of arithmetic: <strong><code>*slot = load_bias + addend</code></strong>. First record: the 8 bytes at image offset 0x3dd0 are stale; write <code>B + 0x1160</code> there, where <code>B</code> is where you actually loaded me. Position-independence is not compiled-in magic; it is this deferred repair.</p>
+<p>Cross-image pointers need more: the linker doesn't know <em>which</em> libc, at <em>which</em> address, <code>printf</code> comes from. Two shapes cover imports:</p>
+<ul>
+<li><strong><code>R_X86_64_GLOB_DAT</code></strong> (5 records, <code>.got</code> 0x3fc0–0x3fdf): resolved <em>eagerly</em> at startup into the 8-byte slot; used for address-taken imports like <code>__libc_start_main</code>.</li>
+<li><strong><code>R_X86_64_JUMP_SLOT</code></strong> (4 records, <code>.got.plt</code> 0x4000–0x401f): the call slots, resolved <em>lazily</em> — the next section's entire subject.</li>
+</ul>
+<p>The two sections meet different fates. <code>.got</code> lies inside the <code>GNU_RELRO</code> range <code>[0x3dd0, 0x4000)</code>, which the loader <code>mprotect</code>s read-only after relocating. The <code>.got.plt</code> slots start at 0x4000, <em>just past</em> that end — deliberately writable, because lazy binding writes to them at runtime. Partial vs full RELRO is exactly whether this boundary survives.</p>
+<h2 id="the-plt-got-dance-binding-a-symbol-on-first-call">The PLT/GOT dance: binding a symbol on first call</h2>
+<p>Resolving 4 imports is free; real programs import hundreds, and half are never called. The lazy scheme defers each binding to the first call, via two linker-emitted structures:</p>
+<ul>
+<li><strong>PLT</strong> (0x1020): 16-byte stubs — <code>free@plt</code> 0x1030, <code>printf@plt</code> 0x1040, <code>malloc@plt</code> 0x1050, <code>sleep@plt</code> 0x1060 — plus the special entry <code>PLT0</code>.</li>
+<li><strong>GOT.PLT</strong> (0x3fe8): 8-byte slots; <code>printf</code>'s is 0x4008. Three reserved entries first: <code>GOT[0]</code> = <code>&amp;_DYNAMIC</code>, <code>GOT[1]</code> = link_map, <code>GOT[2]</code> = resolver (the last two filled by <code>ld.so</code> at load).</li>
+</ul>
+<p>The trick: the file's initial <code>GOT[printf]</code> value is <strong>0x1046</strong> — not <code>printf</code>, but the second instruction <em>inside <code>printf@plt</code></em>.</p>
+<pre><code class="language-text">FIRST call — the resolver dance                    EVERY LATER CALL — two instructions
+
+  caller: call printf@plt                            caller: call printf@plt
+        |                                                  |
+        v                                                  v
+ 0x1040 &lt;printf@plt&gt;:  jmp *GOT[printf]           0x1040 &lt;printf@plt&gt;: jmp *GOT[printf]
+        |                                                  |
+        v                                                  v
+ 0x4008 GOT[printf] == 0x1046  &lt;- INITIAL:         0x4008 GOT[printf] == &amp;printf  &lt;- PATCHED
+        |   points BACK at the push inside                  |
+        |   this same PLT entry (not the jmp)               v
+        v                                             printf() in libc
+ 0x1046: push $0x1        &lt;- my JUMP_SLOT index
+        |
+ 0x104b: jmp PLT0
+        |
+        v
+ PLT0 (0x1020): push [GOT+8]     &lt;- link_map
+                jmp  *[GOT+16]    &lt;- _dl_runtime_resolve
+        |
+        v
+ resolver: look up "printf" in the link_map's
+ scope, WRITE &amp;printf into slot 0x4008, jump
+ to it as if the call had been direct</code></pre>
+<p>Walk the first call: the stub jumps <em>indirectly</em> through the GOT slot, which bounces control back to the stub's own <code>push $reloc_index</code> (<code>printf</code>'s is 1); that index rides the stack into <code>PLT0</code>, which pushes the link_map (the loader's object database) and jumps into <code>_dl_runtime_resolve</code>. The resolver looks up <code>printf</code>, <strong>rewrites the GOT slot</strong>, and enters the real function. One-time cost: ~5 instructions plus a lookup; steady state: <code>jmp *GOT</code>.</p>
+<p><code>LD_DEBUG=bindings ./demo</code> shows <code>printf</code> resolving <em>after</em> <code>transferring control</code>; rerun it with <code>LD_BIND_NOW=1</code> and the same binding line moves <em>before</em> — lazy versus eager, on one line each.</p>
+<p><code>-fno-plt</code> is the modern alternative: the compiler emits <code>call *printf@GOTPCREL(%rip)</code> — an indirect call straight through the GOT slot, no stub, no dance. The price: the slot must be settled before the first call, so <code>-fno-plt</code> is only attractive paired with eager binding (<code>-z now</code>) — both shapes are instantly recognizable in disassembly (Module 04 Chapter 03).</p>
+<h2 id="resolution-order-interposition-as-feature-and-attack">Resolution order: interposition as feature and attack</h2>
+<p>The resolver walks a <em>scope</em> whose order is a contract every Linux program silently relies on:</p>
+<pre><code class="language-text">  1. LD_PRELOAD objects          &lt;- ahead of everything
+  2. the executable's .dynsym    &lt;- your definitions win over libraries'
+  3. DT_NEEDED dependencies,     &lt;- breadth-first: libc, then its needs
+     in load order
+  ---- symbol scope above | file search below ----
+  DT_RPATH -&gt; LD_LIBRARY_PATH -&gt; DT_RUNPATH -&gt; /etc/ld.so.cache
+  -&gt; default trusted dirs (/lib, /usr/lib, multiarch variants)</code></pre>
+<p>Rule 1 is load-bearing: <strong>anything in <code>LD_PRELOAD</code> replaces any library symbol</strong>. Interposition cuts both ways:</p>
+<ul>
+<li><strong>Instrumentation</strong>: a preloaded shim wraps <code>malloc</code> with a counter (the lab below) without rebuilding the program — every malloc profiler and <code>tcmalloc</code>/<code>jemalloc</code> drop-in is this rule. (Setuid binaries: <code>ld.so</code> sees <code>AT_SECURE</code> and ignores <code>LD_*</code>.)</li>
+<li><strong>Attack surface</strong>: the lazy GOT hands the attacker a writable function pointer the program will call <em>for you</em>: overwrite <code>printf@got</code> with <code>system</code>, and the next <code>printf(user_string)</code> is a shell — the GOT-overwrite family, with <code>ret2dlresolve</code> its lazy sibling (Module 02 Chapter 06).</li>
+</ul>
+<p>The fix closes the writable window: <strong>full RELRO</strong> — <code>-z relro -z now</code> — binds every symbol eagerly at startup, then <code>mprotect</code>s the <em>whole</em> GOT, <code>.got.plt</code> included, read-only. Cost: a few startup milliseconds; gain: the classic write target dies — post-full-RELRO exploits pivot to hooks, <code>exit</code> handlers, and <code>FILE</code> structures (Module 02 Chapter 06's ledger). Debian 13's gcc 14 default: <em>partial</em> — <code>GNU_RELRO</code> present, no <code>BIND_NOW</code> — so 0x4000 stays writable.</p>
+<h2 id="the-loader-as-a-library-dlopen-dlmopen-static-vdso">The loader as a library: dlopen, dlmopen, static, vDSO</h2>
+<p><code>dlopen</code>/<code>dlsym</code> are this same machinery at runtime: map, relocate, resolve, run <code>.init_array</code>, return a handle. Two flags matter:</p>
+<ul>
+<li><strong><code>RTLD_LOCAL</code></strong> (default): the DSO's symbols are invisible to later resolutions — it cannot accidentally satisfy another module's imports.</li>
+<li><strong><code>RTLD_GLOBAL</code></strong>: its symbols join the global scope — required for C++ <code>typeinfo</code> unification across DSOs (a <code>catch</code> in one matching a <code>throw</code> in another).</li>
+</ul>
+<p><code>dlmopen(LM_ID_NEWLM, ...)</code> loads into a fresh <em>namespace</em> (up to 16, <code>DL_NSS</code>) with its own libc — real isolation for plugin/audit scenarios, and a real trap (two allocators; see the quiz).</p>
+<p><strong>Static linking</strong> trades all of this away: one self-contained file, no resolution, no startup relocations, and no interposition <em>possible</em> — exactly why some proprietary and most malicious builds go static. The costs: every libc security fix means a relink, and glibc static is not fully static — NSS symbols like <code>getpwnam</code> still <code>dlopen</code> modules at runtime (glibc warns about it).</p>
+<p><strong>vDSO/vvar</strong>: the two kernel-created mappings in every process — <code>[vvar]</code> (<code>r--p</code>, 4 pages here) and <code>[vdso]</code> (<code>r-xp</code>, 2 pages). The kernel maps <em>code and data into userspace</em> so <code>clock_gettime</code> runs without a syscall (Module 01 Chapter 03's page machinery used in reverse). <code>ld.so</code> treats it as just another object; <code>ldd</code> shows it as <code>linux-vdso.so.1</code>. Module 07 Chapter 04 dissects the vvar seqlock protocol.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>RELRO partial vs full</strong>: full RELRO is literally <code>BIND_NOW</code> in <code>.dynamic</code> plus <code>GNU_RELRO</code> covering <code>.got.plt</code>. Check with <code>readelf -dW binary | grep BIND_NOW</code> (present = full) and <code>readelf -lW | grep GNU_RELRO</code> (absent = no RELRO at all — the real finding). Debian 13 gcc 14 default: partial; hardened builds add <code>-z now</code>.</li>
+<li><strong>The resolution order has an escape hatch</strong>: <code>-Bsymbolic</code> (or <code>-Bsymbolic-functions</code>) binds a DSO's internal references to itself at link time — faster (no lookups), and it breaks interposition of <em>internal</em> calls. A <code>LD_PRELOAD</code> shim that "doesn't work" often lost to this flag.</li>
+<li><strong>The four <code>LD_DEBUG</code> sections people actually use</strong>: <code>bindings</code> (which symbol resolved where — proof of laziness by line ordering), <code>files,libs</code> (the map/dependency trace), <code>statistics</code> (relocation counts — 96 for our trivial demo, 100 final), and <code>symbols</code> (the full search trace; enormous on real programs). Output: stderr, pid-prefixed. <code>all</code> is the firehose.</li>
+<li><strong>Why <code>-fno-plt</code> broke interposition workflows</strong>: the call no longer passes through a 16-byte stub, so the classic hook — overwrite the stub's first bytes with a <code>jmp</code> — has no code to patch, and lazy binding has no trampoline to land on. Symbol-level <code>LD_PRELOAD</code> still works; <em>PLT-patching</em> instrumentation does not.</li>
+<li><strong><code>ldd</code> runs the loader, not a parser</strong> — <code>ld.so</code> in <code>LD_TRACE_LOADED_OBJECTS=1</code> mode, executing the startup path. The man page's "never run it on untrusted executables" is literal: a crafted ELF can run code under <code>ldd</code>.</li>
+<li><strong>The dlmopen two-libc trap</strong>: a namespace gets its <em>own</em> libc — own malloc arenas, own TLS. Passing a heap pointer across a namespace boundary (allocate in plugin, free in host) corrupts a heap the receiving libc cannot name. Symptom: crashes far from the crime scene, only when the plugin is isolated.</li>
+<li><strong><code>linux-vdso.so.1</code> is not a file</strong>: no such path exists on disk — it is the kernel's mapped code reported through the loader's interface. Its address changes per <em>boot</em>, not per exec — subtle when correlating pointers across dumps.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>All numbers from glibc 2.41 / <code>ld.so</code> 2.41, Debian 13, x86-64; your addresses will differ (ASLR working).</p>
+<p><strong>1. Watch the loader work:</strong></p>
+<pre><code class="language-c">#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+int main(void) {
+    char *s = malloc(100);  printf("hello\n");  free(s);
+    sleep(2);               // window to read /proc/PID/maps
+    return 0;
+}</code></pre>
+<pre><code class="language-console">$ gcc -o demo demo.c
+$ LD_DEBUG=files,libs ./demo 2&gt;&amp;1 | head -10
+     25032: file=libc.so.6 [0];  needed by ./demo [0]
+     25032:  search cache=/etc/ld.so.cache
+     25032:   trying file=/lib/x86_64-linux-gnu/libc.so.6
+     25032: file=libc.so.6 [0];  generating link map
+     25032:   dynamic: 0x7f2aed6b0940  base: 0x7f2aed4cc000  size: 0x1f3e50
+     25032: calling init: /lib64/ld-linux-x86-64.so.2
+     25032: calling init: /lib/x86_64-linux-gnu/libc.so.6
+     25032: transferring control: ./demo</code></pre>
+<p>That sequence <em>is</em> the pre-<code>main</code> timeline.</p>
+<p><strong>2. Interpose <code>malloc</code> with a counting shim.</strong> Fifteen lines:</p>
+<pre><code class="language-c">// shim.c
+#define _GNU_SOURCE
+#include &lt;dlfcn.h&gt;
+#include &lt;stddef.h&gt;   // size_t
+#include &lt;stdio.h&gt;
+static long count;                    // the number we care about
+static void *(*real_malloc)(size_t);  // resolved on first call
+void *malloc(size_t n) {              // our replacement: count, then forward
+    if (!real_malloc) real_malloc = dlsym(RTLD_NEXT, "malloc");
+    count++;
+    return real_malloc(n);
+}
+__attribute__((destructor)) static void report(void) {  // runs at exit
+    fprintf(stderr, "malloc called %ld times\n", count);
+}</code></pre>
+<pre><code class="language-console">$ gcc -shared -fPIC -o shim.so shim.c      # glibc &gt;= 2.34: no -ldl needed
+$ LD_PRELOAD=./shim.so ./demo
+hello
+malloc called 2 times</code></pre>
+<p>Why <strong>2</strong>, when the program calls <code>malloc</code> once? The second is <code>printf</code>'s lazily-allocated stdout buffer (4,096 bytes when stdout is a pipe — allocated through <em>our</em> <code>malloc</code> on first write).</p>
+<p><strong>3. <code>ldd</code>, and the GOT's "before" state:</strong></p>
+<pre><code class="language-console">$ ldd ./demo
+        linux-vdso.so.1 (0x00007ffc0a579000)      &lt;- kernel code, no file
+        libc.so.6 =&gt; /lib/x86_64-linux-gnu/libc.so.6 (0x00007f326fe7e000)
+        /lib64/ld-linux-x86-64.so.2 (0x00007f3270088000)
+$ objdump -s -j .got.plt demo | tail -2
+ 4008 46100000 00000000 56100000 00000000  F.......V.......
+ 4018 66100000 00000000                    f.......</code></pre>
+<p>Little-endian: slot 0x4008 (<code>printf</code>) holds 0x1046 — the <code>push</code> inside <code>printf@plt</code>, the dance's "before" half, frozen in the file.</p>
+<p><strong>4. The memory picture after load:</strong></p>
+<pre><code class="language-console">$ ./demo &amp; sleep 0.3; PID=$!; grep demo /proc/$PID/maps
+55e33024e000-55e33024f000 r--p 00000000 ... /tmp/demo   &lt;- ELF headers
+55e33024f000-55e330250000 r-xp 00001000 ... /tmp/demo   &lt;- .text (PT_LOAD R E)
+55e330250000-55e330251000 r--p 00002000 ... /tmp/demo   &lt;- .rodata/.eh_frame
+55e330251000-55e330252000 r--p 00002000 ... /tmp/demo   &lt;- RELRO: .got mprotect'ed RO
+55e330252000-55e330253000 rw-p 00003000 ... /tmp/demo   &lt;- .data/.bss (8 B past file)
+$ grep -E 'vvar|vdso' /proc/$PID/maps
+7ffd8557d000-7ffd85581000 r--p 00000000 00:00  [vvar]   &lt;- kernel data pages
+7ffd85581000-7ffd85583000 r-xp 00000000 00:00  [vdso]  &lt;- kernel code pages</code></pre>
+<p>Five file-backed rows for four <code>PT_LOAD</code>s: the extra <code>r--p</code> row is <code>GNU_RELRO</code> after the loader's <code>mprotect</code> — partial RELRO, visible — and <code>.got.plt</code> (0x4000+) sits in the still-writable <code>rw-p</code> row.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Triage a stripped ELF</strong>: <code>.rela.plt</code>/<code>.got.plt</code> are a function-level summary of what a binary touches — our 4-entry list <em>is</em> the demo's entire external API. Read it right after Chapter 01's headers.</li>
+<li><strong>Settle "which code ran" and startup costs</strong>: <code>LD_DEBUG=bindings</code> answers "libc's <code>malloc</code> or jemalloc's"; <code>LD_DEBUG=statistics</code> gives relocation counts; <code>-z now</code> trades lazy-binding time for RELRO hardness; each plugin <code>dlopen</code> costs this entire chapter again.</li>
+<li><strong>Read exploits correctly</strong>: a GOT write that segfaults is full RELRO doing its job — check <code>BIND_NOW</code> before believing a write-up's "arbitrary write" claims (Module 02 Chapter 06's ledger).</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 Chapter 03</strong> — page-aligned <code>PT_LOAD</code> mapping, BSS zero-fill via the zero page, ASLR's load bias as <em>the reason relocations exist</em>.</li>
+<li><strong>Module 02 Chapter 06</strong> — GOT overwrite and <code>ret2dlresolve</code> against the lazy slot; full RELRO's rung on the mitigation ladder.</li>
+<li><strong>Module 04 Chapter 01</strong> — the two-tables payoff: <code>PT_LOAD</code>/<code>PT_INTERP</code> (loader view) and <code>.got</code>/<code>.rela.plt</code> (linker view), one file.</li>
+<li><strong>Module 04 Chapter 03</strong> — <code>jmp *disp(%rip)</code> and <code>call *sym@GOTPCREL(%rip)</code> in disassembly are this chapter's GOT indirection, with and without the PLT.</li>
+<li><strong>Module 06 Chapter 04</strong> — dyld solves the same repair bill with chained fixups stored <em>in</em> the data pages, making rebase lazy per faulted page — the contrast behind both loaders' startup profiles.</li>
+<li><strong>Module 07 Chapter 02</strong> — the Windows sibling: PE relocations and the IAT play the GOT's role; LoaderLock is that loader's init-order hazard.</li>
+<li><strong>Module 07 Chapter 04</strong> — this loader at full depth: <code>DT_RELCOUNT</code>, <code>-Bsymbolic</code>, the vvar seqlock, <code>dlmopen</code> in practice.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Why must <code>p_offset ≡ p_vaddr (mod 4096)</code> hold for every <code>PT_LOAD</code>? What breaks, concretely, if a linker violated it?</li>
+<li><strong>Concept.</strong> Why can the linker not write <code>printf</code>'s final address into the GOT slot at link time — what <em>two</em> kinds of ignorance does it have?</li>
+<li><strong>Predict the number.</strong> A PIE binary's <code>RW</code> load has <code>filesz 0x260, memsz 0x268</code>, vaddr 0x3dd0. How many bytes of BSS exist, at which address, and what supplies them on first read and first write?</li>
+<li><strong>Predict the output.</strong> The lab shim is preloaded onto a program that calls <code>malloc</code> once and <code>printf</code> once, stdout to a pipe. What count prints, and where does the extra call originate?</li>
+<li><strong>Bug diagnosis.</strong> A colleague's shim crashes with stack exhaustion during startup. Their <code>malloc</code> calls <code>dlsym</code> on <em>every</em> call, and they also interpose <code>calloc</code>. What is the loop, and what are the two standard fixes?</li>
+<li><strong>Bug diagnosis.</strong> An exploit writes <code>system</code>'s address to <code>printf@got</code> in a binary built with <code>-z relro -z now</code> and segfaults on the write itself. What happened, and how do you confirm it in five seconds?</li>
+<li><strong>Bug diagnosis.</strong> A plugin loaded via <code>dlmopen(LM_ID_NEWLM, ...)</code> returns a <code>malloc</code>ed buffer to the host program, which <code>free</code>s it. The heap corrupts — but only when the plugin runs in its own namespace. Why?</li>
+<li><strong>Cross-chapter.</strong> dyld (Module 06 Chapter 04) uses chained fixups instead of a relocation list; both compute "base + addend". Name the concrete advantage dyld's format buys on iOS, and the startup-profile difference versus <code>ld.so</code>.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>Each segment is one <code>mmap</code>, which can only place <em>file page N</em> at <em>address-space page N</em>; congruence keeps every image page backed by exactly one file page, or the loader must map page-by-page with split offsets. The kernel's page-granularity contract (Module 01 Chapter 03) leaks into <code>p_align</code> (Module 04 Chapter 01).</li>
+<li>(a) <em>Which</em> object satisfies <code>printf</code>: <code>DT_NEEDED</code> carries a name, and the resolution order (LD_PRELOAD ahead of libc) is decided at load time. (b) <em>Where</em> it lands: ASLR. <code>R_X86_64_RELATIVE</code> fixes only the intra-image half of (b).</li>
+<li>8 bytes at image_base + 0x4030 (<code>memsz - filesz = 8</code>). First read: the kernel's shared zero page — no I/O. First write: the COW fault materializes a private zeroed page — Module 01 Chapter 03's demand paging, invoked by the loader.</li>
+<li>2: the program's <code>malloc(100)</code>, plus <code>printf</code>'s first write allocating the 4,096-byte stdout buffer through the <em>interposed</em> <code>malloc</code> (glibc, stdout fully buffered to a pipe). The report's timing proves the <code>exit</code>/<code>.fini_array</code> step.</li>
+<li><code>dlsym</code> itself allocates (glibc error bookkeeping can go through <code>calloc</code>); the interposed <code>calloc</code> calls <code>dlsym</code> — unbounded recursion before any user allocation. Fixes: resolve once into a static and never re-enter (the lab shim's pattern); or serve pre-resolution allocations from a small static bootstrap arena — the canonical malloc-shim pattern.</li>
+<li><code>-z now</code> bound every JUMP_SLOT eagerly, then the loader <code>mprotect</code>ed the whole GOT — <code>.got.plt</code> included — read-only; the write hit an <code>r--p</code> page. Confirm with <code>readelf -dW binary | grep BIND_NOW</code> (present = full). Post-RELRO, attackers pivot to <code>exit</code> handlers and <code>FILE</code> structures (Module 02 Chapter 06's ledger).</li>
+<li>The namespace got its <em>own copy of libc</em> — own arenas, own heap metadata. The host's <code>free</code> reads the plugin-libc's bytes with the <em>host</em> libc's chunk headers. In the default namespace both are the same glibc, so the bug hides; fix: never pass ownership across a namespace boundary.</li>
+<li>Chained fixups store each fixup <em>in place</em> in the data pages, threaded through the pointers' high bits. dyld fixes only faulted pages, and untouched pages stay COW-shared with the shared cache — with 1–3 GB of frameworks on iOS, that laziness is the product. <code>ld.so</code> walks its whole list eagerly before <code>main</code>. Same arithmetic, opposite accounting.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 04 — Decompilation &amp; reverse engineering</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

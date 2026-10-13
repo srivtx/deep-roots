@@ -7,9 +7,10 @@
 computer science and rebuilds it from first principles — the physics, the hardware, the
 data structures, the design decisions and their consequences — so that what other people
 memorize, we *derive*. The first module is the root of them all: **the memory models of
-programming languages**. Cybersecurity, decompilation, mobile and desktop internals, COBOL
-and the mainframe world come after it, because every one of them is a consequence of how
-programs store and reclaim bytes.
+programming languages**. The other eleven fields — security, bugs, decompilation,
+Android, iOS, desktop kernels, COBOL, concurrency, compilers, databases, GPUs — are
+built on it, because every one of them is a consequence of how programs store and
+reclaim bytes.
 
 **Site (dark mode + light mode): <https://srivtx.github.io/deep-roots/>** ·
 [Interactive quiz](https://srivtx.github.io/deep-roots/quiz.html) ·
@@ -17,7 +18,32 @@ programs store and reclaim bytes.
 
 ---
 
-## Module 01 — Memory models, from silicon to GC (live)
+## The program — 12 modules, all live
+
+**82 chapters · ~266,000 words · 59 chapter quizzes (8 questions each) · 12 final exams.**
+
+| Module | Field | Chapters |
+|--------|-------|----------|
+| 01 | [Memory models, from silicon to GC](modules/01-memory-models/README.md) | 23 |
+| 02 | [Memory security & exploitation](modules/02-memory-security/README.md) | 7 |
+| 03 | [Software bugs: the taxonomy of failure](modules/03-software-bugs/README.md) | 5 |
+| 04 | [Decompilation & reverse engineering](modules/04-decompilation-re/README.md) | 6 |
+| 05 | [Android internals](modules/05-android-internals/README.md) | 6 |
+| 06 | [iOS internals](modules/06-ios-internals/README.md) | 5 |
+| 07 | [Desktop OS internals: Windows / Linux / macOS](modules/07-desktop-internals/README.md) | 6 |
+| 08 | [COBOL & the mainframe world](modules/08-cobol-mainframe/README.md) | 5 |
+| 09 | [Concurrency & distributed memory](modules/09-concurrency-distributed/README.md) | 5 |
+| 10 | [Compilers & runtime internals](modules/10-compilers-runtimes/README.md) | 5 |
+| 11 | [Database storage engines](modules/11-db-storage-engines/README.md) | 5 |
+| 12 | [GPU & AI accelerator memory](modules/12-gpu-memory/README.md) | 4 |
+
+Every module follows the same chapter template (see
+[CONVENTIONS.md](modules/01-memory-models/CONVENTIONS.md)): a 30-second version, teaching
+sections that *derive* rather than assert, **What insiders know**, a **See it yourself**
+lab with real commands, **How to use this knowledge**, explicit **Connections** — and an
+**8-question quiz** with worked answers, plus a module final exam.
+
+## Module 01 — Memory models, from silicon to GC
 
 Twenty-three chapters in five parts. Every chapter ends with a quiz, a
 *see-it-yourself* lab, and the connections to the rest of the field.
@@ -87,12 +113,23 @@ Twenty-three chapters in five parts. Every chapter ends with a quiz, a
 ```
 deep-roots/
 ├── index.html, quiz.html, chapters/, roadmap.html   # the site (GitHub Pages)
+├── m02/ ... m12/                                    # per-module site pages (02-12)
 ├── assets/                                          # dual-theme styles, theme.js, favicon
 ├── modules/
 │   ├── 01-memory-models/                            # LIVE — 23 chapters + final exam
 │   │   ├── chapters/                                # markdown sources
 │   │   └── quiz/                                    # final exam (interactive: /quiz.html)
-│   └── (02..12 reserved — see ROADMAP.md)
+│   ├── 02-memory-security/                          # LIVE — 7 chapters + exam
+│   ├── 03-software-bugs/                            # LIVE — 5 chapters + exam
+│   ├── 04-decompilation-re/                         # LIVE — 6 chapters + exam
+│   ├── 05-android-internals/                        # LIVE — 6 chapters + exam
+│   ├── 06-ios-internals/                            # LIVE — 5 chapters + exam
+│   ├── 07-desktop-internals/                        # LIVE — 6 chapters + exam
+│   ├── 08-cobol-mainframe/                          # LIVE — 5 chapters + exam
+│   ├── 09-concurrency-distributed/                  # LIVE — 5 chapters + exam
+│   ├── 10-compilers-runtimes/                       # LIVE — 5 chapters + exam
+│   ├── 11-db-storage-engines/                       # LIVE — 5 chapters + exam
+│   └── 12-gpu-memory/                               # LIVE — 4 chapters + exam
 ├── tools/build_site.py                              # markdown → styled HTML pipeline
 ├── agents.md                                        # automatic session ledger
 └── README.md

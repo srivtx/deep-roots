@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LSM trees — deep-roots</title>
+<meta name="description" content="Chapter 03 of module 11: LSM trees">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="LSM trees — deep-roots">
+<meta property="og:description" content="Chapter 03 of module 11: LSM trees">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="LSM trees — deep-roots">
+<meta name="twitter:description" content="Chapter 03 of module 11: LSM trees">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 11 &middot; the disk is the new heap</div>
+<h1 class="post-title">LSM trees</h1>
+<div class="post-meta">chapter 03 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Chapter 01's physics said random writes are expensive and sequential writes cheap; chapter 02's B-tree still lands every update on a scattered leaf page. The LSM (log-structured merge) tree finishes the inversion: buffer writes in a sorted in-memory table, flush it as an immutable sorted file, merge the files in the background. Every write becomes an append; reads must then search several sorted runs (bloom filters make most probes free); dead versions accumulate until compaction merges them away. The whole structure is generational GC replayed on disk — memtable = nursery, levels = generations, compaction = mark-compact — "GC for disk". Numbers below are LevelDB 1.23 constants and RocksDB 8.x defaults, marked where they differ.</blockquote>
+<h2 id="1-turning-random-writes-into-sequential-ones-the-lsm-bet">1. Turning random writes into sequential ones: the LSM bet</h2>
+<p>Chapter 01's gap is three orders of magnitude: an HDD does ~100-200 random IOPS but ~200 MB/s sequentially; on an SSD, random 8 KB updates wake the FTL's own garbage collector. Chapter 02's B-tree hides some of that behind the buffer pool, but a leaf-page update eventually evicts to a <em>random</em> offset, and half-full pages tax every insert with splits. The question that produces LSM trees: <em>what if a write never touched disk until it could be written sequentially?</em></p>
+<p>Derivation, step by step:</p>
+<ol>
+<li>Buffer updates in memory, sorted. A flush then emits one large <em>sorted run</em> — a single sequential write. Random → sequential: solved.</li>
+<li>But memory is volatile, so every update is first appended to a write-ahead log (chapter 04 owns that machinery). The memtable is now disposable: crash → replay.</li>
+<li>Sorted runs accumulate, and a read must check every run that could hold the key. So merge overlapping runs in the background — a k-way merge-join, the merge phase of an external sort. Merging is the <em>deferred cost</em> of the cheap write.</li>
+</ol>
+<p>The whole architecture (O'Neil et al., 1996; industrialized by Bigtable, LevelDB, RocksDB):</p>
+<pre><code> client PUT ──▶ [WAL append]──▶ [ memtable ]  RAM, skiplist, sorted
+                     │              │          (LevelDB: ~4 MB; RocksDB: 64 MB)
+                     │              │ full → frozen "immutable memtable"
+   (crash? replay    │              ▼
+    the log from     │        [ FLUSH: one sequential write ]
+     scratch)        │              ▼
+                    │        [ L0 SSTs: 2 MB each, OVERLAPPING ]
+                    │              │   every flush covers the whole key range,
+                    │              │   so L0 files overlap — all are probed
+                    │              │   on a read
+                    │              ▼ trigger (LevelDB: 4 files at L0)
+                    │        [ COMPACTION: k-way merge-join of overlapping runs ]
+                    │              ▼
+                    │        [ L1: 10 MB, NON-overlapping ]  size ratio ~10x
+                    │        [ L2: 100 MB ] [ L3: 1 GB ] ... L6: ~1 TB
+                    └────────── durable answer lives in the WAL, not the pages</code></pre>
+<p>The bet: <em>pay later, in batch, sequentially</em> — instead of <em>now, random, per write</em>.</p>
+<h2 id="2-the-anatomy-wal-memtable-sst-levels">2. The anatomy: WAL, memtable, SST, levels</h2>
+<p><strong>The memtable is a skiplist — a deliberate choice.</strong> A hash table makes inserts O(1) but cannot iterate in key order, and a flush must emit a <em>sorted</em> run. A red-black tree iterates sorted but <em>rebalances</em>: rotations rewrite pointers inside existing nodes, so a concurrent reader needs a latch on every node it crosses. A skiplist (LevelDB: height ≤ 12, branch probability 1/4) never mutates a published node: insertion CAS-installs one new node's forward pointers; existing nodes are untouched. One writer plus unlimited lock-free readers, no rebalancing, O(log n) expected.</p>
+<p>When the memtable fills (RocksDB 8.x default <code>write_buffer_size</code> = 64 MB), it is frozen, a new one rotates in, and the frozen one is flushed to disk as an <strong>SST</strong> (sorted string table):</p>
+<pre><code>+---------------------+  ┐
+| data block 0        |  │  KV pairs, key-sorted, ~4 KB per block,
+| data block 1        |  │  prefix-compressed (LevelDB: restart point
+| ...                 |  │  every 16 keys so a block can binary-search)
++---------------------+  │
+| filter block        |  │  bloom filters, 10 bits/key, "present?" answers:
+| (bloom, 10 bits/key)│  │  NO = definitely absent (skip the data blocks)
++---------------------+  │
+| index block         |  │  first key of each data block → file offset
++---------------------+  │  (kept in memory for the open SST)
+| footer, 48 B        |  │  index+filter handles + magic 0xdb4775248b80fb57
++---------------------+  ┘  (LevelDB 1.23)</code></pre>
+<p>A cold point lookup in one SST costs footer (cached) → index → one data block = 2 reads; a bloom "no" costs 1 filter read. SSTs are <em>immutable</em>: no torn pages (chapter 01), no in-place concurrency, no free-list bookkeeping.</p>
+<p><strong>Levels.</strong> L0 files overlap because each flush covers the whole key range. Compaction into L1 re-partitions the key space so each L1+ file owns a disjoint range — a key can live in at most one file per level. Levels grow by ~10× (LevelDB: L1 = 10 MB, then ×10 per level → L6 ≈ 1 TB), which is the survivor-space arithmetic from module 01 ch12: small, hot generations at the top; big, cold, stable ones at the bottom.</p>
+<h2 id="3-compaction-the-merge-debt-and-the-amplification-triangle">3. Compaction: the merge debt and the amplification triangle</h2>
+<p>Every cheap write borrowed work from the future. The debt is (a) dead versions — the old copies of every updated key — and (b) run count, the read's tax. Compaction pays it with a merge-join: newest version wins, older versions drop, tombstones (delete markers) swallow the versions beneath them. Two repayment schedules exist:</p>
+<ul>
+<li><strong>Leveled</strong> (LevelDB, RocksDB default): an over-budget level picks one file, merges it with the ~10 files it overlaps in the next level, and writes the result back there. Each key is rewritten once per level it passes through, and a 2 MB L0 run landing in a 20 MB L1 rewrites all ~22 MB — the ×10 ratio is the write-amplification engine. Measured write-amp: <strong>20-30×</strong> (RocksDB 8.x docs' own figure). Reward: at most one run per key range per level.</li>
+<li><strong>Sized-tiered</strong> (Cassandra size-tiered, RocksDB "universal"): tiers pile up same-size runs; when enough accumulate (Cassandra default: 4), they merge into one bigger run at the next tier. Each merge touches only the runs being merged, so write-amp stays near <strong>1-5×</strong>. Cost: many overlapping runs alive at once, and dead versions survive until their tier merges.</li>
+</ul>
+<p>Draw the tradeoff — this diagram <em>is</em> the chapter:</p>
+<pre><code>                read-amp LOW  (a point read probes few runs)
+                          ▲
+                          │      ● LEVELED:  ~1 probe per level (6-7 max,
+                          │                  blooms make most probes free);
+                          │                  write-amp 20-30x, space-amp ~1.1x
+                          │
+                          │
+   space-amp LOW ─────────┼────────────────── write-amp LOW
+   LEVELED ~1.1x          │                  TIERED ~1-5x
+   (1 live copy/key       │        ● TIERED: probe every overlapping run
+   + in-flight merge)     │                  (dozens without blooms);
+                          │                  space-amp ~2x, capped by
+                          │                  RocksDB max_size_amplification_
+                          │                  percent = 200 (≈ 2x live data)
+                          │        ○ NO COMPACTION: write-amp 1x, but
+                          │          space-amp and read-amp grow unbounded
+                          │          — the lazy corner</code></pre>
+<p>Compaction is where you <em>slide</em> on the triangle; the corners are unreachable.</p>
+<p><strong>Compaction storms.</strong> If ingest outruns merge throughput, debt grows, and the engine's escape valve is <em>backpressure on writers</em>: LevelDB slows writes ~1 ms each at 8 L0 files and blocks them at 12; RocksDB has slow and stop triggers on L0 file count, memtable count, and pending compaction bytes. The symptom is p99 latency — writes stall for hundreds of ms while background merges chew through debt. The gauges insiders watch: <code>rocksdb.estimate-pending-compaction-bytes</code> (the debt), <code>rocksdb.num-files-at-level0</code> against the trigger, a nonzero <code>rocksdb.actual- delayed-write-rate</code> ("throttled <em>right now</em>"), <code>rocksdb.is-write-stopped</code>, and the <code>Stalls(count):</code> line in the LOG's periodic DB-stats dump. Leveled's tax is write-amp (SSD endurance, CPU, stalls); tiered's is space-amp (disk and read-amp).</p>
+<h2 id="4-reading-it-back-level-probes-and-the-bloom-filter">4. Reading it back: level probes and the bloom filter</h2>
+<p>A point read walks newest → oldest: memtable → immutable memtables → every L0 file (they overlap) → at most one file per L1+ level. Worst-case arithmetic for a 1 TB DB (LevelDB sizing): 2 memtables + 4 L0 files + 6 levels ≈ <strong>12 probes</strong> for a key that isn't there. That is the read-amp bill — unless most probes are free. They are: the filter block.</p>
+<p><strong>Deriving the bloom filter.</strong> The filter is m bits with k hash functions over n keys. After n insertions, a specific bit is still 0 with probability (1 − 1/m)^{kn} ≈ e^{−kn/m}; a <em>non-member</em> slips through only if all k of its positions are set:</p>
+<p>FP ≈ (1 − e^{−kn/m})^k</p>
+<p>Minimize over k: k = ln 2 · m/n ≈ 0.7 × bits-per-key — at the optimum the filter is half full and the rate collapses to the asymptotic bound:</p>
+<p>FP ≈ 0.6185^(m/n)</p>
+<p>Ten bits per key → 0.6185^10 ≈ 0.008 — <strong>about 1%</strong>, which is why 10 bits/key is the shipped default (LevelDB rounds k to 0.69 × 10 = 6 hashes; measured ≈ 0.85%). Doubling to 20 bits/key buys 0.0067%: false positives fall <em>exponentially</em> in filter size. And 10 bits = 1.25 bytes per key against a ~100-byte entry — the filter is ~1% of the SST. But 1% of a 64 GB SST is ~640 MB of bits, far too big to re-read from disk per probe — which is why <strong>big filters live in the block cache</strong>: modern RocksDB builds one bloom per whole SST ("full filter") or per partition, pinned in cache, so a negative probe never touches the data blocks. Of the 12 worst-case probes, ~11 are now cached bit-tests; only the level holding the key reads index + one data block. Point reads cost ~1-2 I/Os.</p>
+<p>Deletes, meanwhile, are <em>writes</em>: a tombstone masks lower-level copies and can only be discarded when compaction proves nothing older survives beneath it — hence the classic ticket "I deleted half the table and disk usage didn't move".</p>
+<h2 id="5-gc-for-disk-the-unification-and-the-decision-table">5. GC for disk: the unification and the decision table</h2>
+<p>Set module 01 ch12's generational heap beside this chapter — the mapping is exact:</p>
+<div class="table-wrap"><table><thead><tr><th>LSM (this chapter)</th><th>JVM generational heap (OpenJDK 17)</th></tr></thead><tbody><tr><td>memtable</td><td>eden/nursery — newest versions, most die here</td></tr><tr><td>flush = sorted copy to L0</td><td>minor GC evacuation of eden</td></tr><tr><td>L0/L1 (small, ×10 sizing)</td><td>survivor spaces (8:1:1)</td></tr><tr><td>L1..L6</td><td>old generation, tenured by level</td></tr><tr><td>compaction merge</td><td>mark-compact of old gen</td></tr><tr><td>dead versions dropped mid-merge</td><td>unreachable objects reclaimed</td></tr><tr><td>tombstone (delete marker)</td><td>the program calling <code>free()</code>, honored later</td></tr></tbody></table></div>
+<p>One structural difference: liveness is decided by <em>recency</em> (newest version wins the merge) not by tracing from roots, and readers never pause — the "GC pause" is paid by writers as a compaction stall. Chapter 02's B-tree, meanwhile, is module 01 ch05's <em>other</em> dynasty: update-in-place with free-space management is a free-list allocator (FSM/vacuum = the free list; page splits = fragmentation). The allocator/GC feud of module 01, replayed on disk, is the B-tree/LSM feud here.</p>
+<p>So when does each win?</p>
+<div class="table-wrap"><table><thead><tr><th>Workload</th><th>Winner</th><th>Why</th></tr></thead><tbody><tr><td>Write-heavy (logs, telemetry, time series)</td><td>LSM</td><td>sequential appends, write-amp is a tunable budget</td></tr><tr><td>Point-read heavy, low write rate</td><td>B-tree</td><td>one descent, no versions, no background storms</td></tr><tr><td>Range-scan heavy</td><td>B-tree</td><td>clustered leaves; LSM scans must merge runs, skip dead versions</td></tr><tr><td>Space-constrained / steady p99</td><td>B-tree</td><td>space-amp ~1x; no compaction stalls</td></tr><tr><td>Mixed, write-dominated, bloom-friendly keys</td><td>LSM</td><td>~1-2 I/O reads, tiny filters, sequential writes</td></tr></tbody></table></div>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The bloom arithmetic you can recite</strong>: FP ≈ 0.6185^(bits/key). 10 bits → 0.8%, 20 bits → 0.0067%, and k = 0.69 × bits-per-key is LevelDB's truncation (10 bits → k=6, not the theoretical 7).</li>
+<li><strong>The compaction-stall gauges, by name</strong> (RocksDB 8.x): <code>estimate-pending- compaction-bytes</code> is the debt; <code>num-files-at-level0</code> vs. the 4-file trigger; nonzero <code>actual-delayed-write-rate</code> = throttled now; <code>is-write-stopped</code> = the world has stopped. LevelDB's ladder is 4/8/12 L0 files (trigger/slow/stop).</li>
+<li><strong>Why a skiplist for the memtable</strong>: insert touches only the new node (CAS on forward pointers, p = 1/4, height 12) — no rotation ever rewrites a published node, so readers are latch-free; a hash table can't produce the sorted run a flush needs.</li>
+<li><strong>Leveled vs tiered in practice</strong>: leveled (RocksDB default) unless write-amp dominates — do the SSD-endurance sum: 1 TB/day ingest × 20-30× write-amp ≈ 20-30 TB/day of flash writes; on a 1-DWPD 1 TB drive that's over budget. Then you want universal compaction, retuning <code>max_size_amplification_percent</code> (default 200 ≈ 2× live data) to keep the disk from filling.</li>
+<li><strong>The GC mapping, one line</strong>: memtable = nursery, flush = minor GC, levels = generations, compaction = mark-compact, tombstone = deferred <code>free()</code>.</li>
+<li><strong>The delete trap</strong>: <code>DELETE</code> writes a tombstone; space returns only when that tombstone merges past the deepest level still holding a copy of the key — mass deletes need an explicit <code>CompactRange</code> (RocksDB) to reclaim disk promptly.</li>
+<li><strong>Immutable SSTs dodge chapter 01's torn-page problem</strong>: no page is rewritten in place, so there is no half-landed state — SSTs swap atomically in the manifest.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>Lab A — measure the ~1% claim (CPython 3.12).</strong> Twenty lines: 10 bits/key, k = 7, 10,000 members, 100,000 non-members:</p>
+<pre><code class="language-python">import hashlib, math
+N, BITS_PER_KEY, K = 10_000, 10, 7          # 10k keys, 10 bits/key, 7 hashes
+M = N * BITS_PER_KEY                        # 100,000-bit filter (~12 KB)
+filt = bytearray((M + 7) // 8)
+
+def positions(key):                         # Kirsch-Mitzenmacher double hashing
+    h = hashlib.sha256(key.encode()).digest()
+    h1, h2 = int.from_bytes(h[:8], "big"), int.from_bytes(h[8:16], "big")
+    return [(h1 + i * h2) % M for i in range(K)]
+
+for i in range(N):                          # insert the members
+    for p in positions(f"key-{i}"):
+        filt[p &gt;&gt; 3] |= 1 &lt;&lt; (p &amp; 7)
+
+fp, TRIALS = 0, 100_000                     # probe NON-members only
+for i in range(N, N + TRIALS):
+    if all(filt[p &gt;&gt; 3] &gt;&gt; (p &amp; 7) &amp; 1 for p in positions(f"key-{i}")):
+        fp += 1
+
+print(f"measured: {fp / TRIALS:.4%}")       # ~0.83%
+print(f"theory  : {(1 - math.exp(-K / BITS_PER_KEY))**K:.4%}")</code></pre>
+<p>My run: <code>measured: 0.8330%</code>, <code>theory: 0.8194%</code> — the asymptotic bound 0.6185^10 ≈ 0.815%: double hashing costs almost nothing. Set <code>BITS_PER_KEY = 20</code> and watch ~0.007% — exponential in bits.</p>
+<p><strong>Lab B — sst_dump and the compaction timeline</strong> <em>(marked: documented walkthrough — RocksDB is not installed in this environment; per RocksDB 8.x docs, runnable on any laptop with a RocksDB build)</em>:</p>
+<pre><code class="language-console">$ ./db_bench --benchmarks=fillrandom --num=5000000 --db=/tmp/lsm \
+    --statistics=1 --stats_dump_period_sec=2
+$ grep -A4 "Compaction Stats" /tmp/lsm/LOG
+** Compaction Stats [default] **
+Level  Files  Size(MB) Score Read(GB) Rn(MB/s) Write(GB) ...
+  L0      3        2    1.50 ...
+  L1     12       19    0.80 ...</code></pre>
+<p>Watch L0's <code>Files</code> column climb 1→4, snap to 0 as a compaction fires, and bytes cascade L0→L1→L2: the write path of section 1, live. <code>Score ≥ 1.0</code> means "level's size budget exceeded — compaction due". Then inspect one sorted run:</p>
+<pre><code class="language-console">$ ./sst_dump --file=/tmp/lsm/000123.sst --command=scan --output_hex
+Sst file format: block-based table
+'key000001' seq:4242, type:1 =&gt; 'value...'
+$ ./sst_dump --file=/tmp/lsm/000123.sst --command=check
+[OK] 000123.sst  # blocks inspected, 0 errors</code></pre>
+<p><code>--command=check</code> verifies every checksum — section 2's immutability claim is testable, not folklore. The <code>seq:</code> field is the sequence number: the <em>version stamp</em> the merge uses to pick the winner.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Provisioning arithmetic</strong>: multiply expected ingest by write-amp (20-30× leveled) and compare with the SSD's DWPD rating — one sum that prevents the classic "my flash died in a year" design.</li>
+<li><strong>The "disk didn't shrink after DELETE" ticket</strong>: explain it (dead versions + tombstone depth) and fix it (<code>CompactRange</code> / bottom-level compaction) instead of re-running the DELETE and hoping.</li>
+<li><strong>p99 sawtooth diagnosis</strong>: spikes correlated with L0 file count and pending- compaction-bytes are compaction stalls, not lock contention — reach for the trigger/threads/rate-limiter knobs, not the query planner.</li>
+<li><strong>Engine selection</strong>: etcd chose a B+tree (bbolt) for read-heavy config; Cassandra/TiKV/CockroachDB chose LSM for write-heavy data — both decisions reconstruct from the triangle, not from fashion.</li>
+<li><strong>The interview whiteboard</strong>: "derive the bloom FP rate" is a storage-engine staple; you can do it from (1 − 1/m)^{kn}, not from memory.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch12 (Java's generational heap)</strong> — the payoff analogy: nursery/ survivors/old-gen map onto memtable/L0/L1+/deep levels, minor GC onto flush, mark-compact onto compaction. Same tower, one level down.</li>
+<li><strong>Module 11 ch01</strong> — the random-vs-sequential gap this design converts; immutability as the torn-page escape.</li>
+<li><strong>Module 11 ch02</strong> — the rival dynasty: update-in-place + free-space management = module 01 ch05's free-list allocator; the point-read/range-scan champion.</li>
+<li><strong>Module 11 ch04</strong> — the WAL that makes the memtable disposable; replay = rebuild the nursery.</li>
+<li><strong>Module 11 ch05</strong> — MVCC version chains are the same multiversioning at row scale; purge/vacuum there plays compaction's role here.</li>
+<li><strong>Module 07 ch05 (Linux memory machinery)</strong> — the memtable flush is dirty-page writeback: the dirty-ratio triggers are the L0 file triggers; backpressure has the same shape one tower level down.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>A colleague proposes replacing the memtable's skiplist with a hash table "because O(1) beats O(log n)". Give the two mechanism-level reasons this breaks the design.</li>
+<li>A bloom filter for an SST is provisioned at 8 bits per key with the optimal k. Compute k and the expected false-positive rate. Show the derivation, not a remembered number.</li>
+<li>LevelDB sizing: L1 = 10 MB, ×10 per level, 4 overlapping 2 MB SSTs sit at L0, plus 2 memtables. For a point read of a key that exists nowhere, what is the worst-case number of structure probes (bloom checks), and how many block reads if all blooms answer "no"?</li>
+<li>Write latency is fine for hours, then p99 spikes to 800 ms in a sawtooth; during spikes <code>num-files-at-level0</code> reads 9 and <code>actual-delayed-write-rate</code> is nonzero. Diagnose the mechanism and name two knobs that address it.</li>
+<li>You <code>DELETE</code> 90% of a 100 GB table in one transaction. An hour later <code>du</code> shows 97 GB. Nothing is broken — where did the bytes go?</li>
+<li>A bulk ingest runs 10× faster than normal and writes stop outright for seconds at a time (<code>is-write-stopped</code> = true). Why does the engine <em>choose</em> to stop writers rather than let them run at, say, half speed?</li>
+<li>Map each LSM element onto the OpenJDK generational heap of module 01 ch12 (memtable, flush, levels, compaction, dead versions), and name one way the two collectors differ structurally.</li>
+<li>Chapter 02 argued a B-tree is "a free-list allocator with pages". Which module 01 memory-management concept is an LSM tree, and what does that ancestry <em>predict</em> about each engine's write-amp and space-amp?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>A hash table can't iterate in key order</strong> — the flush must emit one sorted run, else every flush pays a full sort and the merge-join loses its sorted inputs. And it kills <em>range</em> reads, which the sorted structure serves for free.</li>
+<li>Optimal k = ln 2 · m/n = 0.693 × 8 ≈ <strong>5.5, so k = 5 or 6</strong>. At the optimum the filter is half full: FP ≈ 0.6185^(m/n) = 0.6185^8 ≈ <strong>2.2%</strong>. Derivation: a bit is still clear with probability (1 − 1/m)^{kn} ≈ e^{−kn/m}; a non-member false-positives when all k probes hit set bits, (1 − e^{−kn/m})^k; minimized over k at k = ln 2 · (m/n), where the fill is 1/2, giving (1/2)^k = 0.6185^(m/n).</li>
+<li>2 memtables + 4 L0 files (overlapping: <em>all</em> probed) + 6 levels × 1 file (non-overlapping: at most one each) = <strong>12 bloom checks</strong>. If every bloom says "no", <strong>zero data blocks are read</strong> — negative probes are cached bit-tests.</li>
+<li><strong>Compaction debt → write stall</strong>: ingest outran merge throughput; L0 crossed the slow trigger (8 files) and writes took per-write delays. Knobs: <code>max_background_compactions</code>, the L0 slow/stop triggers, bigger memtables, an ingest rate limit — or universal compaction to trade space-amp for write-amp.</li>
+<li>The <code>DELETE</code> wrote tombstones; the ~90 GB of <em>dead versions</em> is still on disk, and a tombstone frees space only when compaction merges it past the deepest level still holding a copy of the key. Waiting may work eventually; <code>CompactRange</code> / bottom-level compaction reclaims it now: delete marks, compaction collects — the GC analogy in one ticket.</li>
+<li>Because unbounded L0 growth makes every future read probe an unbounded number of overlapping runs: the engine trades write availability for a hard read-amp bound — backpressure, same shape as the kernel's dirty-ratio writeback throttle (module 07 ch05). If merges are saturated, half-speed writes still grow the debt; stopping shrinks it.</li>
+<li>memtable = eden/nursery; flush = minor-GC evacuation; L0/L1 = survivors, deeper levels = old gen (×10 sizing ≈ tenuring); compaction = mark-compact of old gen; dead versions = unreachable objects, dropped mid-merge. Structural difference: liveness is recency (newest version wins), decided by the merge rule — no tracing from roots — and the pause lands on writers (stalls), not readers.</li>
+<li>A <strong>copying/compacting collector</strong> (module 01 ch12 lineage): never update in place, copy live data forward during compaction, drop the rest. That ancestry predicts high write-amp (every live version copied level by level) with near-zero fragmentation — space-amp ≈ 1.1× — versus the B-tree free-list lineage: update-in-place, low write-amp, perpetual fragmentation and free-space bookkeeping.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch02.html"><span class="cn-label">previous</span><span class="cn-title">Ch 02</span></a>
+<a class="next" href="ch04.html"><span class="cn-label">next</span><span class="cn-title">Ch 04</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 11 — Database storage engines</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

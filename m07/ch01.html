@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Three process models — deep-roots</title>
+<meta name="description" content="Chapter 01 of module 07: Three process models">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Three process models — deep-roots">
+<meta property="og:description" content="Chapter 01 of module 07: Three process models">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Three process models — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of module 07: Three process models">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 07 &middot; Windows, Linux, macOS side by side</div>
+<h1 class="post-title">Three process models</h1>
+<div class="post-meta">chapter 01 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> "Process" is a design decision, and the three desktop kernels made three different ones. Windows builds processes from object-manager objects — an EPROCESS owning ETHREADs, files, tokens, sections — all refcounted, reachable only via per-process handle tables. Linux makes the <em>task</em> (<code>task_struct</code>) the atom: every thread is a full task, and a "process" is merely a group of tasks sharing address space, fd table, and signal state via <code>clone()</code> flags — a thread is a process that shares. macOS splits the role: a Mach task (address space, port table, threads) wearing a BSD proc (pid, fds, signals). From them fall handles vs fds with opposite inheritance defaults, PID reuse, job objects vs cgroups — and the numbers that predict memory death: commit charge, RSS+swap, phys_footprint.</blockquote>
+<h2 id="1-one-abstraction-three-kernels">1. One abstraction, three kernels</h2>
+<p>Any kernel promising each program a private machine must invent an address space (module 01 ch03's page tables made policy), execution units, a table of owned resources, an identity, and a rationing envelope. The three kernels disagree only about the <em>unit of construction</em>.</p>
+<p><strong>Windows: everything is an object.</strong> [Windows 10/11] NT's object manager gives every kernel resource — process, thread, file, section, token — one shape: header plus body. The header (<code>OBJECT_HEADER</code>) carries a reference count, a type pointer, an optional name, and a security descriptor with an ACL; the body is the EPROCESS, the ETHREAD, the FILE_OBJECT. A process is just another object that owns a <em>handle table</em> (section 2) — user space never sees pointers, only handles.</p>
+<p><strong>Linux: the task is the atom; threads are not a separate kind.</strong> [Linux, 2.6 through 6.x] One <code>task_struct</code> (a few KB, plus a 16 KB kernel stack on x86-64) per thread — nothing else exists. A "process" is a <em>thread group</em>: CLONE_THREAD tasks share the thread-group id (<code>tgid</code>); <code>getpid()</code> reports the tgid, <code>gettid()</code> the per-task pid. The inversion: on Windows a thread is an object inside a process object; on Linux a thread <em>is</em> a process that shares — NPTL's <code>pthread_create</code> passes <code>CLONE_VM | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE_SYSVSEM | CLONE_SETTLS</code>, and <code>fork()</code> is the degenerate clone that shares nothing.</p>
+<p><strong>macOS: one entity, two structs.</strong> [XNU; module 06 ch01] The Mach task is a resource container — vm_map, port table, threads; the BSD <code>proc</code> layers the POSIX facts on top — pid, fds, signal state. <code>task-&gt;bsd_info</code> points at the proc; <code>proc-&gt;p_task</code> points back.</p>
+<p>Three shapes, side by side:</p>
+<pre><code class="language-text">      WINDOWS (NT)               LINUX                       macOS (XNU)
++----------------------+  +----------------------+  +--------------------------+
+| THE UNIT             |  | THE UNIT             |  | THE UNITS (two structs)  |
+| EPROCESS object =    |  | task_struct,         |  | Mach task = vm_map +     |
+| process; ETHREAD     |  | ONE PER THREAD.      |  | port table + threads;    |
+| object = thread.     |  | "Process" = the      |  | BSD proc = pid,          |
+| Everything else is   |  | thread GROUP (tgid). |  | filedesc, signal state.  |
+| an object too: file, |  | Sharing is clone()   |  | task-&gt;bsd_info &lt;-&gt;       |
+| token, section,      |  | flags: CLONE_VM |    |  | proc-&gt;p_task. One        |
+| event.               |  | CLONE_FILES | ...    |  | entity, two views.       |
++----------------------+  +----------------------+  +--------------------------+
+| THE REFERENCE        |  | THE REFERENCE        |  | THE REFERENCES           |
+| HANDLE = slot&lt;&lt;2 +   |  | fd = small index     |  | fd (BSD, like Linux)     |
+| flag bits -&gt; entry   |  | into files_struct    |  | + Mach port rights       |
+| in PER-PROCESS       |  | fdtable -&gt; struct    |  | (ports are NOT           |
+| handle table -&gt;      |  | file = open file     |  | inherited across fork,   |
+| object-manager       |  | description          |  | module 06 ch03)          |
+| object: refcount +   |  | (refcount + offset   |  |                          |
+| ACL + access mask    |  | + mode)              |  |                          |
++----------------------+  +----------------------+  +--------------------------+
+| THE ENVELOPE         |  | THE ENVELOPE         |  | THE ENVELOPE             |
+| job object (memory   |  | cgroups RATION the   |  | Jetsam tier + QoS class  |
+| limit, CPU rate,     |  | world, namespaces    |  | (kill by policy, module  |
+| kill-on-close). PID  |  | FAKE it. PID         |  | 06 ch02); footprint      |
+| = CID-table slot -&gt;  |  | sequential, wraps    |  | highwater mark per task. |
+| multiple of 4, can   |  | at pid_max.          |  | PID sequential, wraps    |
+| be reused at once.   |  |                      |  | at 99999 (kern.pid_max). |
++----------------------+  +----------------------+  +--------------------------+</code></pre>
+<p><strong>PID reuse is where the designs leak.</strong> [Windows] PIDs are slots in the CID table (<code>PspCidTable</code>) — itself a handle table — so PIDs are multiples of 4 (Idle holds 0, System 4), and a freed slot can go to the next <code>CreateProcess</code> <em>immediately</em>. [Linux] PIDs are sequential, wrapping at <code>/proc/sys/kernel/pid_max</code> (32768 upstream, 4194304 under systemd on 64-bit), so a number repeats only after the whole space wraps. [macOS] PIDs climb to 99999 (<code>kern.pid_max</code>) then wrap. A captured PID goes stale in minutes on Windows, hours on the others.</p>
+<h2 id="2-handles-vs-file-descriptors">2. Handles vs file descriptors</h2>
+<p>Both answer one question: how does user code refer to a kernel thing without holding a kernel pointer? They differ in what the integer indexes and what rights travel with it.</p>
+<p>An <strong>fd is a pointer to an open-file description.</strong> [POSIX] The integer indexes <code>files_struct</code>'s fd table, an array of pointers to <code>struct file</code> — one <em>open-file description</em> per <code>open()</code> call: a refcount, the shared offset (<code>f_pos</code>), the status flags (<code>O_APPEND</code> lives here), the access mode. <code>fork()</code> copies the pointer array and bumps each refcount, so parent and child share one description — one offset — which is why <code>O_APPEND</code> exists: the offset belongs to the description, not the file. Rights are thin: permissions were checked once, at <code>open()</code>.</p>
+<p>A <strong>handle is a slot in a process-local table pointing at a kernel object.</strong> [Windows] The handle <em>value</em> is the slot index shifted left two bits plus flag bits — why handles and PIDs are multiples of 4. The entry holds the object pointer and a 32-bit <strong>granted-access mask</strong> frozen at open time and re-checked on every call: a handle is a capability narrowed to what you requested, and <code>DuplicateHandle</code> can narrow it further when handing it to another process. POSIX has no equivalent (<code>SCM_RIGHTS</code>, over a Unix socket, is the closest).</p>
+<p><strong>The difference that bites is the inheritance default — the two OSes chose opposite poles.</strong> [POSIX] <code>fork()</code> inherits <em>all</em> fds; opting out is per-fd (<code>O_CLOEXEC</code>, applied at <code>execve</code>) — the bug class is <em>leakage by default</em>: the exec'd child keeps your listening socket. [Windows] <code>CreateProcess</code> inherits almost <em>nothing</em> (<code>bInheritHandles</code> defaults to FALSE), and even with TRUE only handles marked inheritable — <code>SECURITY_ATTRIBUTES.bInheritHandle</code> at creation, or <code>SetHandleInformation</code> later — reach the child. The bug class is <em>lockdown by default</em>: "the child can't use the file I opened." [macOS] The BSD side is POSIX; Mach port rights never cross <code>fork()</code> — they move as messages (module 06 ch03).</p>
+<h2 id="3-rations-and-fakes-job-objects-namespaces-cgroups">3. Rations and fakes: job objects, namespaces, cgroups</h2>
+<p>A <strong>job object</strong> [Windows] is one kernel object grouping a process and its descendants (absent <code>CREATE_BREAKAWAY_FROM_JOB</code>) under group limits: job-wide and per-process memory caps, CPU rate control, and <code>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</code> — close the last handle and the kernel kills the whole tree. Jobs nest since Windows 8: the cgroup analog, earlier and coarser.</p>
+<p>The <strong>Linux envelope</strong> splits the same job in two — the container story in one paragraph. <em>Namespaces fake the world</em>: a pid namespace renumbers tasks so the container's init looks like pid 1; mount + overlayfs give it a private-looking root; a network namespace a private stack. <em>Cgroups v2 ration it</em>: <code>memory.max</code>, <code>cpu.max</code>, <code>pids.max</code>. A container runtime is unshare (fake), cgroup writes (ration), exec. [macOS] XNU's envelope is per-task in-kernel: QoS classes and footprint highwater marks, enforced by policy killing, not throttling (module 06 ch02).</p>
+<h2 id="4-memory-accounting-which-number-predicts-the-kill">4. Memory accounting: which number predicts the kill</h2>
+<p>Each OS lies about memory differently, because each promises it differently.</p>
+<p><strong>Windows charges the promise.</strong> [Windows] <code>VirtualAlloc(MEM_RESERVE)</code> carves address space free; <code>MEM_COMMIT</code> charges the commit limit <em>immediately</em> — reserved-but-charged — untouched pages or not. The limit is RAM plus all pagefiles; the next commit past it fails with <code>ERROR_COMMITMENT_LIMIT</code>, at <em>promise time</em>, not first touch.</p>
+<p><strong>Linux promises almost nothing and bills at touch.</strong> [Linux] Default overcommit: a mapping costs nothing until a page faults in — VMA <code>Size</code> is opinion, <code>Committed_AS</code> advisory. Out of memory, the OOM killer ranks victims by badness ≈ RSS + swap (+ page-table bytes on recent kernels), nudged ±1000 by <code>oom_score_adj</code>. RSS double-counts shared; <strong>PSS</strong> (private + shared/N) is the fair number — but no killer reads PSS; it exists for capacity planning.</p>
+<p><strong>macOS compresses first, then kills by footprint.</strong> [XNU] <strong>phys_footprint</strong> is the Jetsam number (module 06 ch02): dirty pages plus the compressed copies of evacuated pages, plus IOKit and purgeable-nonvolatile bytes. RSS is <em>not</em> the criterion — compressed pages have left RSS but remain in footprint.</p>
+<div class="table-wrap"><table><thead><tr><th>accounting question</th><th>Windows</th><th>Linux</th><th>macOS</th></tr></thead><tbody><tr><td>reserved address space (free?)</td><td>MEM_RESERVE, free</td><td>VMA <code>Size</code>, free</td><td>vmmap VSIZE, free</td></tr><tr><td>promise accounting</td><td><strong>commit charge</strong>, at MEM_COMMIT</td><td><code>Committed_AS</code> (advisory only)</td><td>none</td></tr><tr><td>resident, double-counts shared</td><td>Working Set</td><td>RSS</td><td>RSDNT</td></tr><tr><td>fair share of shared</td><td>"Shareable" WS (no PSS analog)</td><td><strong>PSS</strong></td><td>not exposed</td></tr><tr><td>true private cost</td><td>Private Bytes</td><td><code>Private_Dirty</code></td><td>DIRTY + compressed</td></tr><tr><td><strong>predicts the kill</strong></td><td><strong>commit charge vs commit limit</strong> (RAM+pagefiles)</td><td>global: <strong>RSS+swap</strong>; cgroup: <code>memory.current</code> vs <code>memory.max</code></td><td><strong>phys_footprint</strong> vs highwater tiers</td></tr></tbody></table></div>
+<h2 id="5-the-cpu-side-briefly">5. The CPU side, briefly</h2>
+<p>The same envelope has a CPU side — memory-adjacent because what rations pages also rations time slices.</p>
+<p><strong>Windows: 32 priorities, boost-and-decay.</strong> [Windows 10/11] 1-15 variable class, 16-31 real-time (never boosted — a spinner there starves the mouse), 0 held by the zero-page thread. A quantum is 2 clock ticks on client SKUs (Server gets 12 — Windows Internals, 7th ed.): boosts give the foreground process's GUI threads +2 and a stretched quantum (the classic 3x <code>Win32PrioritySeparation</code>), disk I/O completion +1, decaying one step per quantum end.</p>
+<p><strong>Linux: fair queuing, by virtual time, now by deadline.</strong> CFS (2.6.23, 2007) ran the task with the least <code>vruntime</code>, weighted by nice — weight 1024 at nice 0, ~×1.25 per level, nice 19 (weight 15) earning ~1.5% of a nice-0 peer — the leftmost red-black tree node. EEVDF (6.6, late 2023) adds virtual deadlines from each task's lag, so latency-sensitive short-slice tasks run before their raw fair share.</p>
+<p><strong>macOS: QoS classes as the single dial.</strong> [XNU] <code>QOS_CLASS_USER_INTERACTIVE</code>, <code>USER_INITIATED</code>, <code>DEFAULT</code>, <code>UTILITY</code>, <code>BACKGROUND</code> map onto Mach scheduler bands — and onto Jetsam ordering: background-QoS work loses its pages to the compressor first (module 06 ch02). One knob, both resources.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>PID reuse semantics differ from "immediately" to "after wrapping the whole space":</strong> Windows hands a freed CID-table slot to the next CreateProcess; Linux wraps at pid_max (32768 vanilla, 4194304 under systemd on 64-bit) before repeating a number; macOS climbs to 99999 then wraps. Linux 5.3+ has the race-free fix: <code>pidfd_open()</code> + <code>pidfd_send_signal()</code> — the pidfd pins the struct pid, so a reused number can't redirect the kill.</li>
+<li><strong>Inheritance defaults are inverted, and so are the bug reports:</strong> POSIX leaks by default (every fd crosses fork; <code>O_CLOEXEC</code> opts out at exec — hence leaked listen sockets and hung pipe readers); Windows locks down by default (the per-handle inherit bit <em>and</em> <code>bInheritHandles</code> must both agree). Wrinkle: fd numbers survive fork unchanged; <code>DuplicateHandle</code> yields a different value.</li>
+<li><strong>Which accounting number predicts OOM, per OS:</strong> Windows — commit charge vs commit limit; death is at promise time. Linux — the global killer ranks on RSS+swap (never PSS); a cgroup OOM is <code>memory.current</code> hitting <code>memory.max</code>. macOS — phys_footprint, i.e. dirty+compressed; RSS misses everything the compressor took.</li>
+<li><strong>The kill-a-tree trick on Windows:</strong> create a job object with <code>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</code>, assign your process, spawn children, close the last handle — the tree dies: the honest analog of killing a cgroup.</li>
+<li><strong>A Windows handle-count leak is an object-refcount leak:</strong> Task Manager's "Handles" column counts <em>every</em> object-manager type (events, keys, sections), while <code>ls /proc/PID/fd | wc -l</code> counts only open-file descriptions — not comparable across platforms.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>[linux] Runs on any Linux box — fd as index:</p>
+<pre><code class="language-console">$ ls -l /proc/self/fd
+total 0
+lrwx------ 1 me me 64 Sep  1 10:11 0 -&gt; /dev/pts/2
+lrwx------ 1 me me 64 Sep  1 10:11 3 -&gt; 'pipe:[1903421]'
+lrwx------ 1 me me 64 Sep  1 10:11 4 -&gt; /proc/self/fd</code></pre>
+<p>fd 4 is the directory <code>ls</code> itself just opened — the table is visible to the process it describes. Threads are tasks:</p>
+<pre><code class="language-console">$ python3 -c 'import threading,time
+exec("[threading.Thread(target=time.sleep, args=(60,)).start() for _ in range(3)]"); time.sleep(60)' &amp;
+[1] 8821
+$ ps -L -p 8821
+  PID   LWP TTY      STAT  TIME COMMAND
+ 8821  8821 pts/2    Sl+   0:00 python3 -c ...
+ 8821  8822 pts/2    Sl+   0:00 python3 -c ...
+ 8821  8823 pts/2    Sl+   0:00 python3 -c ...
+ 8821  8824 pts/2    Sl+   0:00 python3 -c ...</code></pre>
+<p>One PID (the tgid), four LWP values — four <code>task_struct</code>s; <code>ls /proc/8821/task/</code> prints the same numbers: <code>ps</code> showed thread groups, <code>ps -L</code> the kernel's actual unit. The handle-count analog:</p>
+<pre><code class="language-console">$ ls /proc/$$/fd | wc -l
+5
+$ grep FDSize /proc/$$/status
+FDSize: 64</code></pre>
+<p><code>FDSize</code> is the fd table's capacity (a power of two).</p>
+<p>[windows] Documented from Process Explorer (Sysinternals, Windows 10/11): View → Select Columns → Process tab → <em>Handle Count</em>, then View → Lower Pane View → <em>Handles</em>, and click a process:</p>
+<pre><code class="language-text">Type       Handle  Access    Name
+File       0x4dc   0x1201f9  \Device\HarddiskVolume4\Users\me\AppData\...
+Event      0x5e0   0x1f0003  \Sessions\1\BaseNamedObjects\...
+Section    0x588   0x120089  \KnownDlls\kernel32.dll</code></pre>
+<p>Every Handle value is a multiple of 4; the Access column is the granted-access mask frozen at open (this section: read/execute/map, not write); the Type column is the object-manager type list made visible. A browser idles in the low thousands of handles; a count that only grows under a stress loop is the leak signature (CLI: <code>handle64.exe -p &lt;pid&gt;</code>).</p>
+<p>[macos] Written from macOS 14; outputs representative. <code>procinfo</code>, the libproc front-end shipping with the developer tools, prints what <code>proc_pidinfo()</code> returns:</p>
+<pre><code class="language-text">$ procinfo 531
+  pid: 531  ppid: 1  pgid: 531  uid: 501
+  session: 531  start: 39007203
+  threads: 17</code></pre>
+<p><code>ps -M -p 531</code> is the <code>ps -L</code> analog (one row per thread); <code>lsof -p 531 | wc -l</code> approximates the fd count; <code>vmmap 531 | head -3</code>'s <em>Physical footprint</em> header line is the macOS column of the accounting table (module 06 ch01 reprise).</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Kill trees with the right tool per OS.</strong> Windows: a job object with kill-on-close; Linux: kill the cgroup or process group, not a PID; macOS: launchd owns the lifecycle.</li>
+<li><strong>Put memory alerts on the predicting number</strong> — commit charge vs limit (Windows), <code>memory.current</code> vs <code>memory.max</code> (Linux containers), phys_footprint (macOS). RSS is a diagnostic, never a predictor.</li>
+<li><strong>Recognize the two inheritance bugs on sight.</strong> "Port still in use after restart" / "read never hits EOF" → missing <code>O_CLOEXEC</code>; "child can't use the parent's file" → unmarked handle or <code>bInheritHandles=FALSE</code> — one-line fixes each.</li>
+<li><strong>Never trust a stored PID.</strong> Compare process start times after OpenProcess/kill, or use Linux pidfds (5.3+).</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch03 (page tables/COW)</strong> — the address space under every diagram column; commit charge is the promise-vs-touch inversion of its demand paging.</li>
+<li><strong>Module 01 ch04 (the stack)</strong> — one stack per execution unit (ETHREAD, task_struct, Mach thread); the 16 KB per-task kernel stack is its twin.</li>
+<li><strong>Module 05 ch01/04 (Android)</strong> — zygote = CLONE_VM economics at scale, lmkd = OOM by policy on the same task_struct, cgroups as the app's envelope.</li>
+<li><strong>Module 06 ch01-02 (XNU, Jetsam)</strong> — the task/proc pair compressed here, and the footprint ladder the macOS column predicts with; ch03 supplies the port table.</li>
+<li><strong>Module 07 ch02-06</strong> — the Windows pair rides the object-manager world mapped here; the Linux pair supplies the fd-backed mappings and smaps/OOM arithmetic; ch06 folds the columns into the unified table.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><em>(concept)</em> "Linux has processes and threads, like every other OS." What single kernel structure implements both, what turns one into the other, and why does <code>ps -L</code> print the same PID in every row?</li>
+<li><em>(concept)</em> An fd and a HANDLE are both small integers standing for kernel state. Give two structural differences — what the number indexes, and what rights travel with it — and say which can be handed to another process with <em>fewer</em> rights than you hold.</li>
+<li><em>(predict the numbers)</em> Three Linux processes map the same 600 MB file, all pages resident; each holds 100 MB of private anonymous RSS, nothing swapped. Give each process's RSS, PSS, the total physical memory, and the killer's ranking number.</li>
+<li><em>(predict the failure, module 01 ch03)</em> A program calls <code>VirtualAlloc(NULL, 64 GB, MEM_COMMIT, ...)</code> on a Windows machine with 8 GB RAM and an 8 GB pagefile, never touching a page. Does the call succeed? Where does the failure occur — and what changes on Linux with default overcommit?</li>
+<li><em>(bug diagnosis)</em> A Linux server restarts nightly, but every few days fails to rebind its listening port with <code>EADDRINUSE</code> though the old process is gone. The server forks helper workers and never calls <code>fcntl</code>. Explain the leak and the one-line fix.</li>
+<li><em>(bug diagnosis)</em> A Windows parent writes <code>0x2F8</code> — one of its own valid file handles — into the child's command line; the child calls <code>ReadFile((HANDLE)0x2F8, ...)</code> and gets <code>ERROR_INVALID_HANDLE</code>. Why — and the two legitimate ways to get that file open in the child?</li>
+<li><em>(bug diagnosis)</em> A Windows monitoring script runs <code>taskkill /PID 1234</code> when a health check fails. Two weeks later it kills an unrelated process. Name the OS-specific mechanism responsible, and two mitigations that don't trust the number.</li>
+<li><em>(cross-module, module 06)</em> A macOS report shows a process with RSS 300 MB and phys_footprint 500 MB. Where are the missing ~200 MB, which kernel component put them there, and why does RSS alone never predict the kill?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The task_struct, plus a clone() flag mask.</strong> <code>fork()</code> creates a task sharing nothing; <code>pthread_create</code> one sharing CLONE_VM, CLONE_FILES, CLONE_SIGHAND, joining a thread group via CLONE_THREAD. A "process" is the thread group — one tgid — so <code>ps -L</code> prints the group's PID in every row, LWP the per-task pids. A thread is a process that shares.</li>
+<li><strong>Indexing and rights.</strong> An fd lands on a <code>struct file</code> — an open-file description with refcount, shared offset, and mode flags; it carries no permission mask, permissions checked once at open. A HANDLE is (slot&lt;&lt;2 | flags) into a process-local table whose entry holds the object pointer <em>and</em> a 32-bit granted-access mask re-checked on every use. Narrowing: Windows — <code>DuplicateHandle</code> with a smaller DesiredAccess mask; POSIX has none (SCM_RIGHTS renumbers the fd, rights unchanged).</li>
+<li><strong>RSS 700 MB each (600 shared + 100 private); PSS 300 MB each (100 + 600/3); total 900 MB</strong> — 600 shared once plus 3 × 100 private, which the PSS values sum to. The killer ranks on <strong>RSS + swap</strong> (700 each, a three-way tie); it never reads PSS — naive RSS-summing claims 2.1 GB.</li>
+<li><strong>The call itself fails.</strong> Commit limit = RAM + pagefiles = 16 GB; MEM_COMMIT charges it at promise time, untouched pages or not — <code>VirtualAlloc</code> returns NULL / <code>ERROR_COMMITMENT_LIMIT</code>: module 01 ch03's demand paging inverted into an accounting rule. On Linux the 64 GB mmap succeeds under default overcommit; the failure arrives at first touch, as the OOM killer's SIGKILL.</li>
+<li><strong>An inherited listen socket, leaked into a forked worker.</strong> Helpers forked while the listening fd was open inherit a copy — fds cross fork by default — and without FD_CLOEXEC the fd survives exec. The port stays bound because an orphan still holds the open-file description; the socket frees when the last reference drops. Fix: <code>fcntl(fd, F_SETFD, FD_CLOEXEC)</code> (or <code>accept4(..., SOCK_CLOEXEC)</code>).</li>
+<li><strong>Handle tables are per-process.</strong> <code>0x2F8</code> is a slot index in the <em>parent's</em> table; the child's has nothing (or something else) there — hence ERROR_INVALID_HANDLE, not a permission error. Routes: mark the handle inheritable and spawn with <code>bInheritHandles=TRUE</code>; or <code>DuplicateHandle</code> into the child (needs PROCESS_DUP_HANDLE), which narrows rights too. Usually best: let the child open the file by path.</li>
+<li><strong>CID-table PID reuse.</strong> Windows allocates PIDs from a handle table — multiples of 4, freed slots reusable immediately — so once the watched process exits, 1234 can belong to anyone. Mitigations: re-verify identity after <code>OpenProcess</code> (compare creation time or name) before killing; or own the lifecycle — a job object, terminated by job. Linux's analog has a real fix (pidfds, 5.3+).</li>
+<li><strong>In the memory compressor.</strong> ~200 MB of dirty pages were compressed and evacuated from RAM: gone from RSS, still counted in phys_footprint (dirty + compressed + IOKit + purgeable nonvolatile) — the number Jetsam's ladder compares against the task's highwater mark (module 06 ch02). RSS under-reports exactly under the most pressure.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 07 — Desktop OS internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

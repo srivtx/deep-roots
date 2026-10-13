@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 10 final exam — deep-roots</title>
+<meta name="description" content="Final exam for module 10 (where memory models are manufactured), with worked answers.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 10 final exam — deep-roots">
+<meta property="og:description" content="Final exam for module 10 (where memory models are manufactured), with worked answers.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 10 final exam — deep-roots">
+<meta name="twitter:description" content="Final exam for module 10 (where memory models are manufactured), with worked answers.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 10 &middot; where memory models are manufactured &middot; final exam</div>
+<h1 class="post-title">Module 10 final exam</h1>
+<div class="post-meta">every chapter &middot; worked answers behind the fold</div>
+<p>Twelve questions across all five chapters. Closed book. Every answer is worked, not stated. Scoring: 11+ = you own this module; 8-10 = solid, revisit the flagged chapters; &lt;8 = the chapter quizzes are the study path.</p>
+<p><strong>Part I — the pipeline and its passes (ch 01-02)</strong></p>
+<ol>
+<li><strong>(Concept)</strong> Six language front ends, five target architectures: compute the component count with and without a shared IR, name the two costs of the bargain, and say why Go built its own compiler anyway.</li>
+</ol>
+<ol>
+<li><strong>(Predict, cross-module 01 ch04)</strong></li>
+</ol>
+<pre><code class="language-c">    int pick(int c, int x, int y) {
+        int r;
+        if (c) r = x * 2; else r = y + 3;
+        return r + 1;
+    }</code></pre>
+<p>At <code>-O2</code> (gcc 14.2), predict: (a) how many inputs <code>r</code>'s phi has, and whether <code>c</code> gets one; (b) what mem2reg does to <code>r</code>'s storage; (c) the final code's shape, branch included; (d) the frame size, and which stage decides it.</p>
+<ol>
+<li><strong>(Diagnosis)</strong> At <code>-O2</code>, gdb reports <code>acc</code> as "value has been optimized out"; a colleague files "the optimizer deleted my variable." Name the pass, state what happened, say why <code>-O0</code> shows every local (allocator and policy), and give two recoveries short of an <code>-O0</code> rebuild.</li>
+</ol>
+<ol>
+<li><strong>(Diagnosis)</strong> Production crash:</li>
+</ol>
+<pre><code class="language-c">    int get_status(sensor *s) {
+        log_line("raw=%d", s-&gt;raw);   /* line 3: crash lands HERE */
+        if (s == NULL) return -1;     /* line 4: "we check!"      */
+        return s-&gt;raw;
+    }</code></pre>
+<p>The core faults at line 3 with no null check compiled — gcc 14.2 <code>-O2</code> emits <code>movl (%rdi), %eax; ret</code> here. Why is the check dead, why is <code>-Wall</code> silent, what restores it, and which tools catch the shape?</p>
+<ol>
+<li><strong>(Concept)</strong> Distinguish <em>may-alias</em> from <em>must-alias</em>, naming one optimization each licenses or blocks. Then unify C's <code>restrict</code> and Rust's <code>&amp;mut</code> in one sentence, including what LLVM sees on the Rust side.</li>
+</ol>
+<p><strong>Part II — register allocation (ch 03)</strong></p>
+<ol>
+<li><strong>(Predict/derive)</strong> Straight-line body:</li>
+</ol>
+<pre><code class="language-c">    long t1 = a + b;    /* 1 */
+    long t2 = b + c;    /* 2 */
+    long t3 = a - c;    /* 3 */
+    long t4 = t1 * t2;  /* 4 */
+    long t5 = t3 + t4;  /* 5 */
+    return t4 - t5;     /* 6 */</code></pre>
+<p>(a) Draw the live ranges, state the courtesy rule, build the graph. (b) Minimum k, with a coloring. (c) With k = 2 one range must spill: rank a range used twice at loop depth 2 against one used fifty times at top level — which wins, by what factor?</p>
+<ol>
+<li><strong>(Diagnosis)</strong> An image kernel ran 82 ns/pixel at <code>-O2</code>; after <code>clang -O3</code>, 94 ns/pixel, with <code>movq %rax, -48(%rsp)</code> plus a matching load inside the hot loop. What happened, and two source-level fixes? The twist: a leaf sibling at <code>-O2</code> keeps five values in stack slots yet emits no <code>subq</code> — where do they live, and why is that legal?</li>
+</ol>
+<p><strong>Part III — the compiler's GC duties (ch 04)</strong></p>
+<ol>
+<li><strong>(Predict)</strong> (a) Go — predict the <code>-gcflags='-m'</code> remark for each function, and for <code>c</code> say whose allocation the remark triggers:</li>
+</ol>
+<pre><code class="language-go">    var sink *int
+
+    func a() *int  { x := 1; return &amp;x }
+    func b(p *int) { *p = 7 }
+    func c(p *int) { sink = p }</code></pre>
+<p>(b) Java (JDK 21, 64-bit, compressed oops): a 100M-iteration loop of <code>new Point(int, int)</code>, every instance escaping — bytes allocated, and what fills each object? Same loop, no escaping store — bytes, and which compiler?</p>
+<ol>
+<li><strong>(Concept + diagnosis)</strong> (a) The card-marking barrier is emitted <em>after</em> the pointer store: what failure would marking <em>before</em> cause, what invariant does store-then-mark protect, and which barrier style runs before the store? (b) A Java 21 service stalls 650 ms; GC log: 6 ms pause, <code>Reaching safepoint: 640000000 ns</code>. What class of bug, why is the GC innocent, and why do loops poll on the backedge? (c) Its safepoint-sampled profiler calls one modest loop 90% of the program, contradicting wall clock — name the artifact and fix.</li>
+</ol>
+<p><strong>Part IV — the ABI and its taxes (ch 05)</strong></p>
+<ol>
+<li><strong>(Predict/derive)</strong> System V AMD64 — state the arrival registers for: (a) <code>f(int, double, long)</code>; (b) <code>g(struct { double d; long n; }, int)</code>; (c) a call with seven <code>long</code> arguments — where does the last land? (d) a function returning <code>struct { char name[24]; long total; }</code> (32 bytes) — how does the value come back?</li>
+</ol>
+<ol>
+<li><strong>(Cross-module 04 ch04)</strong> In a stripped Linux binary, a read-only 32-byte region reads <code>0, ptr, ptr, ptr</code>: the first <code>ptr</code> leads to a structure containing <code>"7Derived"</code>, the other two to functions, and objects of some class carry a first member equal to region address + 16. Identify the region and each slot, count the virtual functions, explain the +16, and say how <code>"7Derived"</code> survives stripping.</li>
+</ol>
+<ol>
+<li><strong>(Diagnosis)</strong> A ctypes loop calling <code>lib.add2(1, 2)</code> costs 342 ns/call; the same loop in C costs 0.6 ns, a pure-Python call ~53 ns — the boundary costs more than the interpreter. Trace where the nanoseconds go, and give the architectural fix.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<p><strong>Part I</strong></p>
+<ol>
+<li>Without a shared IR: 6 × 5 = <strong>30 complete compilers</strong>. With one: 6 front ends + 5 back ends = <strong>11 components</strong> — why Rust, Swift, and Julia sit on LLVM. Cost one: the IR is a <em>common denominator</em> — language-specific wins (Rust's aliasing, Go's escape facts) leak away. Cost two: it becomes a <em>stability contract</em>; changing it is a coordinated event. Go kept its own compiler because escape analysis needs source-level facts LLVM does not represent. (ch01)</li>
+</ol>
+<ol>
+<li>(a) One phi with <strong>two inputs</strong> — <code>r = PHI &lt;x*2, y+3&gt;</code>; <code>c</code> gets none: parameters are assigned once; SSA mints names only for assignments. (b) mem2reg promoted the alloca/load/store pattern to SSA values — <code>r</code> is a value, zero stack slots left. (c) If-conversion: both arms compute unconditionally, one <code>cmov</code> selects, the branch vanishes; <code>r + 1</code> folds into the arms. (d) <strong>Zero bytes</strong>: no spills and a leaf, so <code>pro_and_epilogue</code> emits nothing; the only frame bytes are the caller's 8-byte return address (module 01 ch04's minimal frame). (ch01)</li>
+</ol>
+<ol>
+<li><strong>Promotion, not deletion.</strong> mem2reg / SSA construction turned the local's load/store pattern into SSA values that register allocation kept in registers or folded — the value exists, but there is no <em>storage</em> to print. <code>-O0</code> shows everything because its trivial allocator (<code>regalloc=fast</code>) gives every value its own frame slot, always. Recoveries: recompile with <code>-Og</code>, or find the carrying register via <code>-fverbose-asm</code> + <code>info registers</code>. (ch01, ch03)</li>
+</ol>
+<ol>
+<li>The dereference runs first in dataflow: a null <code>s</code> at line 3 is already UB, so the optimizer assumes it never happens — <code>s</code> is provably non-null afterwards, the line-4 branch is dead under the as-if rule, collapsing the function to <code>movl (%rdi), %eax; ret</code>. <code>-Wall</code> is silent because nothing is violated (gcc 14.2.0). Fix: check before <em>any</em> dereference; in review, look for derefs lexically above null checks. clang's static analyzer and gcc <code>-fanalyzer</code> catch it. (ch02)</li>
+</ol>
+<ol>
+<li><strong>May-alias</strong> — "cannot prove they differ" — <em>blocks</em> redundant-load elimination, LICM, and vectorization, because a store through <code>q</code> might invalidate what was assumed about <code>p</code>. <strong>Must-alias</strong> — provably same object and offset — licenses store <em>forwarding</em>: the load becomes the stored value, no round-trip. Unification: <strong>Rust's borrow checker is an alias analysis that runs at compile time and cannot be wrong</strong> — <code>&amp;mut</code> lowers with LLVM's <code>noalias</code> attribute, giving the optimizer for free what C gets only where someone wrote <code>restrict</code>. (ch02)</li>
+</ol>
+<p><strong>Part II</strong></p>
+<ol>
+<li>(a) Ranges: t1 [1,4], t2 [2,4], t3 [3,5], t4 [4,6], t5 [5,6]. Courtesy rule: a value defined where another dies reuses its register — no edge. Edges: t1–t2, t1–t3, t2–t3, t3–t4, t4–t5; <em>no</em> t1–t4, t2–t4, or t3–t5 (birth line = death line).</li>
+</ol>
+<pre><code class="language-text">       t1 ---- t2
+         \    /
+          t3 ---- t4 ---- t5</code></pre>
+<p>(b) The triangle forces <strong>k = 3</strong>: t1 = R1, t2 = R2, t3 = R3; t4 takes R1 (t1 is dead), t5 takes R2. (c) Spill cost ≈ uses × frequency, loop depth weighting a level-n use as ~10ⁿ: 2 × 10² = 200 vs 50 — the loop range wins by <strong>4×</strong>. (ch03)</p>
+<ol>
+<li><code>-O3</code> unrolled the loop (clang unrolls at <code>-O3</code>; GCC needs <code>-funroll-loops</code>), raising simultaneously-live values; an accumulator's live range now spans the hot loop, lost its color, and pays store + load per iteration — ~12 ns/pixel of L1 round-trips. Fixes: tile to ~8 live accumulators, or keep that unit at <code>-O2</code>. The twist: the leaf's five slots live in the <strong>128-byte red zone</strong> below <code>rsp</code> — leaves may spill there free (5 × 8 = 40 bytes fits), so the prologue claims zero and the slots are invisible to frame walks (module 01 ch04). (ch03)</li>
+</ol>
+<p><strong>Part III</strong></p>
+<ol>
+<li>(a) <code>a</code>: <code>moved to heap: x</code>. <code>b</code>: <code>p does not escape</code> — only the pointee is written; callers may pass stack addresses. <code>c</code>: <code>leaking param: p</code> — stored into a global; the allocation triggers at the <em>call site</em>: callers heap-allocate their argument. (b) Escaping: 100M × 24 B = <strong>2,400,000,000 bytes</strong> — 8 B mark word + 4 B compressed klass + 2 × 4 B fields, rounded to 24 by alignment. No escaping store: <strong>0 bytes</strong> — C2's scalar replacement dissolved every Point into registers (escape analysis is SROA for a GC language); C1 and the interpreter still allocate: a compile-time decision, not a language guarantee. (ch04, ch02)</li>
+</ol>
+<ol>
+<li>(a) Mark first and there is a window where the card is dirty but the pointer is not yet in the object: a concurrent collector scans the card, finds no young pointer, and moves on; the store lands and the edge is forever unrecorded — the next minor GC frees a live young object. Store-then-mark enforces "card dirty ⇒ store visible". <strong>SATB</strong> runs before the store: it protects the <em>old</em> value — overwriting <code>p.f</code> can destroy the only path to an object, unrecoverable afterwards — logging it into a buffer. (b) <strong>Time-to-safepoint, not GC</strong>: 6 ms of GC work, 640 ms of waiting for one thread to reach a poll — a loop without a poll. Loops poll on the backedge because straight-line code returns in bounded time but a hot loop may not return for hours; unbounded residence holds the quorum hostage. (c) <strong>Safepoint bias</strong>: samples land where threads stop — at polls on backedges — overweighting loops; use a signal-based sampler (async-profiler). (ch04)</li>
+</ol>
+<p><strong>Part IV</strong></p>
+<ol>
+<li>(a) <code>edi</code>, <code>xmm0</code>, <code>rsi</code> — the INTEGER and SSE banks fill independently. (b) First-8-bytes classification: each 8-byte chunk separately — double → <code>xmm0</code>, long → <code>rdi</code>; then <code>int</code> → <code>rsi</code>: one argument, two banks. (c) Six longs fill <code>rdi, rsi, rdx, rcx, r8, r9</code>; the <strong>7th is the first to pay stack traffic</strong>, at <code>[rsp+8]</code> on entry, <code>rsp</code> 16-byte aligned at the call. (d) Over 16 bytes the return goes through memory: hidden destination pointer as the first argument in <code>rdi</code>; the callee writes there, returns the address in <code>rax</code>. (ch05)</li>
+</ol>
+<ol>
+<li>A <strong>vtable</strong> — <code>_ZTV7Derived</code> in <code>.data.rel.ro</code>. Slot 0: <strong>offset-to-top</strong> (0 — primary base). Slot 1: the <strong>typeinfo pointer</strong> (<code>_ZTI7Derived</code>). Slots 2-3: the <strong>two virtual functions</strong>, declaration order. The vptr is region + 16 because the <strong>address point</strong> skips the 16-byte prologue — calls index from the first slot; <code>vptr[-1]</code>/<code>vptr[-2]</code> reach the metadata: module 01 ch06's layout; module 04 ch04 recovers this object stripped. <code>"7Derived"</code> is an <code>_ZTS</code> typeinfo-name string in <code>.rodata</code> — length-prefixed data, not a symbol: stripping removes symbol names, not referenced bytes. (ch05)</li>
+</ol>
+<ol>
+<li>The FFI call is an expedition: ctypes converts each Python <code>int</code> into a C <code>int</code> and boxes the result into a fresh Python object; runtimes switch stacks and state; cgo/JNI pin or copy references against a moving GC. The cluster — <strong>marshalling copies, stack switches, pinning</strong> — dwarfs the 0.6 ns <code>call</code>. Fix: <strong>batch across the boundary</strong> — move the loop into C so one crossing does a million units of work; pass pointers, not per-call conversions. (ch05)</li>
+</ol>
+</details>
+<div class="post-footer"><p>Chapter list: <a href="index.html">Module 10</a>. Module 01 also has the <a href="../quiz.html">interactive quiz</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

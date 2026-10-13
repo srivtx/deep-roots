@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MVCC — deep-roots</title>
+<meta name="description" content="Chapter 05 of module 11: MVCC">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="MVCC — deep-roots">
+<meta property="og:description" content="Chapter 05 of module 11: MVCC">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MVCC — deep-roots">
+<meta name="twitter:description" content="Chapter 05 of module 11: MVCC">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 11 &middot; the disk is the new heap</div>
+<h1 class="post-title">MVCC</h1>
+<div class="post-meta">chapter 05 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Locks put readers and writers in one queue, and that queue is the throughput ceiling. MVCC's move: never let a reader look at the bytes a writer is changing — hand every reader a <em>snapshot</em>, a consistent cut of the database at one instant, while writers create new row versions elsewhere. A row stops being a place and becomes a <em>chain of versions</em> plus a rule for choosing one; the rule is a short list of transaction ids. That is copy-on-write (Module 01, Chapter 03) at row granularity. The cost: dead versions pile up until a collector frees them, and the collector cannot pass the oldest snapshot — vacuum is a garbage collector, long transactions its roots. Isolation levels are snapshot policy.</blockquote>
+<h2 id="locks-are-a-serialization-tax">Locks are a serialization tax</h2>
+<p>Chapter 02's latches live for microseconds per page; two-phase locking holds <em>transaction</em> locks for the transaction's whole life — correct but brutal. A 50 ms analytical scan pins shared row locks for 50 ms, so every writer to those rows queues; one uncommitted writer makes every reader wait for commit. On a 16 KB InnoDB page holding ~100 rows, one hot row's writer can block readers of 99 innocent neighbors. Drop the locks and you buy speed plus garbage: dirty reads, non-repeatable reads, phantoms, lost updates.</p>
+<p>The fix writes itself: readers and writers conflict only because they touch the <em>same physical bytes</em>. Give each write its own bytes — a new version of the row rather than an in-place mutation — and the conflict evaporates. Readers never block writers; writers never block readers (new versions stay invisible until the rules say otherwise). Only writer-vs-writer overlap remains, checked at write time, not by queuing.</p>
+<h2 id="the-snapshot-is-copy-on-write-one-scale-down">The snapshot is copy-on-write, one scale down</h2>
+<p><code>fork()</code> (Module 01, Chapter 03) solved this at page granularity: parent and child share every physical frame through PTEs marked read-only + copy-on-write; the child's write faults, the kernel copies one page, the parent never notices — what you see is decided by <em>your page table</em>, not by the frame. MVCC is the same design shrunk to rows:</p>
+<ul>
+<li>physical frame ↔ row version (index page or undo log)</li>
+<li>RO + COW PTE bits ↔ the version's header: which transaction created it</li>
+<li>write fault, page copied ↔ update writes a new version</li>
+<li>a process's page table ↔ a transaction's snapshot (<strong>read view</strong>)</li>
+<li>frame's refcount hits 0 ↔ no view reaches the version, purge frees it</li>
+</ul>
+<p>A snapshot is not a copy of the data — that would be fork's naive cost. It is the row-scale page table: a <em>ruler</em> that says which versions are yours to see. "Snapshot" is the right abstraction because it is COW's sharing rule, one level down.</p>
+<h2 id="innodb-the-version-chain-and-the-read-view">InnoDB: the version chain and the read view</h2>
+<p>InnoDB (MySQL 8.0) stores rows in the clustered index (Chapter 02); every record carries a hidden header with <code>DB_TRX_ID</code> (6 bytes, the last transaction to write this row) and <code>DB_ROLL_PTR</code> (7 bytes, a pointer into the <strong>undo log</strong>). An <code>UPDATE</code> overwrites the row <em>in place</em> in the 16 KB B-tree page — the update-in-place dynasty — after copying the old version into the undo log (Chapter 04's rollback records, re-used as history). Old versions hang backward in time via roll pointers; the newest version, committed or not, lives in the index itself.</p>
+<p>Each reader takes a <strong>read view</strong> — the visibility oracle, who was running at snapshot time: <code>low_water</code> (every id below it committed before the snapshot), <code>high_water</code> (the next id not yet assigned), <code>active[]</code> (ids running at that instant). Insiders recite the 5-step decision for a version created by transaction <code>T</code>:</p>
+<ol>
+<li><code>T &lt; low_water</code> → <strong>visible</strong> (committed before the snapshot).</li>
+<li><code>T &gt;= high_water</code> → invisible (not born yet).</li>
+<li><code>T in active[]</code> → invisible (was mid-flight).</li>
+<li>Otherwise → <strong>visible</strong> (started and finished before the snapshot).</li>
+<li>If invisible: follow <code>roll_ptr</code> to the older version; repeat from step 1.</li>
+</ol>
+<pre><code class="language-text">read view fixed at snapshot time S:
+low_water = 100    high_water = 121    active[] = { 100, 118 }
+
+  clustered-index row (B-tree leaf)            undo log (rollback segment)
++-----------------------------------+
+| bal = 500                         |
+| trx_id = 100   -&gt; INVISIBLE       |  step 3: 100 in active[] -- the writer
+| roll_ptr --------------------------+-&gt;  still running; its dirty version
++-----------------------------------+   is parked in the index itself
+              |
+              v
++-----------------------------------+
+| bal = 400                         |
+| trx_id = 118   -&gt; INVISIBLE       |  step 3: 118 in active[] -- commits,
+| roll_ptr --------------------------+-&gt;  but AFTER S; too late for this
++-----------------------------------+   snapshot
+              |
+              v
++-----------------------------------+
+| bal = 300                         |
+| trx_id = 80    -&gt; VISIBLE         |  step 1: 80 &lt; low_water. READ THIS.
+| roll_ptr -&gt; older dead versions   |  purge may reclaim nothing that this
+|             (not drawn)           |  or any older snapshot still needs.
++-----------------------------------+</code></pre>
+<p>The reader returns <code>bal = 300</code> although two newer physical versions exist — no lock taken, T100 never blocked.</p>
+<h2 id="postgresql-xmin-xmax-and-delete-is-a-write">PostgreSQL: xmin, xmax, and "delete is a write"</h2>
+<p>PostgreSQL 16 is the append-only sibling: it never updates in place. Every version is a heap tuple with a 23-byte header (before alignment and null bitmap) whose key fields are <code>t_xmin</code> (4 bytes, inserting transaction) and <code>t_xmax</code> (4 bytes, deleting transaction; 0 = alive). An <code>UPDATE</code> appends a new tuple with <code>xmin = me</code> and stamps the old tuple's <code>xmax = me</code>; the versions chain via the old tuple's <code>t_ctid</code>, and a version is visible to snapshot S exactly when its <code>xmin</code> committed before S and its <code>xmax</code> did not. A <code>DELETE</code> is <em>just the stamp</em> — a delete is a write — and the dead tuple stays in its 8 KB page until VACUUM collects it.</p>
+<p>Three structures keep this cheap. The <strong>commit log (clog)</strong> holds the verdict — 2 bits per transaction id — since <code>xmin</code> says <em>who</em> wrote, not whether it committed. The <strong>visibility map</strong> (2 bits per heap page since 9.6: all-visible, all-frozen) lets index-only scans skip the heap: only pages no live transaction can be mid-write on qualify. <strong>HOT updates</strong> attack the update tax: if no indexed column changes and the new version fits on the same page, indexes keep pointing at the old TID and the chain continues through <code>t_ctid</code> — otherwise <em>every</em> index gains an entry per update, the write-amplification behind "index bloat."</p>
+<h2 id="the-hidden-costs-purge-is-garbage-collection">The hidden costs: purge is garbage collection</h2>
+<p>Chains grow monotonically; nothing reclaims a dead version while any snapshot can still walk to it. InnoDB's purge threads (default 4 in MySQL 8.0) and PostgreSQL's autovacuum collect versions no live read view can reach. The GC mapping is exact, not poetic:</p>
+<ul>
+<li><strong>Long transactions = GC roots.</strong> The oldest active snapshot is the root boundary; everything reachable from it is pinned.</li>
+<li><strong>Vacuum/purge = the collector</strong> — mark-sweep over dead tuples in Postgres, truncation of undo history in InnoDB (<code>History list length</code> in <code>SHOW ENGINE INNODB STATUS</code>).</li>
+<li><strong>Bloat = fragmentation.</strong> Postgres cannot shrink a page in place; dead tuples leave holes, scans lengthen, heap and indexes bloat.</li>
+</ul>
+<p>The classic production incident: an abandoned psql session (an app that <code>BEGIN</code>s then idles, a stuck replication slot) keeps a 3-day-old snapshot alive; vacuum freezes at that boundary; history bloats; the disk fills; the oldest queries get slower, run longer, pin more — a death spiral. The long-transaction alarm every DBA sets:</p>
+<pre><code class="language-sql">-- PostgreSQL 16: the query that pays for itself
+SELECT pid, state, xact_start, now() - xact_start AS age
+FROM pg_stat_activity
+WHERE xact_start &lt; now() - interval '5 minutes';</code></pre>
+<h2 id="isolation-levels-are-snapshot-policy">Isolation levels are snapshot policy</h2>
+<p>Once snapshots exist, the isolation knob is <em>when the read view is taken</em>:</p>
+<div class="table-wrap"><table><thead><tr><th>level</th><th>snapshot policy</th><th>what still goes wrong</th></tr></thead><tbody><tr><td>READ COMMITTED</td><td>fresh view per <strong>statement</strong></td><td>non-repeatable read, phantom, lost update, write skew</td></tr><tr><td>REPEATABLE READ</td><td>one view per <strong>transaction</strong></td><td>write skew only</td></tr><tr><td>SERIALIZABLE</td><td>RR + conflict detection</td><td>nothing</td></tr></tbody></table></div>
+<p>Postgres defaults to READ COMMITTED, MySQL/InnoDB to REPEATABLE READ. The anomaly menu: <strong>dirty read</strong> — impossible at every level here, since in-flight versions fail the visibility rule; <strong>non-repeatable read</strong> — RC only, the per-statement view moved; <strong>phantom</strong> — RC only in Postgres, whose RR answers range queries from the frozen past, while InnoDB's RR blocks phantoms with <em>next-key locks</em> (gap locking over Chapter 02's within-page record chains), not snapshots; <strong>lost update</strong> — RR aborts the later writer; and <strong>write skew</strong> — the hole RR leaves open.</p>
+<p>Derive write skew with the on-call example (Fekete et al., SIGMOD 2005): at least one of doctors Alice and Bob must stay on call. Both leave, each in an RR transaction:</p>
+<pre><code class="language-text">T_A: BEGIN; SELECT sum(on_duty) -&gt; 2   -- "Bob is on call, I can leave"
+T_B: BEGIN; SELECT sum(on_duty) -&gt; 2   -- "Alice is on call, I can leave"
+T_A: UPDATE ... alice off; COMMIT;     -- writes row 'alice'
+T_B: UPDATE ... bob off;   COMMIT;     -- writes row 'bob'
+final: sum(on_duty) = 0                -- invariant gone</code></pre>
+<p>Each transaction <em>read</em> both rows but <em>wrote</em> a disjoint one. Snapshot isolation rejects only write-write overlap, so both commit. In any serial order the second doctor would have read <code>sum = 1</code> and stayed. RR's verdict: consistent, repeatable, wrong.</p>
+<p>PostgreSQL SERIALIZABLE (SSI, since 9.1, from Cahill's thesis) fixes this without resurrecting locks. Committed transactions plus dependencies form a directed graph: w→w, w→r, and the crucial <strong>rw-antidependency</strong> — T_A read data that T_B later wrote, the doctors' shape. A serialization order exists iff the graph is acyclic, and any cycle under snapshot isolation must contain two <em>consecutive</em> rw edges. So SSI never hunts full cycles: SIREAD locks (who-read-what, summarized in shared memory) flag <strong>dangerous structures</strong> — <code>rw → pivot → rw</code> — and one of the three aborts with "could not serialize access due to read/write dependencies among transactions." InnoDB instead reaches serializable the old way — RR plus shared locks on reads: 2PL.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The long-transaction alarm is the first thing a DBA wires up</strong>: Postgres <code>pg_stat_activity</code> on <code>idle in transaction</code> (the query above); InnoDB <code>SHOW ENGINE INNODB STATUS</code> watched for a climbing <code>History list length</code>. A forgotten transaction is a 3-day GC root.</li>
+<li><strong>Vacuum is a GC — memorize the mapping</strong>: long transactions = GC roots, dead tuples = garbage, bloat = fragmentation, autovacuum = background collector, <code>VACUUM FULL</code> = stop-the-world mark-compact.</li>
+<li><strong>RC vs RR is snapshot lifetime, and it changes locking.</strong> InnoDB READ COMMITTED builds a read view per <em>statement</em>: a transaction can see rows mid-flight, and gap locks largely vanish, cutting lock waits.</li>
+<li><strong>Write skew's canonical shape</strong> — overlapping reads, disjoint writes, both commit under RR (the on-call doctors). Every check-then-act invariant ("enough stock", "at most one owner") is a write-skew bug unless the level is SERIALIZABLE or the check reads <code>SELECT ... FOR UPDATE</code>.</li>
+<li><strong>SSI's dangerous structure is two consecutive rw-antidependencies through a pivot</strong>, not a full cycle; one of the three aborts with a 40001-class error — the app's retry loop is part of the protocol.</li>
+<li><strong>InnoDB's read-view field names are a trap</strong>: the low water mark is called <code>up_limit_id</code> and the high water mark <code>low_limit_id</code> — inverted in the source. Quote the algorithm, not the names.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>No server needed: SQLite's WAL mode hands every reader a snapshot (page-granular, not row-granular — same semantics). Outputs are real: SQLite 3.53.1 via Python 3.12.15, run on this machine. PostgreSQL 16 fragments are marked <em>documented</em> — no server here.</p>
+<p><strong>Lab 1 — freeze a snapshot, write behind its back.</strong> Two connections, WAL mode:</p>
+<pre><code class="language-python">A = sqlite3.connect("snap.db", isolation_level=None)   # we drive BEGIN/COMMIT
+B = sqlite3.connect("snap.db", isolation_level=None)
+A.execute("PRAGMA journal_mode=WAL")       # + CREATE TABLE accounts; 2 rows, bal=100
+A.execute("BEGIN")                         # deferred txn: view fixed at first read
+A.execute("SELECT sum(bal) FROM accounts")            # -&gt; 200
+# session B, twice: BEGIN; UPDATE ... SET bal = bal - 50; COMMIT
+A.execute("SELECT sum(bal) FROM accounts")            # -&gt; 200 still
+A.execute("COMMIT")
+A.execute("SELECT sum(bal) FROM accounts")            # -&gt; 100</code></pre>
+<p>The frozen 200 is REPEATABLE READ: one read view per transaction.</p>
+<p><strong>Lab 2 — write into a stale snapshot.</strong> A opens a transaction and reads; B commits an update; A tries to write:</p>
+<pre><code class="language-text">A  BEGIN; data_version = 2
+B  UPDATE t SET x=1; COMMIT;       (wal: 16512 B = 32-B header + 4 frames)
+A  UPDATE t SET x=x+10 ... -&gt; OperationalError: database is locked
+    sqlite_errorcode = 517  sqlite_errorname = SQLITE_BUSY_SNAPSHOT
+PRAGMA wal_checkpoint(PASSIVE) -&gt; (busy=0, log_pages=4, checkpointed=4)</code></pre>
+<p>SQLite refuses the upgrade rather than risk a lost update — 517, "your snapshot is stale." <code>PRAGMA data_version</code> read 2 inside A's transaction, 3 after — the frozen view, measured. The checkpoint is a mini-purge: it folds WAL frames (new page versions) back into the main file once no reader needs the old ones. VACUUM shows the GC face (4 KB pages, 2000 rows × ~2 KB):</p>
+<pre><code class="language-text">page_count after insert:        2007  freelist_count: 0
+page_count after DELETE half:   2007  freelist_count: 1001
+page_count after VACUUM:        1004  freelist_count: 0</code></pre>
+<p>DELETE freed nothing — 1001 dead pages wait for VACUUM to compact. Garbage retention, like a heap between collections.</p>
+<p><strong>Lab 3 — write skew, reproduced.</strong> The doctors as a two-counter race: table <code>oncall(doc TEXT PRIMARY KEY, on_duty INTEGER)</code>, rows <code>('alice', 1)</code> and <code>('bob', 1)</code>, invariant "at least one on duty". Read-then-write with <em>no</em> transaction:</p>
+<pre><code class="language-python"># A and B both read: SELECT sum(on_duty) FROM oncall   -&gt;  2 ("someone else is on call")
+A.execute("UPDATE oncall SET on_duty = 0 WHERE doc = 'alice'")   # autocommit
+B.execute("UPDATE oncall SET on_duty = 0 WHERE doc = 'bob'")</code></pre>
+<pre><code class="language-text">A sees sum = 2 -&gt; decides to go off duty
+B sees sum = 2 -&gt; decides to go off duty
+both UPDATEs succeed; final: [('alice', 0), ('bob', 0)] sum = 0</code></pre>
+<p>Write skew, live. Wrap the same race in <code>BEGIN</code> transactions and the second writer hits the Lab 2 wall — <code>OperationalError: database is locked (code 517)</code>, final sum 1 — SQLite refuses <em>any</em> write from a stale snapshot, stricter than Postgres. PostgreSQL 16 at REPEATABLE READ (<em>documented</em>): both commit, <code>sum = 0</code>, no error — RR permits write skew by design. At <code>SERIALIZABLE</code> one session aborts:</p>
+<pre><code class="language-text">ERROR:  could not serialize access due to read/write dependencies among transactions</code></pre>
+<p>The read view itself is inspectable in Postgres: <code>SELECT txid_current_snapshot();</code> returns <code>xmin:xmax:xip_list</code>, e.g. <code>100:104:100,102</code> — literally <code>low_water:high_water:active[]</code>.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Diagnose "disk fills and queries slow down every day"</strong>: run the long-transaction query first — one <code>idle in transaction</code> pid is usually the whole story. Kill it, watch <code>History list length</code> / bloat recover. And keep long readers off the primary: a 10-minute report is 10 minutes of uncollectable garbage.</li>
+<li><strong>Choose levels as snapshot lifetime</strong>: Postgres RC default is right for most OLTP; check-then-act invariants (inventory, quotas, on-call) need SERIALIZABLE plus a retry loop, or <code>SELECT ... FOR UPDATE</code> on the rows the check depends on.</li>
+<li><strong>Write the retry loop</strong>: snapshot conflicts surface as aborts (40001, deadlock, "database is locked") — a transaction that cannot be replayed is a design bug.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01, Chapter 03 (virtual memory / COW)</strong> — the payoff: MVCC is <code>fork()</code>'s page-table sharing at row granularity; refcount → visibility rule, PTE → version header, COW fault → new version, free frame → purged version.</li>
+<li><strong>Module 11, Chapters 01–04</strong> — versions live in the 16 KB InnoDB page and the 8 KB Postgres page (ch01); the B-tree leaf holds the current version, next-key locks ride its record chains (ch02); Postgres's append-and-collect heap is the LSM philosophy in miniature, vacuum its compaction (ch03); the undo log is ch04's undo re-used as history.</li>
+<li><strong>Module 09, Chapter 01 (happens-before)</strong> — isolation is a memory-model question: which writes must a read observe? MVCC freezes a cut of the happens-before DAG instead of ordering every access.</li>
+<li><strong>Module 08, Chapter 03 (PICTURE / fixed records)</strong> — the fixed-record world's alternative: in-place update, no versions, readers locked out — the serialization tax MVCC abolishes.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Under MVCC, a reader and a writer touch the same logical row in the same instant with no lock between them. What physical object do they <em>not</em> share, and what replaced the lock in deciding what the reader sees?</li>
+</ol>
+<ol>
+<li>A read view has <code>low_water = 100</code>, <code>high_water = 121</code>, <code>active[] = {100, 118}</code>. The chain: current row (<code>trx_id</code> 100), then undo versions <code>trx_id</code> 118 and 80. Which version does the reader return — and does the answer change if T118 commits a millisecond later?</li>
+</ol>
+<ol>
+<li>SQLite, WAL mode: A does <code>BEGIN</code> then a <code>SELECT</code>; B does <code>UPDATE ...; COMMIT;</code>; A then tries <code>UPDATE</code>. What error and extended result code does A get, and why is A not simply allowed to see B's value and overwrite it?</li>
+</ol>
+<ol>
+<li>A PostgreSQL 16 box: disk climbs though the app mostly DELETEs; <code>pg_stat_activity</code> shows one <code>idle in transaction</code> pid with a 4-day-old <code>xact_start</code>; full scans of a hot table are 3x slower. Give the mechanism chain from pid to symptom, and the fix.</li>
+</ol>
+<ol>
+<li>Two processes each run <code>x = SELECT counter; x += 1; UPDATE counter = x</code> in autocommit. After two increments the counter is 1. Name the anomaly, explain the interleaving, give two fixes.</li>
+</ol>
+<ol>
+<li>In PostgreSQL, why is it literally true that "a delete is a write" — what field change does <code>DELETE FROM t WHERE id = 7</code> perform, and why must VACUUM exist as a consequence?</li>
+</ol>
+<ol>
+<li>In <code>fork()</code> (Module 01, Chapter 03): the kernel marks PTEs read-only + COW, and the child's write faults and copies one page. Give the MVCC counterpart of (a) the frame's refcount, (b) the RO+COW PTE flag, (c) the copy-on-write fault, (d) the child's page table.</li>
+</ol>
+<ol>
+<li>The on-call race runs in PostgreSQL REPEATABLE READ: T_A and T_B both read <code>sum(on_duty) = 2</code>, each updates its own doctor's row, both commit cleanly. Final state, why was RR silent, and at SERIALIZABLE what structure does SSI flag, and who dies?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>They don't share the row's bytes.</strong> The writer creates a new version (InnoDB: overwrites the index row after pushing the old bytes to the undo log; Postgres: appends a new tuple) while the reader reads an older one. The lock is replaced by the reader's <em>read view</em> plus the visibility rule that walks versions back to one created before the snapshot.</li>
+</ol>
+<ol>
+<li><strong>The <code>trx_id</code> 80 version.</strong> Step 3 rejects 100 and 118 (both in <code>active[]</code>), step 1 accepts 80 (<code>80 &lt; low_water</code>). T118 committing later changes nothing: the view was fixed at snapshot time, and 118 stays in <code>active[]</code> for this transaction's life — that frozen list is what "repeatable" <em>means</em>.</li>
+</ol>
+<ol>
+<li><strong><code>OperationalError: database is locked</code>, extended code 517, <code>SQLITE_BUSY_SNAPSHOT</code>.</strong> Letting A see B's value would graft a dirty read onto a frozen view; letting A write without seeing B's update would lose B's update. Refusal is the cheap correct answer: roll back, re-read, retry.</li>
+</ol>
+<ol>
+<li><strong>pid → oldest snapshot → frozen collector.</strong> The idle transaction's snapshot is the boundary autovacuum cannot pass (long transaction = GC root). Every DELETE since then left a dead tuple — <code>xmax</code> stamped, bytes never freed — so garbage accumulates: heap and indexes bloat (fragmentation), scans read more pages, disk climbs. Fix: <code>pg_terminate_backend(pid)</code>, plus <code>idle_in_transaction_session_timeout</code>.</li>
+</ol>
+<ol>
+<li><strong>Lost update.</strong> A reads 0, B reads 0, A writes 1, B writes 1 — B's write clobbers A's because it comes from a stale read. Fix 1: one transaction with <code>SELECT ... FOR UPDATE</code> — the read itself takes the lock (the 2PL escape hatch). Fix 2: make the write relative — <code>UPDATE counter = counter + 1</code> — so no application read feeds the write.</li>
+</ol>
+<ol>
+<li><strong>DELETE stamps the tuple's <code>t_xmax</code> with the deleting transaction's id — a field write, the only physical change</strong> (plus the commit verdict in the clog). No bytes are freed; the tuple is dead only <em>logically</em>. VACUUM exists because the delete never removes data: dead tuples accumulate until a collector sweeps them, so in-flight snapshots can still see the "deleted" row.</li>
+</ol>
+<ol>
+<li>(a) The frame's refcount ↔ the set of read views that can still reach a version — when the last moves on, the version is purgeable. (b) The RO+COW PTE bit ↔ <code>trx_id</code>/<code>xmin</code> — "not unconditionally yours to see." (c) The COW fault and page copy ↔ the writer creating a new version, not mutating in place. (d) The child's page table ↔ the read view — the per-reader mapping deciding which version each access resolves to.</li>
+</ol>
+<ol>
+<li><strong>Final state: <code>sum = 0</code>, invariant broken.</strong> RR was silent because the transactions wrote <em>disjoint</em> rows: snapshot isolation detects only write-write overlap. At SERIALIZABLE, SSI sees the rw-antidependencies — T_A read <code>bob</code>'s row which T_B wrote, and vice versa — two consecutive rw edges through a pivot: a dangerous structure. One of the three aborts; the retry reads <code>sum = 1</code> and the doctor stays on call.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch04.html"><span class="cn-label">previous</span><span class="cn-title">Ch 04</span></a>
+<a class="next" href="index.html"><span class="cn-label">next</span><span class="cn-title">Module index</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 11 — Database storage engines</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

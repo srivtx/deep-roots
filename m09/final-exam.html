@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 09 final exam — deep-roots</title>
+<meta name="description" content="Final exam for module 09 (from MESI to consensus), with worked answers.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 09 final exam — deep-roots">
+<meta property="og:description" content="Final exam for module 09 (from MESI to consensus), with worked answers.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 09 final exam — deep-roots">
+<meta name="twitter:description" content="Final exam for module 09 (from MESI to consensus), with worked answers.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 09 &middot; from MESI to consensus &middot; final exam</div>
+<h1 class="post-title">Module 09 final exam</h1>
+<div class="post-meta">every chapter &middot; worked answers behind the fold</div>
+<p>Twelve questions, all five chapters. Closed book; the derivations are the point. Scoring: 11+ = you own it; 8-10 = solid, revisit the flagged chapters; &lt;8 = the chapter quizzes are the path.</p>
+<p><strong>Part I — happens-before and locks (chapters 01-02)</strong></p>
+<ol>
+<li><strong>Concept.</strong> State the SC-for-DRF theorem and its contrapositive: three race observations no interleaving of your source produces, and why "benign data race" is a lie.</li>
+</ol>
+<ol>
+<li><strong>Predict (module 01 ch20).</strong> Store buffering: T1 <code>x=1; r1=y</code>, T2 <code>y=1; r2=x</code>. (a) Under <code>relaxed</code>, which <code>(r1,r2)</code> are legal? (b) Under release/acquire, is <code>(0,0)</code> legal — why doesn't the pair help? (c) What forbids it, at what x86-64 cost, and what does the instruction do to the store buffer?</li>
+</ol>
+<ol>
+<li><strong>Predict (the ladder).</strong> The lab measured 4.0 ns uncontended and ~383 ns contended (2 threads, 2 cores). (a) 3 threads on those cores: what happens, which rung? (b) The three rungs, with numbers. (c) Why does TAS make oversubscription worse where MCS does not?</li>
+</ol>
+<ol>
+<li><strong>Derive (futex).</strong> A holds the lock (word = 1); B and C fail the CAS and sleep in <code>FUTEX_WAIT</code> (word = 2). (a) Trace word values and syscalls from A's <code>unlock()</code> to B holding the lock — where is C, what does B write, and why? (b) Construct the lost wakeup the kernel's re-check prevents.</li>
+</ol>
+<p><strong>Part II — lock-free and message passing (chapters 03-04)</strong></p>
+<ol>
+<li><strong>Concept.</strong> What does an RCU reader <em>not</em> do that a hazard-pointer reader must? Why does that keep read throughput flat as cores are added? Name the two writer-side bills and the third cost that shows as RSS growth in write spikes.</li>
+</ol>
+<ol>
+<li><strong>Diagnosis.</strong> A Treiber stack corrupts every few days: the core shows <code>head</code> in a chunk tcache-freed and re-served 200 ns later. Name the failure, derive the interleaving (A→B→C), and prescribe the two fixes, one per half.</li>
+</ol>
+<ol>
+<li><strong>Predict.</strong> Epoch reclamation: global 40, observed {17, 40, 40}. Retired at epochs 16 and 17 — freed or deferred? Which thread is the bottleneck, what does it pin, and what happens when it re-enters?</li>
+</ol>
+<ol>
+<li><strong>Diagnosis.</strong> A Java service OOMs at peak; the heap dump shows millions of tasks in <code>Executors.newFixedThreadPool(8)</code>'s queue. Trace the mechanism, why rejection never fires, and the replacement plus the rule for sizing its bound.</li>
+</ol>
+<ol>
+<li><strong>Concept.</strong> State the invariant that makes an ownership-transfer queue race-free by construction, and what must hold of message and send. Then derive the fork that kills "exactly-once delivery" on a lossy channel, and name the honest feature.</li>
+</ol>
+<p><strong>Part III — the network as memory (chapter 05)</strong></p>
+<ol>
+<li><strong>Predict.</strong> A is at V = [3, 0] (Lamport 3); B at V = [2, 3] (Lamport 4). What does the vector comparison decide, what do the scalars appear to say, and why is that order fake? Which module 03 tool computes the same predicate per access pair?</li>
+</ol>
+<ol>
+<li><strong>Derive.</strong> A 6-node store runs W = 4, R = 2. Compute the read-write overlap, name the anomaly, give the minimal read-side fix. Then show, on 5 nodes, why Raft's "an acked entry survives every failover" is the same pigeonhole arithmetic.</li>
+</ol>
+<ol>
+<li><strong>Diagnosis (module 11 ch05).</strong> An LWW-resolved replicated column loses ~0.1% of updates during blips — no errors, no detector trips. Give the two-write mechanism, why nothing fires, and the fix ladder. The DBA says single-node Postgres never loses these: MVCC aborts the later writer. Why can't the distributed store?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<p><strong>Part I</strong></p>
+<ol>
+<li><strong>Theorem:</strong> if all conflicting ordinary accesses are happens-before ordered (program order ∪ synchronizes-with), every execution is indistinguishable from a sequential interleaving (ch01). A race is UB, so the two stacked reorderers (compiler, CPU) may produce what no interleaving does: <strong>torn reads</strong> (a 64-bit value as two 32-bit halves of <em>different</em> writes); <strong>hoisted loads</strong> (<code>while (!stop)</code> on a plain <code>bool</code> becomes one load — spin forever at <code>-O2</code>); <strong>invented stores</strong> (<code>if (flag) x=2; else x=1;</code> legally becomes <code>x=2; if (!flag) x=1;</code>, so <code>x==2</code> appears with <code>flag==0</code>). "Benign" fails: a racy read is still one the compiler may hoist, cache, or transform; UB does not grade on intent (ch01 §4).</li>
+</ol>
+<ol>
+<li>(a) <strong>All four, <code>(0,0)</code> included</strong>: each core's store parks in its store buffer while its own next load (different address) passes it: TSO's one hole (module 01 ch20). (b) <strong>Yes.</strong> The edge materializes only when the acquire load <em>reads the value the release store wrote</em> (read-from condition, ch01); in <code>(0,0)</code> both loads read the initial 0 — no edge either way. (c) <strong><code>seq_cst</code></strong>: one total order S; whichever store is first in S, the other load follows its own store, hence the first, and reads 1. On x86-64 release/acquire are plain <code>mov</code>; the seq_cst store is a locked <code>xchg</code>, ~10–20 ns, stalling the core until its store buffer drains — <code>mfence</code> semantics at the MESI level (module 01 ch20).</li>
+</ol>
+<ol>
+<li>(a) <strong>Worse — toward 1–10 µs per op</strong>: one thread is always descheduled, eventually a lock <em>holder</em> mid-critical-section; waiters block in <code>FUTEX_WAIT</code> until its timeslice returns: the context-switch cliff (ch02). (b) Rung one: a locked op on a locally-owned line, ~5–20 ns. Rung two: the lock word's line ping-pongs between cores, ~40–100 ns per transfer; the ~383 ns adds a WAIT/WAKE pair (fair handoffs sleep). Rung three: syscall plus context switch, 1–10 µs. (c) TAS spinners hammer the lock word, each locked op an RFO invalidating the line (~100 ns per bounce); the preempted holder fights the storm even to release, and a full core burns atomics while the only progress-capable thread sleeps. MCS waiters spin on private flag lines; release is one store to the successor: O(1), no storm (ch02).</li>
+</ol>
+<ol>
+<li>(a) A's unlock atomically exchanges 2 → 0, sees old 2, and issues <code>FUTEX_WAKE(word, 1)</code>: one syscall, waking exactly B; <strong>C stays asleep</strong>. B retries; CAS 0 → 1 succeeds, but C is still queued so B <strong>writes 2, not 1</strong> — the waiters hint must survive, or B's own unlock (old == 1) would skip the WAKE and C sleeps forever. B's unlock sees old 2, wakes C (ch02). (b) Without the re-check: B reads 2 and decides to sleep; A's unlock lands between B's check and B's enqueue — the WAKE finds nobody, then B sleeps on a word now 0: a wakeup lost forever, a cycle-free deadlock. The re-check inside the enqueue makes check-and-sleep atomic; mismatch returns <code>EAGAIN</code> (ch02).</li>
+</ol>
+<p><strong>Part II</strong></p>
+<ol>
+<li>The hazard reader must <strong>publish</strong> — a store into a shared per-thread slot plus a validation re-read. The RCU reader publishes nothing: <code>rcu_read_lock</code> is no atomic, no barrier, so readers touch no shared writable line, generate no coherence traffic, cannot invalidate each other: read throughput flat in core count, the only zero-reader-cost scheme (ch03). Writers pay the ms-scale grace period (<code>synchronize_rcu</code> ~25–60 ms) and a copy per update. The third cost is memory: retired versions live until their grace period completes (pinned bytes = write rate × grace period) — RSS growth during write spikes; it drains when quiet, not a leak (ch03).</li>
+</ol>
+<ol>
+<li><strong>ABA, the allocator-reuse flavor</strong> (ch03). T1 reads <code>h = A</code>, <code>n = B</code>, stalls. T2 pops A (CAS A→B, free A), pops B (CAS B→C, free B), then pushes N4 at A's address (free lists are LIFO per size class: tcache, module 01 ch19). T1's <code>CAS(head, A, B)</code> <strong>succeeds</strong>: the guard compares addresses, N4 <em>is</em> at A's address, and the retired B becomes head — <code>B-&gt;next</code> arbitrary, C unreachable, B's payload returns twice. Fixes, one per half: <strong>identity</strong>, a tagged pointer (48-bit pointer + 16-bit generation) so a returning address fails the guard; <strong>lifetime</strong>, hazard pointers, epochs, or RCU, so a node a reader might dereference cannot be freed. The tag guards the CAS; the scheme guards the <code>h-&gt;next</code> read (ch03).</li>
+</ol>
+<ol>
+<li>Epoch 16: <strong>freed</strong> — min(observed) = 17 &gt; 16, so every thread entered a later read section; no live reader started before it. Epoch 17: <strong>deferred</strong> — the comparison is strict, and thread 1 sits <em>at</em> 17, a reader that may still hold the node. Thread 1 is the bottleneck: one parked thread pins the whole epoch-17 retire set; reclamation waits on the minimum, always (ch03). When it re-enters it publishes the current global (40), min_observed jumps, and everything retired at epoch ≤ 39 frees at once.</li>
+</ol>
+<ol>
+<li><strong>Overload converted into memory.</strong> A slow-consumer event makes arrivals exceed service; <code>newFixedThreadPool</code>'s queue is an unbounded <code>LinkedBlockingQueue</code> (capacity <code>Integer.MAX_VALUE</code>) — nobody can say no, and the queue grows until the OOM: a load problem converted into memory (ch04). Rejection never fires: an unbounded queue's <code>offer</code> always succeeds, so the handler is never reachable. Replacement: <code>ThreadPoolExecutor</code> with a bounded <code>BlockingQueue</code> plus an explicit overflow handler (abort / caller-runs / discard). Sizing: Little's law — capacity = arrival rate × tolerable wait; 2,000 tasks/s at 100 ms is 200 slots; "a million, to be safe" is a million of latency plus a slower OOM (ch04).</li>
+</ol>
+<ol>
+<li><strong>Invariant: exactly one owner per datum at every instant</strong> — before the send only the producer can reach the message, after the receive only the consumer (ch04). It holds when the message has no sender-reachable aliases (Erlang: copy plus immutability; Rust: moves, module 01 ch10; a sent Go pointer re-creates sharing) and the send manufactures the send→receive synchronizes-with edge, so the receiver sees every pre-send write (ch01). The fork: delivery's only proof is a reply on the <em>same lossy channel</em>. Ack arrives: one delivery. Ack lost: "delivered, ack lost" is indistinguishable from "never delivered" — retry risks a duplicate, not retrying loses it. No third option (two-generals). The honest feature is <strong>exactly-once effect</strong>: at-least-once plus receiving-side dedup plus idempotent handlers — Kafka's "exactly-once" exactly (ch04).</li>
+</ol>
+<p><strong>Part III</strong></p>
+<ol>
+<li><strong>Concurrent.</strong> Neither vector dominates (A's slot 0 is 3 &gt; 2, slot 1 is 0 &lt; 3), so no causal order either way (ch05). The scalars print 3 &lt; 4, which <em>looks</em> happened-before; but Lamport clocks guarantee only a → b ⟹ L(a) &lt; L(b), never the converse — the scalar collapses "caused" with "later-numbered," manufacturing an order that doesn't exist. The vector predicate (neither A ≤ B nor B ≤ A) is the race predicate TSan computes per access pair (module 03 ch05). The price: O(N) — N slots per event and message, 8 bytes each (ch05).</li>
+</ol>
+<ol>
+<li><strong>Overlap = R + W − N = 2 + 4 − 6 = 0</strong>: a read quorum of 2 can sit exactly in the 2 nodes the write's 4 never touched — <strong>stale reads after completed writes are legal</strong> (ch05). Minimal read-side fix: R = 3 → overlap 3 + 4 − 6 = 1, at one extra node per read: PACELC's "else," priced. Raft on 5 nodes: a majority is 3; any two majorities overlap 3 + 3 − 5 = 1 — the same pigeonhole. An acked entry lives on a majority; the winner took a majority of up-to-date voters, the majorities intersect, and log matching forces the new leader's log to match that voter's prefix — every future leader carries every acked entry (ch05 §4).</li>
+</ol>
+<ol>
+<li><strong>Two writes, one clock behind.</strong> Two clients write the same key simultaneously; the newer value is stamped by a node whose clock lags (NTP drift: ~1–10 ms on a healthy LAN, hundreds for cloud outliers). LWW resolves to the <em>later timestamp</em> — the older value's stamp — and silently discards the newer write as a normal update: no error, no detector, data gone forever — LWW doesn't delay data, it eats it (Jepsen's Cassandra verdicts) (ch05). Fix ladder: client timestamps → version vectors (detect the concurrency, don't fake an order) → commuting CRDTs. The MVCC contrast (module 11 ch05): Postgres keeps both row versions, and one serialization authority (snapshot rules plus the commit-time conflict check) decides; the later writer aborts, nothing lost. The distributed store has no such point: disjoint quorums commit both, nobody left to abort. The decision must live in the merge — commutative by design (a CRDT: any reorder converges) or lossy (LWW: one survives).</li>
+</ol>
+</details>
+<div class="post-footer"><p>Chapter list: <a href="index.html">Module 09</a>. Module 01 also has the <a href="../quiz.html">interactive quiz</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

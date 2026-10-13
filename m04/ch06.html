@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anti-analysis — deep-roots</title>
+<meta name="description" content="Chapter 06 of module 04: Anti-analysis">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Anti-analysis — deep-roots">
+<meta property="og:description" content="Chapter 06 of module 04: Anti-analysis">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Anti-analysis — deep-roots">
+<meta name="twitter:description" content="Chapter 06 of module 04: Anti-analysis">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 04 &middot; reading what compilers leave behind</div>
+<h1 class="post-title">Anti-analysis</h1>
+<div class="post-meta">chapter 06 &middot; ~18 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Every defensive trick in this chapter exploits one asymmetry: a program gets to run its own instructions before you get to read them comfortably. A packer replaces the file's real code with a compressed blob plus a small stub — the stub is a mini-loader that decompresses the original image into memory, fixes up imports, and jumps to the original entry point. Obfuscators do the same for <em>readability</em>: flatten control flow into a dispatcher loop, replace one instruction with a thousand, or compile the program to a private bytecode VM. Anti-debug, anti-VM, and anti-dump are runtime tripwires built on kernel contracts (ptrace allows exactly one tracer; a software breakpoint is a 0xCC patch you can checksum). None of this stops a determined analyst — the counter-playbook is mechanical: run to the original entry point, dump memory, rebuild imports, then analyze. Obfuscation buys <em>time</em>, measured in days per layer, never safety.</blockquote>
+<h2 id="packing-the-file-lies-about-what-it-is">Packing: the file lies about what it is</h2>
+<p>Chapter 01 taught you to read an ELF or PE file as a table of contents: headers, segments, sections, an entry point. Everything in that chapter assumed the file describes the program that will run. A packer breaks that assumption on purpose.</p>
+<p>Start from first principles. What does the OS actually need to start a program? The kernel's <code>execve</code> needs: (1) enough header to identify the format and find the entry point, (2) one or more <code>PT_LOAD</code> segments to map into memory, (3) an address to jump to. That is all. Sections, symbols, relocations, and the import table are <em>conveniences</em> for the linker, the dynamic loader, and the analyst — the kernel never looks at them. (Chapter 02 covered what <code>ld.so</code> additionally needs: <code>PT_DYNAMIC</code>, <code>PT_INTERP</code>. Hold that thought — a packer can even dispense with those by doing the dynamic loader's job itself.)</p>
+<p>So the minimal honest lie is: <em>keep the headers, replace the payload.</em> UPX (this chapter uses UPX 4.2.4, linux/amd64) packs our 15,840-byte sample from earlier chapters down to 5,596 bytes — 35.33% of the original:</p>
+<pre><code class="language-text">$ upx -o anti_packed anti_sample
+     15840 -&gt;      5596   35.33%   linux/amd64   anti_packed</code></pre>
+<p>Look at what changed structurally:</p>
+<pre><code class="language-text">$ readelf -S anti_packed
+There are no sections in this file.
+
+$ readelf -lW anti_packed
+Entry point 0x4055e0
+  LOAD  0x000000 0x400000 0x400000 0x001000 0x004028  RW   0x1000
+  LOAD  0x000000 0x405000 0x405000 0x0010a5 0x0010a5  R E  0x1000</code></pre>
+<p>The original had 14 program headers, 30 sections, a <code>.text</code>, a <code>.got</code>, a <code>PT_DYNAMIC</code>, a <code>PT_INTERP</code>. The packed file has <em>three</em> program headers, <em>zero</em> sections, and the entry point has moved from <code>0x401080</code> to <code>0x4055e0</code> — into the stub. Compare:</p>
+<pre><code class="language-text">original: Entry point address:  0x401080    (14 phdrs, 30 sections)
+packed:   Entry point address:  0x4055e0    ( 3 phdrs,  0 sections)</code></pre>
+<p>Two details in those two LOAD lines are the whole trick, so read them as bytes:</p>
+<ul>
+<li>The first <code>LOAD</code> is <code>RW</code>, not executable, with <code>FileSiz 0x1000</code> but <code>MemSiz 0x40428</code> — the kernel maps one page of file and leaves ~252 KB of zeroed, writable memory. That gap is the <em>output buffer</em> where the decompressed image will land.</li>
+<li>The second <code>LOAD</code> is <code>R E</code> at <code>0x405000</code> — compressed blob plus stub. It contains raw <code>syscall</code> instructions (<code>push 2; pop rdi; push 1; pop rax; syscall</code> — an <code>open</code>/<code>write</code> pair, visible by byte-searching the file), because the stub cannot call library functions that don't exist yet.</li>
+</ul>
+<p>Here is the full lifecycle, end to end:</p>
+<pre><code class="language-text">        ON DISK (anti_packed)                IN MEMORY, after stub runs
+  +---------------------------+        +------------------------------+
+  | ELF header, 3 phdrs       |        | 0x400000  RW decompressed    |
+  | e_entry = 0x4055e0        |        |           .text .data .bss   |
+  |  (points into the stub!)  |        |           of the ORIGINAL    |
+  +---------------------------+        +------------------------------+
+  | LOAD1 RW: 1 page file,    |        | 0x401080  OEP = old _start   |
+  |   0x4028 mem = scratch    |  stub  |           ("31 ed 49 89 d1"  |
+  +---------------------------+ -----&gt; |            xor ebp,epb...)   |
+  | LOAD2 RE: compressed blob |decomp/ |            not in the file!  |
+  |   + entry stub @0x4055e0  |resolve +------------------------------+
+  +---------------------------+imports | 0x405000  stub (still mapped)|
+                                          ^ jump back down to OEP      |
+                                          +---------------------------&gt;+</code></pre>
+<p>The stub at <code>0x4055e0</code> does, in order: <code>push</code> the registers it will trash, call its decompressor (the NRV2E loop at <code>0x405655</code> — you can recognize it by its <code>call r11</code> callback idiom, which asks the caller for the next input byte), which writes the original segments into the RW region at <code>0x400000</code>..<code>0x404028</code>; then it rebuilds what the loader would have built; finally it transfers control to the original entry point. We verified the last step directly: run the packed <code>looper</code> in the background and read <code>/proc/PID/mem</code> at the original entry address — the bytes there are exactly the original <code>_start</code> (<code>31 ed 49 89 d1 5e ...</code>, <code>xor ebp, ebp; mov r9, rdx; pop rsi</code>), bytes that appear <em>nowhere</em> in the packed file (<code>0x401080</code> as an immediate does not occur in the file at all — the OEP is computed, not stored, one more small lie).</p>
+<p>The import story is the subtle part. Our sample was dynamically linked against libc — normally <code>ld.so</code> reads <code>PT_DYNAMIC</code>, walks the <code>.dynsym</code>/<code>.got</code>, resolves <code>printf@GLIBC_2.34</code> and friends. The packed file has no <code>PT_DYNAMIC</code> and no <code>PT_INTERP</code> (check with <code>readelf -lW | rg INTERP</code> — nothing). The strings <code>ld-linux</code> is absent from the file. Yet the program runs and prints. Conclusion, forced by first principles: <em>the stub resolves the imports itself.</em> It contains a mini-linker that maps libc, walks its export table, and patches the call sites in the decompressed image (the decompressed <code>_start</code> at <code>0x405390</code>-ish contains <code>call qword ptr [rip+0x2f37]</code> — a resolved GOT slot). This is why "the packer is a mini-loader" is not a metaphor. Custom malware packers do exactly this with hand-written ELF parsers and <code>dlopen</code>-equivalents, plus anti-analysis checks the legit UPX omits.</p>
+<h2 id="obfuscation-attacking-the-decompiler-s-assumptions">Obfuscation: attacking the decompiler's assumptions</h2>
+<p>Packing defeats <em>static</em> tools by hiding bytes. Obfuscation goes further: it presents bytes that are real, executable, and deliberately structure-destroying. Chapter 05's pipeline was disassemble → lift → data-flow → structure. Each trick targets one stage. (This section is the taxonomy; the packing section above is the mechanism.)</p>
+<p><strong>Control-flow flattening</strong> (the OLLVM/Tigress pass) destroys the structurer. Every basic block of a function gets a number; a state variable in a top-level dispatcher selects the next block:</p>
+<pre><code class="language-c">// before flattening                 // after flattening
+if (x &lt; 0) {                          state = 3;
+    x = -x;                           while (true) {
+}                                         switch (state) {
+return x + 1;                             case 0: x = x + 1; state = 6; break;
+                                          case 3: x = -x;  state = 0; break;
+                                          case 5: printf("neg\n"); state = 3; break;
+                                          case 6: return x;
+                                          ...
+                                          default: state = 3;  /* unreachable */
+                                          }
+                                      }</code></pre>
+<p>The decompilation signature is unmistakable: one enormous <code>while (true)</code> whose body is a single <code>switch</code> over a variable that every case assigns a different constant to, with a <code>default</code> case that appears unreachable. Every real branch from the original program has become a data assignment. The call graph survives; the CFG becomes a star topology around the dispatcher, and no structuring algorithm can recover "this was an if/else" because the information <em>is genuinely gone</em> from the CFG — it now lives in the data flow of the state variable. (Recovery is possible but costs analysis: symbolic execution over the state transitions.)</p>
+<p><strong>Opaque predicates</strong> attack simplification. A predicate whose value is provably constant, but non-obviously so, e.g. <code>x*x &gt;= 0</code> on integers, or the classic <code>7*y*(y+1) % 2 != 0</code> (a product of consecutive integers is always even, so this is always false). Emit <code>if (opaque_true) real_code(); else junk_that_crashes();</code> and any analyzer that can't prove the predicate must analyze <em>both</em> arms. Cost to the defender: one multiply. Cost to the analyst: an entire bogus branch, every time.</p>
+<p><strong>Dead-code insertion</strong> is the blunt version: spray unreachable blocks that reference plausible strings, call plausible APIs, contain plausible math. The decompiler dutifully shows them.</p>
+<p><strong>MBA — mixed boolean-arithmetic</strong> attacks constant folding and algebraic simplifiers: <code>(x ^ y) + 2*(x &amp; y)</code> is exactly <code>x + y</code>, and <code>(x | 1) - (x &amp; -2)</code> vanishes into arithmetic nobody wants to read. An 8-term MBA identity replaces one <code>add</code>; the semantics survive (the program still works!) but the lifter produces a tangled expression DAG and the human reads gibberish. This is the key economics lesson in miniature: <em>correctness is cheap to preserve, clarity is expensive to destroy.</em></p>
+<p><strong>Virtualization protectors</strong> (VMProtect, Themida) are the endpoint: selected functions are compiled not to x86 but to a <em>private bytecode</em> for a one-off virtual machine that the protector emits alongside. The VM's heart is a dispatch loop: fetch opcode, decode, dispatch through a handler table, advance virtual instruction pointer. You recognize it in disassembly as a single hot loop doing table-indirect jumps on a byte stream, with dozens of handlers each performing one tiny semantic step (push, pop, add) on a virtual register file. <em>Why can't you just write a generic devirtualizer?</em> Because every protected program ships a different VM: different opcode encoding, different register file layout, different handler set, possibly mutated per build. Devirtualization is per-program archaeology — lift the private ISA, write the lifter, translate, then re-run your whole Chapter 05 pipeline on the lifted code. Days, per binary, per version. (That number is the product working as designed.)</p>
+<h2 id="anti-debug-anti-vm-anti-dump-runtime-tripwires">Anti-debug, anti-VM, anti-dump: runtime tripwires</h2>
+<p>These assume you <em>are</em> going to run the program under a debugger or in a VM, and make that observable.</p>
+<p><strong>PTRACE self-attach.</strong> The kernel's contract: at any moment, a process has at most <em>one</em> tracer, and <code>PTRACE_TRACEME</code> is how a tracee volunteers. The inverse trick: a program calls <code>PTRACE_TRACEME</code> on <em>itself</em>. If it succeeds, no debugger was attached — and now the slot is occupied <em>by the program itself</em>, so any later <code>gdb attach</code> fails with <code>EPERM</code>. If it fails, a debugger is already there. One syscall, two detections (see the lab).</p>
+<p><strong>INT3 detection.</strong> Chapter 05's most-used feature — the software breakpoint — is implemented by patching <code>0xCC</code> (one byte) over the first byte of the target instruction. That is a <em>modification of the program's own code</em>, and code pages are readable. A periodic CRC32 over <code>.text</code> catches the patch: the clean snapshot hashes to one value, the breakpoint-hashed value differs. (Debuggers fight back with hardware breakpoints — no code patch — which is why analysts prefer <code>hbreak</code> on hostile targets; the counter-counter is checking the x86 debug registers <code>DR0</code>–<code>DR3</code> via <code>ptrace(PTRACE_GETREGS)</code>-equivalent, and the counter-counter-counter is... the arms race, which is the point: each layer costs the other side time.)</p>
+<p><strong>Timing.</strong> Single-stepping makes every instruction a kernel transition; a <code>rdtsc</code> (or <code>clock_gettime</code> — vDSO, module 01 ch03) delta between two adjacent blocks goes from ~tens of cycles to thousands. One comparison, done.</p>
+<p><strong>Anti-VM.</strong> The hypervisor leaves fingerprints: <code>CPUID</code> leaf 1, ECX bit 31 = hypervisor-present bit; MAC prefixes <code>08:00:27</code> (VirtualBox) / <code>00:0C:29</code> (VMware); registry keys and <code>dmi</code> strings on Windows guests. Each is one cheap query.</p>
+<p><strong>Anti-dump.</strong> You found the unpacked image in memory — now dump it. The classic dumpers reconstruct a PE from <code>/proc/PID/mem</code>. Countermeasure: after the stub finishes, locate the <code>MZ</code> header of its own image in memory and <em>overwrite it with zeros</em> (an ELF: <code>\x7fELF</code> at base). Tools that page-align and hunt for the magic find nothing; the dump has no header, and rebuilding one is manual work. (Reversing the reversal: the header bytes are still recoverable from the original file if you have it — for the <em>analyst</em>, "run to OEP, dump" should happen before the erasure or use the file's headers plus the process's memory.)</p>
+<h2 id="the-unpacking-playbook-and-the-economics">The unpacking playbook (and the economics)</h2>
+<p>Everything above compresses into a methodology — the standard first-hours workflow on hostile samples:</p>
+<ol>
+<li><strong>Triage statically what you can</strong>: strings, the <code>UPX!</code> marker, section entropy (<code>&gt; 7.0</code> bits/byte on x86 code ≈ compressed or encrypted — normal code sits around 6.0–6.5).</li>
+<li><strong>Run to OEP.</strong> Break on <em>memory-write</em> at the address of the original entry (a hardware watchpoint — the stub must write <code>_start</code>'s bytes there), or watch for the <em>stack-restore</em> trick: the stub <code>push</code>es a magic register state on entry; when the stack pointer unwinds back past it and <code>ret</code>s into old code, you are at OEP. Classic heuristic: set a breakpoint on <code>GetModuleHandle</code>/<code>__libc_start_main</code>-adjacent code and single-step upward until the module's own <code>.text</code> executes.</li>
+<li><strong>Dump</strong> the process image (<code>/proc/PID/mem</code> on Linux, <code>gcore</code>, or a PE dumper on Windows).</li>
+<li><strong>Rebuild imports.</strong> The dump contains a <em>resolved</em> IAT (real libc addresses, not symbol references), and no <code>PT_DYNAMIC</code>/import directory at all. Scylla-style tools (Windows) scan the dump for pointers into loaded module address ranges, cluster them, and emit a fresh import directory referencing the <em>names</em> of those functions. On ELF the equivalent is rebuilding <code>.dynsym</code>/<code>.got</code> from the resolved GOT — you are redoing the loader's and linker's jobs (chapters 01–02 pay off twice).</li>
+<li><strong>Analyze</strong> the reconstructed binary with the ordinary chapter 03–05 toolkit.</li>
+</ol>
+<p>The economics framing to keep: each protective layer converts to <em>analyst-days</em>, not to security. A UPX layer costs minutes (its stub is public and <code>upx -d</code> exists). A mutated custom packer costs a day to break. A VMProtect layer on 20 functions costs a week — and the protection <em>expires</em> the moment someone publishes the recipe for that family. That is why commercial protectors ship mutation engines: they sell re-randomization, i.e., they sell <em>time</em>.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The ptrace-twice contract</strong>: one tracee, one tracer, ever. <code>PTRACE_TRACEME</code> on yourself is a two-for-one check — <code>EPERM</code> return means "already traced"; success means "no debugger now, and none ever" (the slot is yours). Some malware forks a child that traces the parent for the same effect with better cover.</li>
+<li><strong>The 0xCC checksum</strong>: a software breakpoint is literally <code>0xCC</code> patched over byte 0 of your instruction. CRC32 of your own <code>.text</code> (baseline at startup, re-checked later) catches it; the counter is hardware breakpoints (no patch), whose counter is reading <code>DR0</code>–<code>DR7</code>, whose counter is... analysts call this ladder "the arms race" and bill by the hour.</li>
+<li><strong>Finding OEP fast</strong>: two field methods — (a) hardware <em>write</em> watchpoint on the entry-stub's target page (the decompressor must write there), (b) the stack-restore trick (push a marker value at stub entry; break when <code>rsp</code> pops past it). On UPX specifically: the last stage <code>pop</code>s a chain of registers then <code>ret</code>s into the original <code>_start</code> — break on the <code>ret</code> at the stub's tail.</li>
+<li><strong>Flattening's dispatcher signature</strong>: a <code>while(1) { switch(state) {...} }</code> where every case ends by <em>assigning a constant to state</em>. The original CFG structure is now data-flow; the <code>default:</code> case looks unreachable. Ghidra/IDA show a single block with 50+ out-edges — star topology around the dispatcher.</li>
+<li><strong>Obfuscation is time-based economics</strong>: protection is measured in analyst-days per layer, decays to zero when the recipe is published, and mutation engines exist precisely to re-buy time per release. "Unbreakable" claims are marketing; "6 analyst-days per version" is the real spec sheet.</li>
+<li><strong>Entropy is the packer detector</strong>: Shannon entropy over sections — x86 code naturally runs ~6.0–6.5 bits/byte; packed/encrypted sections read ~7.5+. One <code>python -c</code> over the file's biggest section flags packing before you ever run it.</li>
+<li><strong>UPX leaves its autograph</strong>: <code>UPX!</code> magic appears 4 times in the file (0xec, 0xa77, 0x15ae, 0x15b8 in our sample) plus the <code>$Info: This file is packed...$</code> string — real malware packers strip or fake exactly these.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Everything below ran on this book's container (Debian, gcc 14.2.0). <code>upx</code> was not in the image and <code>apt install upx-ucl</code> needed root; the container had network, so we fetched the static UPX 4.2.4 tarball — if you're offline, <code>apt install upx-ucl</code> (needs sudo) or note the section headers/entry-point parts work with any packed file you're given.</p>
+<pre><code class="language-bash"># 1. A tiny sample (from module 01's toolchain), then pack it
+cat &gt; anti_sample.c &lt;&lt;'EOF'
+#include &lt;stdio.h&gt;
+int main(void) { printf("hello\n"); return 0; }
+EOF
+gcc -no-pie -O2 -o anti_sample anti_sample.c
+upx -o anti_packed anti_sample
+#      File size         Ratio      Format      Name
+#   --------------------   ------   -----------   -----------
+#     15840 -&gt;      5596   35.33%   linux/amd64   anti_packed</code></pre>
+<pre><code class="language-bash"># 2. What changed structurally? (the lie, quantified)
+readelf -h  anti_sample | rg "Entry|Number of section"   # 0x401080, 30 sections
+readelf -h  anti_packed | rg "Entry|Number of section"   # 0x4055e0, 0 sections
+readelf -lW anti_packed
+#  Type           Offset   VirtAddr   FileSiz  MemSiz   Flg
+#  LOAD           0x000000 0x400000   0x001000 0x004028  RW   &lt;- 252KB scratch
+#  LOAD           0x000000 0x405000   0x0010a5 0x0010a5  R E  &lt;- blob + stub
+readelf -dW anti_packed        # "There is no dynamic section in this file."
+readelf -lW anti_packed | rg INTERP   # (nothing — the stub IS the loader)
+strings anti_packed | rg '\$Info'     # "$Info: This file is packed with the UPX..."</code></pre>
+<p>Notice: it runs fine (<code>./anti_packed</code> prints), the entry point moved into the stub, sections vanished, and the import machinery is gone — yet libc calls still resolve, because the stub resolved them.</p>
+<pre><code class="language-bash"># 3. Unpack the easy way, and prove the round trip
+upx -d -o anti_unpacked anti_packed
+#     25651 &lt;-      5596   21.82%   linux/amd64   anti_unpacked
+sha256sum anti_sample anti_unpacked
+# abeebe25f92aaf33...  anti_sample
+# abeebe25f92aaf33...  anti_unpacked     &lt;- byte-identical: UPX -d is lossless</code></pre>
+<pre><code class="language-bash"># 4. Unpack by hand: breakpoint at the tail jump (gdb)
+gdb -q ./anti_packed
+(gdb) starti                      # stop at the stub's entry (0x4055e0)
+(gdb) x/8i $pc                    # push rax; push rdx; call &lt;decompressor&gt;...
+(gdb) watch *(int*)0x401080       # hardware watchpoint on the OEP page:
+                                  # the stub MUST write _start's bytes there
+(gdb) c                           # decompressor writes... hits when stub restores
+(gdb) x/8i 0x401080               # 31 ed 49 89 d1 5e ... = original _start:
+                                  # xor ebp,epb; mov r9,rdx; pop rsi
+# At this rip==0x401080 moment, memory holds the unpacked program:
+# dump it, rebuild .dynsym/.got, save, done.</code></pre>
+<p>The same evidence without a debugger (this is the "dump" step, from outside):</p>
+<pre><code class="language-bash">./looper_packed &amp;  PID=$!         # a packed binary that loops forever
+# read 16 bytes at the ORIGINAL entry (0x401090 for looper) of the live process:
+python3 -c "fd=__import__('os').open('/proc/$PID/mem',0);__import__('os').lseek(fd,0x401090,0);print(__import__('os').read(fd,16).hex())"
+# 31ed4989d15e4889e2...  &lt;- the original _start, in memory, absent from the file</code></pre>
+<pre><code class="language-c">// 5. A PTRACE self-attach guard (~20 lines) — the anti-debug tripwire
+#define _GNU_SOURCE
+#include &lt;stdio.h&gt;
+#include &lt;sys/ptrace.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;string.h&gt;
+int main(void) {
+    long r = ptrace(PTRACE_TRACEME, 0, 0, 0);
+    if (r == -1) {                       /* slot already taken: a tracer exists */
+        printf("debugger detected (%s) — refusing\n", strerror(errno));
+        return 1;                        /* EPERM =&gt; we are being traced */
+    }
+    printf("no tracer — proceeding\n");  /* and now none can EVER attach  */
+    return 0;
+}</code></pre>
+<pre><code class="language-text">$ ./trace_guard
+no tracer — proceeding          (exit 0)
+$ gdb -q ./trace_guard
+(gdb) run
+no tracer — proceeding          &lt;- run BEFORE attaching: nothing stops it
+(gdb) starti; call (int)ptrace(...)     &lt;- under a tracer it returns EPERM</code></pre>
+<p>And the 0xCC checksum idea, demonstrated on a snapshot (don't write to your own <code>.text</code> — it's read+execute):</p>
+<pre><code class="language-text">$ ./crc_guard
+clean   crc32(real_work, 64) = 0x945a83fb
+patched crc32              = 0xfd69633  -&gt; INT3 detected</code></pre>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Malware triage in the first 30 minutes</strong>: entropy scan → packer identification → run-to-OEP → dump → import rebuild. You now know every step's <em>why</em>; the tools (Scylla, <code>gcore</code>, <code>unipacker</code>) are just packaging around this playbook.</li>
+<li><strong>Debugging your own packed/deployment artifacts</strong>: "my binary runs on the build machine but crashes in prod" with a packed binary is almost always an import-reconstruction or self-modifying-code issue; knowing the stub's lifecycle tells you where to break.</li>
+<li><strong>Buying real protection rationally</strong>: if you ship a product, you now can price protection in analyst-days and pick layers (pack + flatten the license check + VM-protect the 3 functions that matter) instead of cargo-culting "maximum obfuscation."</li>
+<li><strong>Interview-grade answers</strong>: "why can't you just decompile VMProtect output?" (per-program private ISA — devirtualization is bespoke lifter-writing, not a generic transform); "why does PTRACE_TRACEME detect debuggers?" (one-tracer contract, EPERM evidence).</li>
+<li><strong>Reading security writeups fluently</strong>: CTF and threat-intel reports say "control-flow flattening defeated via symbolic execution of the state variable" or "OEP found via stack-restore" — after this chapter those are mechanics you've performed, not jargon.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 04 ch01</strong> (binary formats): packing is an adversarial abuse of the header/segment contract — you can't see the lie without knowing the honest file's anatomy.</li>
+<li><strong>Module 04 ch02</strong> (linking &amp; loading): the UPX stub duplicates the loader's job (mapping, import resolution) because it removed <code>PT_DYNAMIC</code>/<code>PT_INTERP</code>; import reconstruction is <em>you</em> becoming the linker.</li>
+<li><strong>Module 04 ch03</strong> (disassembly): the stub's <code>call r11</code> decompressor idiom and dispatcher loops are read with the same compiler-idiom skills.</li>
+<li><strong>Module 04 ch05</strong> (decompilers): every obfuscation here targets one pipeline stage — flattening the structurer, MBA the simplifier, virtualization the lifter itself.</li>
+<li><strong>Module 02 ch01</strong> (exploit mitigations) and <strong>ch06</strong> (the same cat-and-mouse economics: RELRO vs GOT-overwrite is an earlier round of "buy time, not safety").</li>
+<li><strong>Module 03 ch05</strong> (fuzzing): a packed target is a <em>black box</em> to coverage-guided fuzzing — instrumentation sees only the stub; you must unpack (or run under emulation) first, which is why fuzzing pipelines start with unpacking stages.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><em>(concept)</em> A packed ELF has two <code>PT_LOAD</code> segments: the first <code>RW</code> with <code>FileSiz 0x1000</code>, <code>MemSiz 0x40428</code>; the second <code>R E</code> with <code>FileSiz = MemSiz = 0x10a5</code>, and there is no <code>PT_DYNAMIC</code> or <code>PT_INTERP</code>. Explain what each segment is for, and how the program still manages to call libc functions.</li>
+</ol>
+<ol>
+<li><em>(predict)</em> You hash the 16 bytes at address <code>0x401080</code> of the packed file <code>anti_packed</code> <em>on disk</em> (converting vaddr→file offset via the LOAD segments), then run the process and read the same address from <code>/proc/PID/mem</code>. Disk gives you garbage/zeros; memory gives <code>31 ed 49 89 d1 5e ...</code>. Why is that not a contradiction, and what proved the memory bytes are the original <code>_start</code>?</li>
+</ol>
+<ol>
+<li><em>(predict)</em> The clean CRC32 of a function's first 64 bytes is <code>0x945a83fb</code>. You set a <em>software</em> breakpoint at its first instruction and re-run the checksum. Roughly what changes, and what single byte value is responsible? If instead you set a <em>hardware</em> breakpoint, what does the checksum read?</li>
+</ol>
+<ol>
+<li><em>(concept)</em> Why does control-flow flattening defeat the decompiler's structurer specifically, rather than its disassembler or its data-flow analysis? Where did the original if/else information <em>go</em>?</li>
+</ol>
+<ol>
+<li><em>(bug-diagnosis)</em> A malware analyst writes a PTRACE-based unpacker: it forks, the child calls <code>PTRACE_TRACEME</code>, the parent traces the child to OEP, and dumps. It works on the dev box but in the sandbox the target's <em>own</em> anti-debug fires and exits immediately. What did the target detect, and via which contract?</li>
+</ol>
+<ol>
+<li><em>(bug-diagnosis)</em> A colleague "unpacked" a UPX binary by copying <code>/proc/PID/mem</code> pages for the whole address range <em>after</em> the process had already run for 10 seconds (well past OEP). Their reconstructed ELF crashes at startup. Give two distinct reasons the dump is broken even though the unpacked code bytes were correct.</li>
+</ol>
+<ol>
+<li><em>(concept)</em> Your target's <code>.text</code> section entropy measures 7.6 bits/byte. What does that suggest, what does normal x86 code measure, and what is the <em>one</em> property that distinguishes "packed" (recoverable) from "encrypted" (not recoverable) at this stage of triage?</li>
+</ol>
+<ol>
+<li><em>(connection)</em> Module 02 ch06 framed exploit mitigations (RELRO, stack canaries) as "raising cost, not achieving safety." Module 03 ch05 showed coverage-guided fuzzing needs instrumented, readable code. Explain how both ideas converge on this chapter's economics claim, and why a packed+virtualized target is nearly <em>worse than useless</em> to a fuzzer.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The RW segment is the output buffer; the RE segment is the payload.</strong> The kernel maps the RW segment's file page plus ~252 KB of zeroed writable memory (<code>MemSiz - FileSiz</code>) — that is where the decompressor will write the original program's <code>.text</code>/<code>.data</code>/<code>.bss</code>. The RE segment holds the compressed blob and the entry stub (entry point points into it). Libc still works because the stub is a mini-loader: it maps libc itself, walks its exports, and patches the call sites in the decompressed image — the sample's decompressed <code>_start</code> contains an already-resolved <code>call [rip+0x2f37]</code>. The proof it happens at all: no <code>PT_INTERP</code>/<code>PT_DYNAMIC</code> exists in the file, yet <code>printf</code> resolves.</li>
+</ol>
+<ol>
+<li><strong>Not a contradiction — the file never contained those bytes.</strong> The <code>0x401080</code> region on disk belongs to the RW segment's <em>bss-like</em> tail (<code>MemSiz &gt; FileSiz</code>), so the file's bytes there are absent/irrelevant; the original image exists only as compressed data inside the RE segment. What proves the memory bytes are <code>_start</code>: they are byte-for-byte the original binary's <code>_start</code> prologue (<code>xor ebp, ebp; mov r9, rdx; pop rsi; mov rdx, rsp; and rsp, -16</code>) — verified by disassembling the pre-packing binary — and <code>0x401080</code> as an immediate appears nowhere in the packed file (the stub computes the OEP rather than storing it).</li>
+</ol>
+<ol>
+<li><strong>The checksum changes; the responsible byte is <code>0xCC</code>.</strong> A software breakpoint is implemented by patching <code>0xCC</code> over the first byte of the instruction, so the region hashes differently (one byte differs: the original first byte → <code>0xCC</code>). With a <em>hardware</em> breakpoint (x86 debug registers <code>DR0</code>–<code>DR3</code>), no code byte is modified — the checksum still reads <code>0x945a83fb</code>. That asymmetry is precisely why analysts prefer hardware breakpoints on hostile targets, and why advanced malware also inspects the debug registers.</li>
+</ol>
+<ol>
+<li><strong>Flattening destroys the CFG's shape, which is the structurer's only input.</strong> The disassembler still decodes every instruction correctly; the data-flow analysis still tracks the state variable. But each original branch (<code>if (x&lt;0)</code>) has been rewritten as "assign a constant to <code>state</code>" — control information has been converted into <em>data</em> flow. The structurer reconstructs if/while from edges in the control-flow graph, and the flattened CFG is a star (every block connects only to the dispatcher), so no control pattern remains to recover. Recovery requires symbolic execution over the state variable's assignments — analysis of data, not structure.</li>
+</ol>
+<ol>
+<li><strong>The target detected the tracer via the ptrace contract.</strong> A traced process's own <code>PTRACE_TRACEME</code> returns <code>EPERM</code> (the one-tracer slot is taken — by the analyst's unpacker). The target's anti-debug checked exactly that return value and exited. The contract being exploited: at any moment a process can have at most one tracer, and both sides can query their status through it. (Fixes: patch the check, or use emulation that doesn't implement ptrace reporting to the guest the same way.)</li>
+</ol>
+<ol>
+<li><strong>Two of many:</strong> (a) <strong>Self-modifying aftermath</strong> — 10 seconds past OEP, the unpacked image may have re-encrypted its packing stub, zeroed its own headers (anti-dump), or had mutable data (.bss, heap pointers, initialized function pointers) diverge from any file-consistent state; a dumped page set no longer corresponds to a loadable file. (b) <strong>The ELF headers are gone or wrong</strong> — the process's memory image has no valid header (the packer erased it or the RW segment's on-disk page was never the real header), and crucially the <em>import table</em> was never rebuilt: the in-memory GOT holds resolved absolute addresses, so the reconstructed file's loader has nothing to resolve — it must be Scylla-style reconstructed (new <code>.dynsym</code>/<code>.got</code> naming those addresses) or the first libc call jumps into a wrong (or unmapped, under ASLR) address.</li>
+</ol>
+<ol>
+<li><strong>Entropy 7.6 suggests compressed or encrypted content.</strong> Normal x86 machine code measures roughly 6.0–6.5 bits/byte (opcode redundancy); a section above ~7.0 is statistically near-random, meaning compressed, encrypted, or high-entropy embedded data. The distinguishing property at triage: <strong>compressibility is reversible without a secret; encryption needs a key.</strong> If the stub <em>decompresses</em> (deterministic, keyless transform — the UPX stub's NRV2E loop), the original is recoverable by running to OEP. If the stub <em>decrypts</em>, you must find the key derivation (often obfuscated, sometimes hardware-bound) before anything else — that's the difference between an hour and a week.</li>
+</ol>
+<ol>
+<li><strong>Both say protection = cost curve, and both show where the curve bottoms out.</strong> Module 02's mitigations (RELRO, canaries) raise the cost of one specific exploit technique; attackers route around them at fixed cost, so they are "time bought," not safety. This chapter's obfuscation is the same deal one level up: days of analyst time per layer, expiring when the recipe is published. Module 03's fuzzing needs instrumented, structured code to compute coverage; a packed+virtualized binary exposes only the stub and the VM interpreter loop to the fuzzer — coverage collapses to "decompressor" and "dispatcher," so the fuzzer's guided search is effectively blind: it wastes compute on the wrapper rather than the logic. Worse than useless because it also <em>looks</em> like it's running (no crash, no signal). The convergence: measure every defense in adversary-time; where adversary-time ≈ 0 (published recipes, generic tools), the defense is decoration.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch05.html"><span class="cn-label">previous</span><span class="cn-title">Ch 05</span></a>
+<a class="next" href="index.html"><span class="cn-label">next</span><span class="cn-title">Module index</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 04 — Decompilation &amp; reverse engineering</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

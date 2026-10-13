@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coalescing &amp; the roofline — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 12: Coalescing &amp; the roofline">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Coalescing &amp; the roofline — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 12: Coalescing &amp; the roofline">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Coalescing &amp; the roofline — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 12: Coalescing &amp; the roofline">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 12 &middot; the tower gets a new wing</div>
+<h1 class="post-title">Coalescing &amp; the roofline</h1>
+<div class="post-meta">chapter 02 &middot; ~13 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A kernel is slow or fast because of <em>traffic</em>, not instructions. A warp's (32 threads') load is rounded up to 32-byte <strong>sectors</strong>: a stride-1 float load moves 128 bytes in 4 sectors; a stride-4 load moves the same 128 useful bytes in 16 sectors — 4x the traffic for identical math. Coalescing is module (01:02)'s cache-line story at warp scale: it decides layout (SoA beats AoS), tiling (shared memory buys arithmetic intensity), and — via the roofline's one division, peak-FLOPS / bandwidth — whether a GPU accelerates your kernel at all.</blockquote>
+<h2 id="one-warp-one-instruction-thirty-two-addresses">One warp, one instruction, thirty-two addresses</h2>
+<p>SIMT (Chapter 01): 32 threads execute <em>one</em> load instruction — naively 32 separate addresses, absurd for a DRAM path that moves bursts, not crumbs. Between warp and L1 sits a <strong>coalescer</strong>: it merges this instruction's addresses that fall in the same 32-byte <strong>sector</strong> (the L1/DRAM granularity on every CUDA GPU since Kepler, CC 3.5; 4 sectors per 128-byte line, Ampere-class). One merged 128-byte wavefront = one <strong>transaction</strong>.</p>
+<p>Derive the best case: one <code>float</code> per thread, contiguous, base aligned — addresses <code>0, 4, ..., 124</code>, payload 128 bytes, exactly 4 sectors: a <em>perfectly coalesced</em> load:</p>
+<pre><code> warp loads a[tid], one 4-byte float each, stride 1, base aligned:
+
+   thread    0    1    2    3    4    5    6    7         8  ...  31
+   address   0    4    8   12   16   20   24   28        32  ... 124
+             |&lt;------- sector 0, 32 B -------&gt;|&lt;--- sector 1 ---&gt;| ...
+             |&lt;-------- 128 B = 4 sectors = 1 transaction --------&gt;|
+
+ same warp, element stride 4 (a[4*tid]): addresses 0, 16, 32, ..., 496 —
+ every 32 B sector now holds two threads' 4-byte floats: 8 B used, 24 dead.
+ 16 sectors: 512 B moved, 128 B useful = 25%.</code></pre>
+<p>The stride multiplies the address <em>span</em>, and the coalescer pays for every sector the span crosses. One warp-wide f4 (4-byte) load, element stride S:</p>
+<div class="table-wrap"><table><thead><tr><th>element stride</th><th>span</th><th>sectors</th><th>transactions</th><th>payload</th><th>efficiency</th></tr></thead><tbody><tr><td>1</td><td>128 B</td><td>4</td><td>1</td><td>128 B</td><td>100%</td></tr><tr><td>2</td><td>252 B</td><td>8</td><td>2</td><td>128 B</td><td>50%</td></tr><tr><td>4</td><td>500 B</td><td>16</td><td>4</td><td>128 B</td><td>25%</td></tr><tr><td>8</td><td>996 B</td><td>32</td><td>8</td><td>128 B</td><td>12.5%</td></tr></tbody></table></div>
+<p>The law: <strong>DRAM traffic = 32 bytes x sectors touched.</strong> Stride 8 puts each thread in its own sector — 8x the traffic of stride 1 for the same 128 useful bytes and instruction count.</p>
+<p>Two refinements. <strong>Misalignment:</strong> a base offset by 4 bytes (sliced one element off the front) shifts the stride-1 addresses to <code>4..131</code> — 5 sector boundaries: +1 sector, +25% traffic, forever. <code>cudaMalloc</code> returns 256-byte-aligned pointers; <em>views and offsets</em> misalign you. <strong>Why one f4 load beats four f1 loads:</strong> assembling a float from an interleaved byte array (<code>b[4*tid + j]</code>), each warp-wide 1-byte instruction spreads 32 addresses across a ~125 B span — 4 sectors — for 32 useful bytes; four instructions = 16 sectors vs the f4 load's 4. Same payload, 4x traffic: the coalescer merges <em>within one instruction</em>, never across. (Four f1 loads of 32 <em>contiguous</em> bytes each touch just 4 sectors — the tax is per-instruction address spread.)</p>
+<h2 id="the-layout-decision-is-a-memory-decision">The layout decision is a memory decision</h2>
+<p>A particle system, two layouts. <strong>Array of structs</strong> (AoS):</p>
+<pre><code class="language-c">struct Particle { float x, y, z, w; };   // warp reads p[tid].x -&gt; 16*tid
+Particle p[N];</code></pre>
+<p>The warp wants only <code>.x</code> — a 16-byte stride, the stride-4 row scaled by the struct: 16 sectors, 4 transactions, 25% efficiency. You haul <code>.y</code>, <code>.z</code>, <code>.w</code> past the memory system and never use them. <strong>Struct of arrays</strong> (SoA):</p>
+<pre><code class="language-c">float px[N];                              // warp reads px[tid] -&gt; 4*tid</code></pre>
+<p>4 sectors, 1 transaction, 100%.</p>
+<p>Module (01:06)'s layout decision, re-judged: a CPU's consumer is one core and the atom is the 64-byte line (AoS wins for whole-struct access); a GPU's consumer is a <em>warp</em> — 32 threads wanting the same field of 32 consecutive elements — so field-contiguous layout wins by struct-size / 4. If the kernel touches <em>all</em> fields, L1 (192 KB/SM, Ampere-class) caches the siblings and DRAM bytes equalize — but each instruction still <em>requests</em> 16 sectors, and the single-field case has no defense. SoA, always.</p>
+<h2 id="tiling-buying-arithmetic-intensity-with-shared-memory">Tiling: buying arithmetic intensity with shared memory</h2>
+<p>Coalescing fixed how bytes move; tiling fixes how many are needed. Canonical case: matrix multiply. Naive <code>C = A*B</code> — each thread computes one output element, <code>acc += A[row*N+k] * B[k*N+col]</code> — pulls 2 floats from global per FMA (2 FLOP), nothing reused: AI = 2 FLOP / 8 B = <strong>0.25 FLOP/byte</strong>.</p>
+<p>Tile it: each block owns a 16x16 output tile, stages 16x16 tiles of A and B into <strong>shared memory</strong> cooperatively, computes from shared:</p>
+<pre><code class="language-c">__global__ void tiled16(const float* A, const float* B, float* C, int N) {
+    __shared__ float a[16][16+1], b[16][16+1];       // +1 word: bank pad, below
+    int row = 16*blockIdx.y + threadIdx.y, col = 16*blockIdx.x + threadIdx.x;
+    float acc = 0.f;
+    for (int k = 0; k &lt; N; k += 16) {
+        a[threadIdx.y][threadIdx.x] = A[row*N + k + threadIdx.x]; // stride-1 warp
+        b[threadIdx.y][threadIdx.x] = B[(k+threadIdx.y)*N + col]; // stride-1 warp
+        __syncthreads();
+        for (int i = 0; i &lt; 16; i++)
+            acc += a[threadIdx.y][i] * b[i][threadIdx.x];         // SMEM, not HBM
+        __syncthreads();
+    }
+    C[row*N + col] = acc;
+}</code></pre>
+<p>Both staging loads are coalesced (consecutive <code>threadIdx.x</code> = consecutive addresses). The arithmetic: per k-step the block loads 2 x 16 x 16 floats = 2,048 bytes and does 256 threads x 16 = 4,096 FMAs — <strong>0.5 bytes per FMA</strong>; each staged byte is reused by the 16 threads sharing its row or column. For a T x T tile: bytes per FMA = 8/T, i.e. AI = T/4:</p>
+<div class="table-wrap"><table><thead><tr><th>tile T</th><th>bytes per FMA</th><th>AI (FLOP/byte)</th><th>A100 attainable (2.0 TB/s)</th></tr></thead><tbody><tr><td>none</td><td>8</td><td>0.25</td><td>0.5 TFLOP/s</td></tr><tr><td>16</td><td>0.5</td><td>4</td><td>8.0 TFLOP/s</td></tr><tr><td>32</td><td>0.25</td><td>8</td><td>16.0 TFLOP/s</td></tr><tr><td>64</td><td>0.125</td><td>16</td><td>19.5 TFLOP/s = peak</td></tr></tbody></table></div>
+<p>Tiling converts HBM traffic (~500-cycle round trips, Chapter 01) into shared memory traffic (~30 cycles) by amortizing one load over T reuses.</p>
+<p>One trap lives in staging. Shared memory is 32 banks x 4 bytes; a warp reading one word per thread is conflict-free only if the 32 addresses hit 32 distinct banks. A column walk of a square <code>[32][32]</code> tile is a 32-word-stride walk: <code>32*i mod 32 = 0</code> — all threads hit bank 0, serialized into 32 rounds. Pad the row by one word (~3% more shared memory) and columns walk at stride 33: <code>33*i mod 32 = i</code> — every thread its own bank, one round instead of 32, for ~3% more shared memory. (Trap: padding by four words, <code>[32][36]</code>, gives <code>36*i mod 32 = 4i</code> — 4-way conflicts return.)</p>
+<h2 id="the-roofline-is-the-gpu-even-helping">The roofline: is the GPU even helping?</h2>
+<p>The <strong>roofline model</strong> turns traffic accounting into one verdict. A kernel's AI = FLOP executed / bytes moved from DRAM; the machine offers two ceilings — HBM bandwidth (A100 80GB SXM: 2.0 TB/s) and peak FP32 (19.5 TFLOP/s non-tensor) — and a kernel cannot exceed either:</p>
+<pre><code> attainable FLOP/s = min( AI x 2.0 TB/s , 19.5 TFLOP/s )</code></pre>
+<p>The lines cross at the <strong>ridge point</strong> = 19.5 / 2.0 = <strong>9.75 FLOP/byte</strong>. Left of it the FLOPs idle and the kernel is <em>memory-bound</em> — speed is bandwidth / bytes, full stop. Right of it the kernel is <em>compute-bound</em> and traffic no longer matters. Place three kernels (A100 80GB SXM, FP32): <strong>K1, saxpy</strong> — 2 FLOP / 12 B (read x, read y, write y) — AI 0.17, 0.33 TFLOP/s = <strong>1.7% of peak</strong>; <strong>K2, naive matmul</strong> — AI 0.25, 0.5 TFLOP/s, 2.6% of peak; <strong>K3, tiled T=64</strong> — AI 16, capped at 19.5 TFLOP/s, compute-bound.</p>
+<pre><code> attainable FP32 TFLOP/s (log scale)
+ 19.5 |                              .------------------.  K3
+      |                         .----'                 tiled T=64, AI=16:
+      |                    .----'                       FLOPs are the ceiling
+      |               .----'
+  8.0 |          .---'   &lt;-- K3' tiled T=32, AI=8: 20% short of the ridge
+  4.0 |      .---'
+      |   .---'        slope = 2.0 TB/s: attainable = AI x BW
+  0.5 |.--'  K2 = naive matmul, AI=0.25
+ 0.33 |  K1 = saxpy (y = a*x+y), AI = 2 FLOP / 12 B = 0.17
+      +----+----+----+----+----+----+----+----+----+---&gt;  arithmetic intensity
+        0.17 0.25 0.5   1    2    4    8  9.75  16      (FLOP/byte, log)
+                                     ^
+                             ridge = 19.5 / 2.0 = 9.75</code></pre>
+<ul>
+<li><strong>K1, saxpy</strong> (diagram): 0.33 TFLOP/s of 19.5 = 1.7% of peak — a bandwidth-powered crawl.</li>
+</ul>
+<p>So "the GPU, the accelerator" needs a qualifier. A memory-bound kernel can never beat a CPU by more than the <em>bandwidth ratio</em> (2.0 TB/s vs ~50-100 GB/s desktop DRAM, ~20-40x). A compute-dense kernel wins by the FLOP ratio — and with tensor cores (A100 FP16: 312 TFLOP/s) the ridge is 312/2.0 = 156 FLOP/byte, almost nothing is compute-bound, and kernel engineering becomes data staging. That is why shared memory, <code>cp.async</code>, and TMA exist.</p>
+<h2 id="occupancy-latency-hiding-as-a-budget-and-the-async-pipeline">Occupancy: latency-hiding as a budget, and the async pipeline</h2>
+<p>Even the memory-bound ceiling needs work in flight: a global load takes ~400-800 cycles (Chapter 01) and the issuing warp stalls, so the SM needs other resident warps to issue from. Occupancy is the <em>capacity</em> for latency hiding — not speed itself.</p>
+<p>The budget is three divisions. Take <code>tiled16</code>: 256 threads/block (8 warps), 40 registers/thread (<code>nvcc -Xptxas -v</code>), ~2.2 KB shared/block (two <code>[16][17]</code> tiles). Per SM, Ampere-class A100: 65,536 32-bit registers, 64 warp slots, and the shared-memory carveout you chose (say 64 KB of the 192 KB L1/SMEM pool):</p>
+<pre><code> registers : 65536 / (40 x 256) = 6.4  -&gt; 6 blocks
+ warp slots: 64 / 8                = 8 blocks
+ shared   : 65536 / 2200          = 30 blocks
+ limit = min = 6 blocks = 48 warps of 64 = 75% occupancy</code></pre>
+<p>That is all <code>cudaOccupancyMaxActiveBlocksPerMultiprocessor</code> does — the same three divisions, by hand. Pathology at the end: 255 registers/thread with 32-thread blocks gives 65536/(255 x 32) = 8 blocks x 1 warp = 12.5% occupancy ("the register budget is the scheduling budget," Chapter 01). Middle trap: <code>__launch_bounds__</code> forcing registers down raises occupancy but spills to <em>local memory</em> — DRAM-backed traffic.</p>
+<p>Finally, <strong>async copy</strong> (<code>cp.async</code>, CC 8.0+/Ampere). The staging loop <code>gmem -&gt; registers -&gt; shared</code> parks each tile's bytes in warp registers while the copy completes, serializing load and compute. <code>cp.async</code> moves 4, 8, or 16 bytes per thread global-to-shared <em>directly</em>, registers untouched — so you can double-buffer: while the block computes tile k, the copy engine fills tile k+1 (<code>cp.async.wait_group</code> + <code>__syncthreads()</code> gates the swap). Latency is hidden <em>structurally</em> (by overlap), not <em>statistically</em> (by occupancy), and the ~16 registers a staging path consumed are freed — often worth more than the overlap. Hopper (CC 9.0) generalizes it to TMA.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The sector, not the byte, is the unit.</strong> Traffic is charged in 32-byte sectors (CUDA since CC 3.5; 4 per 128 B line, Ampere). A 1-byte read and a 32-byte read from one sector cost identical DRAM traffic: "bytes moved" means <code>32 x sectors</code>, never payload.</li>
+<li><strong>The stride table lives in hardware counters.</strong> <code>ncu --metrics l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum</code> counts sectors; <code>l1tex__average_t_sectors_per_request_pipe_lsu_mem_global_op_ld.ratio</code> is the table above: 4.0 = perfectly coalesced f4, 32.0 = one thread per sector.</li>
+<li><strong>Ridge arithmetic per generation (FP32, SXM):</strong> V100 15.7/0.9 = 17.4, A100-80GB 19.5/2.0 = 9.75 (12.6 on the 40GB's 1.55 TB/s), H100 51/3.35 = 15.2. Against tensor cores (A100 FP16: 312 TFLOP/s) the ridge is 156 — post-Ampere kernel work is staging, not math.</li>
+<li><strong>SoA at framework scale: channels-last.</strong> NHWC puts C innermost so a warp's channel loads are contiguous; <code>torch.channels_last</code> is a coalescing decision, not a storage preference (NCHW makes C a strided walk).</li>
+<li><strong>cp.async's minimum quantum is 4 bytes per thread</strong> (4, 8, or 16). You cannot async-copy a byte, and the win is two-fold: overlap <em>and</em> registers freed by deleting the LDG/STS round trip — measure the register savings first.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Labs 1-2 are CPU-side integer arithmetic; lab 3 needs a GPU.</p>
+<p><strong>Lab 1 — the stride table, computed.</strong> Distinct 32-byte sectors for strides 1/2/4/8, plus the misalignment tax:</p>
+<pre><code class="language-bash">python3 - &lt;&lt;'EOF'
+import math
+WARP, ES = 32, 4                       # 32 threads, 4-byte float loads
+def sectors(stride, offset=0):
+    addrs = [offset + t * ES * stride for t in range(WARP)]
+    return len({a &gt;&gt; 5 for a in addrs})     # a // 32 = sector id
+print("stride  sectors  transactions  bytes-touched  payload  efficiency")
+for s in (1, 2, 4, 8):
+    sec = sectors(s); tr = math.ceil(sec / 4)
+    print(f"{s:6d}  {sec:7d}  {tr:12d}  {sec*32:12d}  {128:7d}  "
+          f"{100*128/(sec*32):6.1f}%")
+EOF</code></pre>
+<p>Output (reproduced):</p>
+<pre><code>stride  sectors  transactions  bytes-touched  payload  efficiency
+     1        4             1           128      128   100.0%
+     2        8             2           256      128    50.0%
+     4       16             4           512      128    25.0%
+     8       32             8          1024      128    12.5%</code></pre>
+<p>The efficiency column is why a stride-4 kernel runs 4x slower on identical instructions.</p>
+<p><strong>Lab 2 — the roofline for three toy kernels</strong> (swap <code>PEAK/BW</code> for your GPU):</p>
+<pre><code class="language-bash">python3 - &lt;&lt;'EOF'
+PEAK, BW = 19.5, 2.0                   # A100 80GB SXM: TFLOP/s, TB/s
+print(f"ridge = {PEAK}/{BW} = {PEAK/BW:.2f} FLOP/byte\n")
+for name, fl, by in [("saxpy", 2, 12), ("naive matmul", 2, 8),
+                     ("tiled matmul T=64", 2*64*64, 8*64)]:
+    ai = fl / by; att = min(ai * BW, PEAK)
+    print(f"{name:20s} AI={ai:6.2f}  attainable={att:6.2f} TFLOP/s  "
+          f"{'memory-bound' if ai &lt; PEAK/BW else 'compute-bound'}")
+EOF</code></pre>
+<p>Output (reproduced):</p>
+<pre><code>ridge = 19.5/2.0 = 9.75 FLOP/byte
+
+saxpy               AI=  0.17  attainable=  0.33 TFLOP/s  memory-bound
+naive matmul        AI=  0.25  attainable=  0.50 TFLOP/s  memory-bound
+tiled matmul T=64   AI= 16.00  attainable= 19.50 TFLOP/s  compute-bound</code></pre>
+<p>For a picture: the same three (AI, attainable) pairs on log-log axes (<code>plt.loglog</code>), a bandwidth-slope line, and a <code>hlines(PEAK)</code> ceiling.</p>
+<p><strong>Lab 3 — if a GPU is available (Ampere-class; Colab free tier works).</strong> Marked: needs hardware; not run in the sandbox this chapter was written in — numbers below are the arithmetic's predictions, not measurements.</p>
+<pre><code class="language-bash"># stride sweep: kernel does v[tid] = a[tid*S] for S in 1,2,4,8; time each
+nvcc -O3 -arch=sm_80 stride_sweep.cu -o stride_sweep &amp;&amp; ./stride_sweep
+# expect wall time ~ 1 : 2 : 4 : 8 (DRAM-resident array: traffic-bound)
+ncu --metrics l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum \
+     l1tex__average_t_sectors_per_request_pipe_lsu_mem_global_op_ld.ratio \
+     ./stride_sweep        # expect sectors/request = 4, 8, 16, 32
+
+# tiled-vs-naive matmul (tiled16 above vs a naive kernel):
+nvcc -O3 -arch=sm_80 matmul.cu -o matmul &amp;&amp; ./matmul
+# expect ~10x+ at N=4096 (AI 0.25 -&gt; 4 climbs the slope)</code></pre>
+<p>If sectors-per-request reads 4/8/16/32, you have measured Lab 1's table in hardware; a 4.0 turning into 5.0 means misalignment or L2 hits.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Two-minute triage of a slow kernel.</strong> Count FLOP and DRAM bytes in the loop body, divide, compare to the ridge (9.75, A100 FP32). AI 0.3 = memory-bound — math tuning cannot help, fix traffic. AI 15 = compute-bound — stop reorganizing memory.</li>
+<li><strong>Read <code>ncu</code>'s sectors-per-request first.</strong> 4.0 = coalesced; 32.0 = one thread per sector (a stride bug); 5.0 = misaligned base. The number names the fix: indexing, layout, or offset.</li>
+<li><strong>Choose SoA for anything warp-consumed.</strong> Feature tables, particles, channels: the 4x sector bill for AoS single-field access is decided once, paid every launch.</li>
+<li><strong>Explain a regression after an unroll.</strong> <code>nvcc -Xptxas -v</code> shows registers 40 -&gt; 72, occupancy 75% -&gt; 50%: spills to local memory (DRAM-backed) or lost latency hiding — you can now name which.</li>
+<li><strong>Answer "will a GPU help?" with one division.</strong> Left of the ridge, the ceiling is the bandwidth ratio (~20-40x over a desktop); right of it, the FLOP ratio (~100x with tensor cores). SAXPY-like pipelines never become "AI accelerators."</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module (01:02), the cache line</strong> — the payoff: coalescing <em>is</em> cache-line behavior; the sector is the warp's line granularity, and the stride-4 25% is the same arithmetic as 4-bytes-of-64 on a CPU.</li>
+<li><strong>Module (01:06), object layout</strong> — SoA-vs-AoS re-judged by a 32-thread consumer; struct padding and alignment rules (module (10:05)'s ABI view) are why those strides exist.</li>
+<li><strong>Module (12:01), the hierarchy</strong> — the latency table (shared ~30, HBM ~400-800 cycles) and the register budget behind the occupancy arithmetic.</li>
+<li><strong>Module (12:03), allocation &amp; OOM</strong> — the misaligned views that cost the 5th sector (or the float4 fault) come from slicing allocator-returned blocks; the caching allocator's offsets are an alignment actor.</li>
+<li><strong>Module (12:04), unified memory</strong> — the roofline with the other machine's numbers: an integrated M4 Max (~546 GB/s) moves the ridge and shrinks the memory-bound ceiling ~4x; compute-dense kernels don't care.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>A warp executes <code>float v = a[tid * 8];</code> — one f4 load per thread, element stride 8, base aligned. Derive sectors, transactions (128 B units), payload, efficiency; describe the access shape.</li>
+<li><code>struct P { float x, y, z, w; };</code> — a warp loads <code>p[tid].x</code> from an AoS array. Sectors and transactions, versus SoA <code>xs[tid]</code>? If the kernel loads <code>.y</code>, <code>.z</code>, <code>.w</code> too, does the AoS DRAM bill stay 4x?</li>
+<li>An activation kernel reads one float, writes one float, does 20 FLOP of <code>tanh</code>-ish math per element. A teammate calls it compute-bound. Place it on the A100 FP32 roofline: AI, attainable FLOP/s, percent of peak, verdict.</li>
+<li>A kernel ran for months on scalar <code>float</code> loads. Someone switches it to <code>float4</code> over a tensor that is a <em>view</em> starting one element in (<code>x[1:]</code> reinterpreted); it now dies instantly with a CUDA "misaligned address" error. Diagnose the condition and the fix.</li>
+<li>A shared-memory transpose is barely faster than the naive version. The tile is <code>__shared__ float t[32][32];</code>, written <code>t[threadIdx.x][threadIdx.y]</code> and read back column-wise. Pathology and one-line fix?</li>
+<li>Autotuning a matmul raised registers/thread 40 -&gt; 72 (256-thread blocks, A100): occupancy fell 75% -&gt; 50%, yet the kernel got 12% <em>faster</em>. Why didn't lower occupancy mean lower speed?</li>
+<li>Moving the same 128 bytes per warp: one f4 load touches 4 sectors, but four f1 loads with bytes interleaved at 4-byte spacing touch 16. State the invariant, and a layout where four f1 loads touch only 4 sectors.</li>
+<li>Cross to module (01:02): a CPU walks a <code>float</code> array with element stride 4. What fraction of each 64-byte cache line is used, which number in this chapter's warp-side table is the same fraction, and why is it the <em>same</em> number?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>32 sectors, 8 transactions, 128 B payload, 12.5%.</strong> Addresses <code>0, 32, ..., 992</code> — each thread's 4 bytes in its own sector (span 996 B -&gt; 32 sectors = 8 x 128 B transactions). One thread per sector: the worst coalescing, 8x stride-1 traffic for identical math.</li>
+<li><strong>16 sectors / 4 transactions vs 4 sectors / 1.</strong> <code>.x</code> at a 16-byte stride spans 500 B -&gt; 16 sectors, 25%; SoA is <code>4*tid</code> -&gt; 4 sectors, 100%. With all four fields loaded, the DRAM bill does <em>not</em> stay 4x: the sibling instructions hit the same 16 sectors, which L1 (192 KB/SM) serves as hits. What stays 4x is the per-instruction request count — and the single-field case (12 of 16 bytes paid for, never used) is why SoA wins.</li>
+<li><strong>AI = 20 FLOP / 8 B = 2.5 FLOP/byte — memory-bound.</strong> Attainable = 2.5 x 2.0 TB/s = 5.0 TFLOP/s = 26% of peak. "Many FLOP per element" is not high AI — the roofline divides by the 8 B, and 2.5 &lt; the 9.75 ridge. Cheaper tanh changes nothing; halving bytes doubles speed.</li>
+<li><strong>16-byte alignment is a hardware precondition for 16-byte vector loads.</strong> The view's base is allocation base + 4 B, so <code>float4</code> addresses are 4 mod 16; the load unit refuses and the fault kills the whole kernel (no partial execution). Fix: keep scalar loads (a stride-1 f4 load is already 4 sectors — the optimum; float4 buys issue bandwidth, not traffic), copy into an aligned buffer, or vector-load the aligned remainder. Silent variant: a 4-byte-offset scalar path costs the 5th sector.</li>
+<li><strong>A 32-way bank conflict: 32 serialized rounds per warp access.</strong> 32 banks x 4 B; the column read is a 32-word-stride walk, <code>32*i mod 32 = 0</code> — all threads hit bank 0. Fix: <code>__shared__ float t[32][33];</code> — stride 33 gives <code>33*i mod 32 = i</code>, a bank per thread, one round, ~3% shared-memory cost. (Trap: <code>[32][36]</code> gives <code>36*i mod 32 = 4i</code> — 4-way conflicts.)</li>
+<li><strong>Occupancy is latency-hiding capacity, not throughput.</strong> 50% is 32 resident warps per SM — enough to cover ~500-cycle HBM latency for this kernel's mix. The extra registers bought per-warp ILP (deeper unrolling kept values in registers instead of re-loading), and the kernel's high AI means FLOP issue, not latency, is the ceiling. Occupancy hurts only when warps starve the memory pipe.</li>
+<li><strong>Invariant: the coalescer merges only addresses from one instruction, and charges 32 B per sector any address touches.</strong> Four f1 instructions each spread 32 one-byte addresses across a ~125 B span — 4 sectors each, 16 total; the f4 instruction's 32 addresses pack one 128 B span — 4 sectors. Cheap f1 layout: 32 <em>contiguous</em> bytes per instruction (a planar array) — 1 sector each, 4 total.</li>
+<li><strong>16 of 64 bytes = 25% — the stride-4 row: 128 B useful of 512 B touched.</strong> Both machines round traffic up to the transfer granularity: the CPU's 64 B line, the GPU's 32 B sector. The address pattern is machine-independent; only the granularity changes — coalescing <em>is</em> cache-line behavior, the chapter's thesis in one number.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 12 — GPU &amp; AI accelerator memory</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

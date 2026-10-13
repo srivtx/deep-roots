@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The mitigation ladder — deep-roots</title>
+<meta name="description" content="Chapter 06 of module 02: The mitigation ladder">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The mitigation ladder — deep-roots">
+<meta property="og:description" content="Chapter 06 of module 02: The mitigation ladder">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The mitigation ladder — deep-roots">
+<meta name="twitter:description" content="Chapter 06 of module 02: The mitigation ladder">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 02 &middot; the dark mirror of module 01</div>
+<h1 class="post-title">The mitigation ladder</h1>
+<div class="post-meta">chapter 06 &middot; ~17 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Every rung of the memory-safety ladder — canary, NX, ASLR, RELRO, PIE, CFI, CET, PAC, MTE — was built <em>because the rung below it fell</em>, and each is cheap on purpose — a 20% mitigation gets turned off by one performance review. This chapter walks the ladder rung by rung with the only ledger that matters — what it kills, what it costs, how it was beaten — then assembles the composite stack on a modern Chrome-on-Android target: why an exploit that needed <strong>one bug in 1996 needs about five in 2024</strong>. The bugs are still there (~70% of severe CVEs, MSRC/Chromium 2019); the ladder changed the price.</blockquote>
+<h2 id="the-economics-of-a-rung">The economics of a rung</h2>
+<p>Derive the constraints that force the ladder's shape — a mitigation deploys <em>everywhere</em> or attackers route to the unprotected build. So each rung must be <strong>nearly free</strong> (runtime costs live in the ~1% band; the one exception here, MTE at ~4-5%, needed a decade of hardware economics), must <strong>kill a class, not a bug</strong> (bugs arrive by tens of thousands per decade, mitigations about once every two years — a rung targets a technique <em>family</em>: linear overflow, injected code, fixed addresses, hijacked dispatch), and must <strong>fail loudly</strong> (a detectable crash buys forensics even without prevention). And bypasses come in exactly three flavors — <em>information</em> (leak the secret), <em>entropy</em> (guess it), <em>structure</em> (change technique) — a trichotomy that predicts every bypass below.</p>
+<p>The thesis, derived: each rung turns a capability the attacker once got free into one that now needs a <em>distinct</em> bug. Capabilities are priced in bugs, so the ladder's height <em>is</em> the exploit's length:</p>
+<pre><code class="language-text"> 1996 ────── 2005 ────────── 2018-2023 ───────────── 2024
+ 1 bug        2 bugs         3 bugs                 ~5 bugs
+ one          +ASLR/PIE:     +CFI/PAC/MTE:          +sandbox+kernel:
+ overflow     you need       control-flow step      Chrome on Pixel 8
+              a leak         inside the lattice</code></pre>
+<p>The honest corollary: no rung fixes a bug — the ~70% memory-safety share of severe CVEs is stable; what moved is cost per exploit and how loud failures are. The rest of the chapter is the itemized bill.</p>
+<h2 id="the-lower-ladder-compiler-and-linker-hardening-1998-2014">The lower ladder: compiler and linker hardening (1998-2014)</h2>
+<p><strong>Rung 1 — the stack canary</strong> (StackGuard, Cowan et al. 1998; ProPolice 2001; <code>-fstack-protector</code> in gcc 4.1, 2006). The epilogue compares the frame's 8-byte canary against the master in TLS (<code>fs:0x28</code> on x86-64) and calls <code>__stack_chk_fail</code> on mismatch, making the <em>linear</em> overflow into RIP self-defeating (frame layout: ch02). Kills: the 1996 stack smash. Costs: 8 bytes + one TLS read + one compare per protected frame, ~1% average under <code>-fstack-protector-strong</code>. Scope: base <code>-fstack-protector</code> covers only <code>char</code> arrays and <code>alloca</code>; <code>-strong</code> (gcc 4.9, 2014) adds arrays of <em>any</em> type and size plus address-taken locals; <code>-all</code> is every function. Distros default to <code>-strong</code> because base misses <code>int[4]</code>.</p>
+<p>Bypass history, all three flavors: <em>information</em> — leak the canary (OOB read, format string); <em>entropy</em> — glibc's canary ends in a NUL byte, so 7 bytes are unknown, and a forking server inherits one canary in every child: byte-at-a-time brute force costs at most 7 x 255 = <strong>1,785 child crashes</strong> (ch02's trap run forward); <em>structure</em> — corrupt a pointer <em>below</em> the buffer or ch02's off-by-one into saved RBP: data-only overflows walk around the canary.</p>
+<p><strong>Rung 2 — NX/DEP</strong> (Linux and Windows XP SP2, both 2004). One bit of module 01 ch03's PTE — NX, bit 63 on x86-64 — makes stack and heap RW, never X. Kills: injected shellcode in data pages. Cost: zero; the hardware consults the PTE on every access anyway. First bypass: Shacham's ROP (CCS 2007) — don't inject code, <em>reuse</em> the already-executable libc; any <code>ret</code>-terminated byte sequence is a gadget, and one glibc offers ~10^4+ usable ones (ch03's census). Lesson for every later rung: removing memory <em>executability</em> while leaving existing code executable only prices engineering time.</p>
+<p><strong>Rung 3 — ASLR</strong> (PaX 2001; mainline Linux 2.6.12, 2005; Vista 2007; macOS 10.5 2007). Randomizes base addresses at exec and mmap — stack top, mmap region, brk, and (with PIE) the main binary. Kills: precomputed addresses. Cost ~0; the knob is <code>kernel.randomize_va_space</code> (0/1/2, distros ship 2). What decides everything is <strong>entropy in bits</strong>:</p>
+<ul>
+<li>x86-64 Linux, kernel 6.x: ~<strong>28 bits</strong> for the mmap/PIE base (<code>vm.mmap_rnd_bits</code>, default 28, max 32); the stack gap is smaller (22 page-granular bits).</li>
+<li>arm64 Android: <strong>18 bits</strong> until Android 12 (2021), <strong>24 bits</strong> since.</li>
+<li>32-bit Android: on the order of <strong>16 bits</strong> — brute-forceable in minutes.</li>
+<li>Windows DLLs and the iOS/macOS dyld shared-cache slide randomize <strong>once per boot</strong> — one leak covers every process until reboot.</li>
+</ul>
+<p>Bypasses: <em>information</em> — the leak became the post-2005 era's most valuable primitive (one leaked .text pointer reveals the whole module); <em>entropy</em> — 16-bit targets die by brute force; <em>structure</em> — partial overwrites (low 12 bits are page offsets) and fork servers (one child's leak compromises all).</p>
+<p><strong>Rungs 4 and 5 — PIE and RELRO.</strong> PIE compiles ET_DYN so the main image joins ASLR; distros made it gcc's default between 2015 and 2018 — without it, <code>.text</code> sits at a fixed 0x400000-style base forever. Cost ≈ 1% on x86-64. RELRO fences the GOT: module 01 ch08's PLT/GOT dispatch — every imported function leaves a pointer the program will call <em>for you</em>. Partial RELRO (<code>-z relro</code>, mid-2000s) protects <code>.got</code> and <code>.init_array</code> but leaves <code>.got.plt</code> writable for lazy binding; <strong>full RELRO</strong> (<code>-z relro -z now</code>) binds every symbol eagerly at startup, then makes the whole GOT read-only. Cost: eager relocation, milliseconds (tens for large C++ binaries). Kills: the GOT overwrite and <code>ret2dlresolve</code>. Bypass history: the write target <em>moves</em> — vtables in <code>.data</code>, <code>__malloc_hook</code>/<code>__free_hook</code> (until glibc 2.34, Aug 2021, deleted them), <code>__exit_funcs</code>, FILE vtables (ch04's terrain). It never removes the arbitrary-write primitive; it fences one pasture and raises the next fence's price.</p>
+<h2 id="the-upper-ladder-the-isa-fights-back-2015-2023">The upper ladder: the ISA fights back (2015-2023)</h2>
+<p><strong>Rung 6 — forward-edge CFI</strong> (clang <code>-fsanitize=cfi</code>, 2015-era; requires LTO). Ch05's UAF pattern ends in a virtual call through a reclaimed slot; CFI checks the dispatch itself — <code>cfi-vcall</code> verifies the vtable's type hash against the expected class, <code>cfi-icall</code> verifies indirect-call targets against their signature. Kills: cross-type vtable hijack: the forged table must belong to the <em>same CFI class</em> or the call traps. Cost: sub-2% runtime (Chromium 2017-2018-era telemetry) plus LTO link times — whole-program knowledge is why it needs LTO, and why mixed C++/Rust builds waited for cross-language CFI (clang 17-18 era, 2023-2024). Shipped: Chrome on Android/ChromeOS since 2017-2018; kernel kCFI since 6.1 (Dec 2022). Bypass: the <em>CFI downgrade</em> — a victim with the same signature and useful semantics, or JOP inside legal entries. CFI is a lattice, not a wall: it bounds targets to a type class, not intent.</p>
+<p><strong>Rung 7 — Intel CET shadow stack</strong> (spec 2016; first silicon Tiger Lake, 2020; Windows 10 2004, 2020; Linux 6.6 user shadow stacks, Oct 2023; glibc enablement still landing, 2.41 era, 2024-2025). The CPU keeps a second, hardware-only stack of return addresses: <code>call</code> pushes to both, <code>ret</code> compares; mismatch raises a control-protection fault (#CP). This kills ch03's entire return-hijack economy — ROP, ret2libc, corrupted-frame pivots — for <em>every return in the process</em>. Cost: near-zero on CET CPUs (a parallel hardware push) plus 8 bytes per frame. The 17-year gap between Shacham (2007) and Linux 6.6 (2023) is the price of <em>runtime cooperation</em>: <code>setjmp</code>/<code>longjmp</code>, C++ unwinding, and fibers must restore the shadow stack or every legitimate unwind faults — hence the libc dependency and thin deployment as of 2025. IBT, CET's other half, restricts indirect branches to <code>ENDBR64</code> landing pads. Bypasses: forward-edge JOP between legal entries is untouched; data-only attacks ignore it.</p>
+<p><strong>Rung 8 — ARM PAC</strong> (Armv8.3-A pointer authentication; first consumer silicon Apple A12, iPhone XS, Sept 2018; Linux arm64 rotates per-process keys at execve, 2020-era kernels). Each function entry signs LR with a keyed MAC of the address and SP (<code>PACIBSP</code>); the epilogue authenticates (<code>AUTIBSP</code>) before returning, so a forged return address faults. Which gadgets die: everything that <em>loads a return address from corrupted memory and returns through it</em> — ROP chains, <code>pop x30; ret</code> pivots, ret2libc through overwritten frames. What survives: JOP/COOP to legitimate entries (forward edge — BTI and CFI's job), and <em>leaked</em> signed pointers, which are pre-forged — replay a leaked LR as-is. Bypass history: signing-oracle gadgets that sign attacker-chosen values (Liljestrand et al., EuroS&amp;P 2019), and PACMAN (2022, Apple M1), a speculative-execution oracle that recovers signatures bit-by-bit: leak, then forge. Cost: two instructions per frame, sub-1%, zero memory. Apple runs PAC in kernel and system code as the <code>arm64e</code> ABI — Apple's own binaries only as of 2024; third-party iOS code runs plain arm64.</p>
+<p><strong>Rung 9 — MTE</strong> (Armv8.5-A, 2019; first consumer hardware Tensor G3, Pixel 8, Oct 2023; kernel support 5.10-5.14, 2020-2021; Android 12 APIs, 2021; Chrome 128, Aug 2024, in its renderer on MTE hardware). This rung is different: it tags <em>data</em>, not control flow.</p>
+<pre><code class="language-text"> AArch64 pointer (48-bit VA + MTE):        memory, per 16-byte granule:
+ 63      56 55                          12 11    0   +--------+-----------+
++----------+-----------------------------+--------+   | tag 4b | 16 B data |
+| top byte |   virtual page number      | offset |   +--------+-----------+
+| (TBI)    |  MTE tag nibble rides here |        |     one tag per granule:
++----------+-----------------------------+--------+     4 bits / 128 data bits
+                                                     = 3.125% memory floor</code></pre>
+<p>Every tagged access compares pointer tag against granule tag; mismatch faults (sync: SIGSEGV, <code>si_code = SEGV_MTESERR</code>, at the faulting instruction, with the offending address) or is logged (async). What it kills: the <em>wild access itself</em> — a stale pointer into a freed-and-reclaimed slot survives only if the new occupant's tag matches: probability <strong>1/16</strong> per fresh process (tags re-roll per allocation; scudo — Android's default since Android 11, 2020 — staggers adjacent tags to break same-tag sprays). Out-of-bounds neighbors die the same way. Cost: ~4-5% runtime in sync mode (Arm's benchmarks) — the ladder's most expensive rung — plus the 3.125% metadata floor and granule rounding. Honest ledger: 1/16 is a number, not a wall — a restartable victim gives an expected 16 attempts, each failure a loud crash; sync converts ~94% of naive UAF attempts into a report with the faulting address. It is the first rung that <em>touches the bug</em>, not the payload.</p>
+<h2 id="the-ladder-assembled">The ladder assembled</h2>
+<p>One table, the whole arms race — read a row, then the bypass column top to bottom:</p>
+<div class="table-wrap"><table><thead><tr><th>Rung (born)</th><th>Lives in</th><th>What it kills</th><th>Cost</th><th>First bypass (flavor)</th></tr></thead><tbody><tr><td>Canary (1998)</td><td>compiler</td><td>linear overflow into RIP</td><td>~1% + 8 B/frame</td><td>leak it, brute it, walk around it (info/entropy/structure)</td></tr><tr><td>NX/DEP (2004)</td><td>PTE bit</td><td>injected shellcode</td><td>~0</td><td>ROP, Shacham 2007 (structure)</td></tr><tr><td>ASLR (2005)</td><td>kernel exec/mmap</td><td>precomputed addresses</td><td>~0</td><td>info-leak economy; brute force on 16-bit targets (info/entropy)</td></tr><tr><td>PIE (2015-18 default)</td><td>ELF ET_DYN + loader</td><td>fixed .text base</td><td>~1%</td><td>any code-pointer leak (info)</td></tr><tr><td>Full RELRO (-z now)</td><td>linker, mprotect</td><td>GOT overwrite, ret2dlresolve</td><td>startup ms</td><td>target moves to hooks/exit/FILE (structure)</td></tr><tr><td>CFI (2015)</td><td>compiler + LTO</td><td>cross-type vtable hijack</td><td>&lt;2% + link time</td><td>same-signature target, the "CFI downgrade" (structure)</td></tr><tr><td>CET shadow stack (2016/2020)</td><td>CPU + runtime</td><td>all return-hijack ROP</td><td>~0 + 8 B/frame</td><td>JOP between legal entries; data-only (structure)</td></tr><tr><td>PAC (2018)</td><td>CPU keys</td><td>forged return addresses</td><td>&lt;1%</td><td>signing oracles; leaked signed pointers; PACMAN 2022 (info)</td></tr><tr><td>MTE (2023, Pixel 8)</td><td>CPU + allocator</td><td>wild reads/writes (UAF/OOB)</td><td>~4-5% + 3.125% mem</td><td>1/16 per fresh process (entropy)</td></tr></tbody></table></div>
+<p>And what the ladder <em>cannot</em> do — attackers read the same table you do: <strong>it guards control flow, not data flow.</strong> An overflow that flips an <code>is_admin</code> flag or corrupts a length changes no return address and tags nothing wild — CFI, PAC, CET, and canaries are silent; MTE catches it only if the access is out-of-bounds rather than in-bounds-but-wrong. Side channels (ch07) corrupt nothing. The ladder raises prices; it does not repeal economics.</p>
+<h2 id="the-composite-stack-why-one-bug-is-no-longer-enough">The composite stack: why one bug is no longer enough</h2>
+<p>Run <code>checksec</code> on Chrome for Android, Pixel 8-class (Android 14, Chrome 128-era, arm64): PIE with 24-bit ASLR, NX, strong canaries, full RELRO, clang CFI in the renderer, BTI/PAC, MTE sync mode for Chrome's allocations — and beyond the ladder, the V8 heap sandbox (rolled out 2022-2024) and the seccomp renderer sandbox with site isolation. A working chain must buy: (1) the memory bug whose <em>use</em> survives MTE's 1/16 and steers inside CFI's lattice — frequently two bugs (a UAF plus a leak); (2) an info leak for ASLR/PIE if not already owned; (3) a renderer/V8-sandbox escape (usually an IPC/mojo bug); (4) a kernel privilege escalation. Four to five distinct vulnerabilities, chained and maintained across patch cycles — why full mobile chains fetched ~$500k at Pwn2Own (2023-2024) and seven figures from brokers (Zerodium-era pricing, 2019: up to $2.5M). In 1996, one bug was root. The ladder multiplied capabilities; capabilities are priced in bugs.</p>
+<p>Last derivation, the auditor's opening move: <strong>the ladder is only as strong as the weakest toolchain in the building.</strong> Every rung ships default-off somewhere — embedded vendor SDKs still emit 1996 binaries (no canary, no PIE, no RELRO). Before reading code, run <code>checksec</code>: it tells you whether you are auditing this chapter's ladder or ch02's playground.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The ASLR entropy ledger, by platform</strong>: x86-64 Linux (kernel 6.x, <code>randomize_va_space=2</code>): 28 bits for the mmap/PIE base (<code>vm.mmap_rnd_bits</code>, default 28, max 32), 22 page-granular bits for the stack gap, 8 for compat-32 mmaps (<code>mmap_rnd_compat_bits</code>). Android arm64: 18 bits until Android 12 (2021), 24 since. 32-bit Android: ~16 bits, brute-forceable in minutes. Windows DLLs and the iOS/macOS dyld shared-cache slide: per <strong>boot</strong>, not per process — one leak covers every process until reboot.</li>
+<li><strong>checksec's three half-truths</strong>: "Canary found" only means <code>__stack_chk_fail</code> is <em>imported</em> — one protected function anywhere sets it; "NX enabled" reads the <code>GNU_STACK</code> ELF header, not runtime page tables; "Full RELRO" is literally <code>BIND_NOW</code> in <code>.dynamic</code>. Insiders skip the tool and run <code>readelf -lW | grep -E 'GNU_STACK|GNU_RELRO'</code> and <code>readelf -dW | grep NOW</code>.</li>
+<li><strong>The default-on matrix</strong>: Ubuntu 22.04 plain <code>gcc</code>: canary + NX + PIE, RELRO <em>partial</em> (full needs explicit <code>-z now</code>). Visual Studio 2015+: <code>/GS /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA</code>. Chrome: full RELRO + PIE + strong canary + clang CFI (Android, 2017-2018) + MTE (Chrome 128, Aug 2024, Pixel 8-class). Android platform: scudo (Android 11+), branch protection from the Android 10-12 era, 24-bit arm64 ASLR (12+). The gap that pays for audits: firmware toolchains — often none of the above.</li>
+<li><strong>MTE tag math</strong>: 4-bit tags on 16-byte granules = 4/128 = 3.125% metadata floor; attacker success probability 1/16 per fresh process, expected 16 attempts on a restartable victim, each miss a SIGSEGV/<code>SEGV_MTESERR</code>; 8-bit tags would give 1/256 at 6.25% memory — Arm chose 4 bits as the knee of the cost curve.</li>
+<li><strong>glibc 2.34 (Aug 2021) deleted <code>__malloc_hook</code>/<code>__free_hook</code></strong> — the canonical post-full-RELRO write targets died in one release. The ledger moved to FILE vtables (constrained by <code>_IO_validate_vtable</code> to the <code>_IO_jump_t</code> family — House-of-Apple lore, ch04) and <code>__exit_funcs</code> (mangled with the TLS pointer guard — a second secret to leak).</li>
+<li><strong>Bug pricing folklore</strong> (how exploit authors talk about this chapter): ASLR/PIE = +1 leak (one .text pointer reveals the whole module); CFI = +0 or +1/2 (same-signature victim); PAC = +0 with a signed-pointer leak, +1 without; each sandbox layer = +1 escape. "Five bugs" = memory bug + leak + control-flow step + sandbox escape + kernel LPE. The interview trap: "PIE is ASLR" — no: PIE is the compile mode (ET_DYN) that makes the main binary randomizable; ASLR is the kernel shuffling, and <code>randomize_va_space=1</code> + non-PIE leaves <code>.text</code> fixed forever.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>One source file, four builds, and the ladder in a terminal:</p>
+<pre><code class="language-c">/* vuln.c — one frame with an array (canary bait) and one leaf without */
+#include &lt;string.h&gt;
+void leaf(int x) { (void)x; }          /* no array, no address taken: naked  */
+void hello(const char *s) {
+    char buf[16];                      /* array local: -strong protects this */
+    strcpy(buf, s);                    /* the 1996 bug                       */
+}
+int main(int argc, char **argv) { hello(argc &gt; 1 ? argv[1] : "x"); return 0; }</code></pre>
+<pre><code class="language-bash"># 1. the 1996 build, 2. distro default, 3. the hardened ladder
+gcc -fno-stack-protector -no-pie -Wl,-z,norelro,-z,execstack -o off  vuln.c
+gcc                       -o def  vuln.c
+gcc -fstack-protector-strong -fPIE -pie -Wl,-z,relro,-z,now -o hard vuln.c
+# 4. clang CFI — without -flto it is a compile error: the LTO requirement
+clang -flto -fsanitize=cfi -o cfi vuln.c   # (cfi-vcall proper needs C++; plain
+                                           #  C still gets the icall checks)</code></pre>
+<pre><code class="language-text">$ checksec --file=off          # classic-style output; 2.x adds Fortify columns
+RELRO      Canary      NX          PIE          FILE
+No RELRO   No canary   NX disabled No PIE       off    &lt;- -z execstack =&gt; RWE
+$ checksec --file=def          # Ubuntu 22.04 / gcc 11 baseline:
+Partial RELRO  Canary found  NX enabled  PIE enabled  def
+$ checksec --file=hard
+Full RELRO     Canary found  NX enabled  PIE enabled  hard</code></pre>
+<p>Confirm in the ELF itself:</p>
+<pre><code class="language-text">$ readelf -lW off | grep -E 'GNU_STACK|GNU_RELRO'
+  GNU_STACK      0x0 0x0 0x0 0x0 0x0 RW  0x10     &lt;- RWE would mean execstack
+(no GNU_RELRO line — its absence *is* the finding)
+$ readelf -lW hard | grep GNU_RELRO
+  GNU_RELRO      0x2dd8 0x2dd8 0x2dd8 0x227 0x227 R  0x1
+$ readelf -dW hard | grep -E 'NOW|FLAGS'            # full vs partial:
+  0x0000001e (FLAGS)      BIND_NOW                   # BIND_NOW = full RELRO
+  0x6ffffffb (FLAGS_1)    Flags: NOW</code></pre>
+<p>Now the canary, in the emitted code — the strongest evidence is which function does <em>not</em> get one:</p>
+<pre><code class="language-text">$ gcc -O0 -fno-stack-protector -c vuln.c -o a.o &amp;&amp; objdump -d a.o
+&lt;leaf&gt;:   push rbp; mov rbp,rsp; ...; ret          &lt;- naked
+&lt;hello&gt;:  push rbp; mov rbp,rsp; sub rsp,0x20; ... &lt;- naked
+$ gcc -O0 -fstack-protector-strong -c vuln.c -o b.o &amp;&amp; objdump -d b.o
+&lt;leaf&gt;:   push rbp; ...; ret                       &lt;- STILL naked: no array,
+                                                    no address taken — the
+                                                    scope rule, made visible
+&lt;hello&gt;:  ...  mov rax,QWORD PTR fs:0x28      &lt;- canary from TLS
+          ...  mov QWORD PTR [rbp-0x8],rax    &lt;- stored below locals
+          ...  xor eax,eax                    &lt;- can't leak it via rax
+          ...  mov rax,QWORD PTR [rbp-0x8]
+          ...  xor rax,QWORD PTR fs:0x28      &lt;- re-derive and compare
+          ...  je   .Lok
+          ...  call __stack_chk_fail          &lt;- abort: SIGABRT
+.Lok:     leave; ret
+$ readelf -s b.o | grep stack_chk
+  UND __stack_chk_fail                            &lt;- the import checksec saw</code></pre>
+<p>One rung up: <code>gcc -fcf-protection=full -c vuln.c</code>, then <code>objdump -d vuln.o | grep -c endbr64</code> — one <code>endbr64</code> landing pad per function entry: CET's IBT half as bytes. On arm64, <code>clang -mbranch-protection=standard -c vuln.c</code> emits <code>pacibsp</code> at entries. And <code>./hard $(python3 -c 'print("A"*17)')</code> dies loudly with <code>__stack_chk_fail</code> — 16 bytes survive, 17 do not.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Ship the flag line, gate it in CI.</strong> For C/C++ production binaries: <code>-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fPIE -pie -Wl,-z,relro,-z,now</code>, plus <code>-fcf-protection=full</code> (x86-64) or <code>-mbranch-protection=standard</code> (arm64), plus <code>-fsanitize=cfi</code> under LTO where the build can take it. One CI step that runs <code>checksec</code> and fails on regression — mitigations silently rot when a build-system rewrite drops a flag.</li>
+<li><strong>Read exploit write-ups with the ledger in hand.</strong> A GOT write that segfaults, pivoting to a FILE-vtable target — that is full RELRO doing its job and losing anyway, per the bypass column. You can reconstruct <em>which rungs a chain climbed</em> from the write-up alone — this module's promised skill.</li>
+<li><strong>Triage crashes by rung.</strong> <code>__stack_chk_fail</code> in the backtrace is not "a crash," it is a <em>caught linear stack overflow</em> — go straight to ch02 frame analysis. SIGSEGV with <code>SEGV_MTESERR</code> on Android is a genuine UAF/OOB touch — do not close it as flaky; the report holds the faulting address.</li>
+<li><strong>Budget and evaluate in bugs.</strong> The ladder under CFI costs roughly 2-3% combined on x86-64 userland (canary ~1%, PIE ~1%, CFI &lt;2%, the rest ~0); MTE's 4-5% + 3.125% is the only line item needing a meeting. And when a pentest delivers an RCE chain, count its bugs: one bug long means missing 2010-era defaults (fix the build, not the code); five means state of the art, and the fix is memory-safe languages at the bug <em>source</em> (module 01 ch10's payoff).</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch03</strong> — the page table is where ASLR's randomness, NX's bit 63, and RELRO's mprotect physically live; this ladder is a VM chapter in disguise. <strong>ch21</strong> — the ladder's first act; <strong>ch10</strong> — the rung that removes the bug instead of catching it.</li>
+<li><strong>Module 02 ch02</strong> — canary anatomy in full (terminator NUL, TLS, the off-by-one that dodges it); the 1,785-crash brute force derived here.</li>
+<li><strong>Module 02 ch03</strong> — the ROP/JOP/SROP economy NX created, and why the shadow stack took 17 years to answer it.</li>
+<li><strong>Module 02 ch04</strong> — the post-RELRO write-target ledger: tcache, FILE vtables, exit handlers, glibc vintages.</li>
+<li><strong>Module 02 ch05</strong> — the UAF duel: reclaim-vs-CFI lattice, reclaim-vs-MTE 1/16, and why the three-step pattern now needs a fourth step.</li>
+<li><strong>Module 05</strong> — where Android's defaults live: 24-bit arm64 ASLR (12), scudo, Pixel 8 MTE, Chrome 128. <strong>Module 06</strong> — iOS: arm64e PAC from A12, the per-boot dyld shared-cache slide, code signing as the trust chain.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Your build is non-PIE (ET_EXEC) and the box runs <code>randomize_va_space=1</code>. What is randomized, what is fixed, and what does the attacker get for free?</li>
+<li>A stale pointer to a freed 32-byte object on an MTE system in sync mode; each attempt is a fresh process. Expected attempts to a tag match, what does each failure cost, and why did Arm pick 4 tag bits over 8?</li>
+<li>A fork-server (identical children per request) runs glibc with stack canaries; the attacker overflows into the canary byte-at-a-time. Maximum number of child crashes, and why is the first byte free?</li>
+<li>A crash report shows <code>SIGABRT</code> with <code>__stack_chk_fail</code> in the backtrace after a <code>strcpy</code> into a 16-byte local. Why did the process abort <em>before</em> the return address mattered, and what does the canary actually protect?</li>
+<li>A pentest chain has an arbitrary write in a binary whose checksec reads "Full RELRO, PIE, NX, Canary found"; their write to <code>printf@got</code> faults. Why? Name two targets they reach for instead, and the extra secret one of them requires.</li>
+<li>"The ladder guards control flow, not data flow." Give one attack where every rung stays silent, and say why MTE does or does not catch it.</li>
+<li>Tie to module 01 ch03: which single hardware structure do ASLR and NX both live in, which PTE bit is NX on x86-64, and why is NX's runtime cost ~0 <em>because</em> of that structure?</li>
+<li>Order the 2024 Chrome-on-Pixel chain's five priced capabilities and match each to the rung or sandbox layer that forced it. Which rung first converted "one bug" into "two," and which rung is priced in expected attempts instead of bugs?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><code>randomize_va_space=1</code> randomizes the stack top, mmap region, and brk — not the main executable. A non-PIE binary's <code>.text</code> sits at link-time addresses (0x400000-style) forever — every gadget in the <em>binary itself</em> is free; randomized libc still needs a leak. PIE is the compile mode that closes this; ASLR is the kernel mechanism it depends on.</li>
+<li>Geometric with p = 1/16: expected 16 attempts. Each failure is a SIGSEGV (<code>SEGV_MTESERR</code>) that kills the process — loud, logged, and it re-rolls the tags, so failures accumulate no knowledge. 8-bit tags would give 1/256 per attempt but double the metadata floor to 6.25% of RAM (8/128 bits); Arm picked 4 bits as the memory-vs-resistance knee; sync mode's crash-per-miss does the rest.</li>
+<li>The low canary byte is always 0x00 (glibc's terminator), so it is known. Seven unknown bytes remain; the crash oracle (wrong guess = child dies, parent reforks with the <em>same</em> inherited canary) lets you iterate each byte's 255 wrong values: at most 7 x 255 = 1,785 crashes, expected ~7 x 127.5 ≈ 893. The fork-inheritance is the bug: exec re-randomizes, fork does not.</li>
+<li>The epilogue compared the frame's copy against TLS (<code>fs:0x28</code>) and found a mismatch, so <code>__stack_chk_fail</code> aborted <em>before</em> <code>ret</code> loaded the corrupted return address. The canary protects exactly one thing: the saved return path of instrumented frames. Diagnosis: a linear stack overflow (ch02) — and nothing <em>below</em> the canary was protected.</li>
+<li>Full RELRO ran <code>-z now</code>: PLT entries eagerly bound at startup, whole GOT read-only — the write hits a RO page. Post-glibc-2.34 targets: FILE vtables (constrained to the <code>_IO_jump_t</code> family by <code>_IO_validate_vtable</code> — House-of-Apple, ch04) and <code>__exit_funcs</code> handlers, mangled with the TLS pointer guard — that route needs a <em>second</em> secret leak.</li>
+<li>Example: an overflow that flips an <code>is_admin</code> boolean in <code>.data</code>, or corrupts a length to widen a later <em>legal</em> read. No return address, vtable, or indirect call changes: canary, CFI, PAC, and CET are silent. MTE stays silent <em>if</em> the access is in-bounds of validly tagged memory — tags catch wild accesses, not wrong-but-legal ones. That is why data-only corruption is the residual risk.</li>
+<li>The page table, and its cached form the TLB. ASLR only chooses which <em>virtual</em> addresses to map — the walk resolves them identically regardless of base. NX is PTE bit 63. Cost ~0: the hardware consults the PTE via the TLB on every access anyway; one more bit adds no work to a lookup that must happen regardless.</li>
+<li>(1) The memory bug whose <em>use</em> survives MTE's 1/16 and steers inside CFI's lattice (MTE, CFI); (2) an info leak for ASLR/PIE — the first rung in history to convert one bug into two (ASLR, 2005); (3) a CFI/PAC-compatible control step (forward edge — priced in target choice, often +0); (4) a renderer/V8-sandbox escape (+1); (5) a kernel LPE (+1). The rung priced in expected attempts rather than bugs is MTE: entropy (1/16 per fresh process), not structure.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch05.html"><span class="cn-label">previous</span><span class="cn-title">Ch 05</span></a>
+<a class="next" href="ch07.html"><span class="cn-label">next</span><span class="cn-title">Ch 07</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 02 — Memory security &amp; exploitation</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

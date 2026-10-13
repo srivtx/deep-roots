@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distributed memory — deep-roots</title>
+<meta name="description" content="Chapter 05 of module 09: Distributed memory">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Distributed memory — deep-roots">
+<meta property="og:description" content="Chapter 05 of module 09: Distributed memory">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Distributed memory — deep-roots">
+<meta name="twitter:description" content="Chapter 05 of module 09: Distributed memory">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 09 &middot; from MESI to consensus</div>
+<h1 class="post-title">Distributed memory</h1>
+<div class="post-meta">chapter 05 &middot; ~13 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Take what modules 01–09 assumed — one memory, one bus, one fate — and put it on a network. Nodes fail <em>partially</em>: the other node exists and doesn't, and you can't tell which; a message costs ~1 ms, not ~1 ns. Causality survives — Lamport clocks export happens-before as a per-node counter, vector clocks make "concurrent" decidable at O(N) cost. Durability survives as quorums (R + W &gt; N) and as consensus — in Raft the log <em>is</em> the distributed memory, the commit index the write barrier, the majority its durability. Availability survives as CRDTs: commuting operations that converge under any reorder.</blockquote>
+<h2 id="1-the-break-three-assumptions-die-at-once">1. The break: three assumptions die at once</h2>
+<p>A mutex on one machine (chapter 02) rests on three assumptions you never state: <strong>one fate</strong> (lock, data, and waiter share a kernel), <strong>one bus</strong> (MESI's agreed truth per cache line, ~100 ns answers), and <strong>one clock</strong> ("which write came first" was answerable). Distribute the state, and all three die.</p>
+<p><strong>Partial failure</strong> is the cruelest: a silent peer could be crashed, slow, or fine with your packet lost in transit — a timeout cannot distinguish the three. The other node exists <em>and</em> doesn't, and you can't even tell which. <strong>Latency</strong> kills the bus by three orders of magnitude per step of module 01 chapter 02's tower:</p>
+<pre><code> register ~0.4 ns | L1 ~1 ns | L2 ~4 ns | L3 ~15 ns | DRAM ~100 ns
+   -&gt; futex syscall 1-10 us (ch02)  -&gt; one RPC hop, same LAN, ~0.5-1 ms
+   -&gt; cross-region RTT 30-80 ms (public cloud inter-region, 2024)
+ every arrow = ~1000x -- and best-effort IP can also just LOSE things.</code></pre>
+<p>And the clock dies worst: NTP holds clocks within milliseconds while correctness cares about "who saw what" — you need an ordering that never consults the clock.</p>
+<h2 id="2-exporting-happens-before-lamport-clocks-then-vector-clocks">2. Exporting happens-before: Lamport clocks, then vector clocks</h2>
+<p>Chapter 01's happens-before imports almost unchanged: program order within a node, <strong>send → receive</strong> across nodes. How do we <em>label</em> events so the relation is computable? Lamport's 1978 answer: a counter per node. Increment on every local event; stamp every message; on receive, <code>c = max(c, stamp) + 1</code>. The theorem: <code>a → b</code> implies <code>L(a) &lt; L(b)</code> — one-way only. The scalar cannot say whether two stamps are causally ordered or unrelated: Lamport clocks capture ordering but are <strong>blind to concurrency</strong>.</p>
+<p><strong>Vector clocks</strong> (Mattern, Fidge, 1988–89) pay O(N) to close the gap: each node carries an N-vector, bumps its own slot on every event, ships the whole vector per message, and the receiver takes the componentwise max. Compare vectors A and B: <code>A ≤ B</code> componentwise ⇒ A happened-before B; <code>B ≤ A</code> ⇒ the reverse; <strong>neither dominates ⇒ concurrent</strong> — the same "did these two race?" predicate TSan computes per access pair (module 03 ch05). The price: N counters per event and per message — 8 bytes per slot, so 100 nodes pay 800 bytes of metadata per message, and comparison is O(N). Production systems prune — and the pruning itself was a bug farm.</p>
+<h2 id="3-replication-the-read-write-set-grows-up-and-r-w-n">3. Replication: the read/write set grows up, and R + W &gt; N</h2>
+<p>Data on exactly one node dies with it, so replicate: N replicas turn every logical write into a physical write-set, every read into a read-set — chapter 01's owner-to-read/write-sets move, networked. How many of each must succeed before you answer the client? Call them <strong>W</strong> and <strong>R</strong>, the write and read quorums.</p>
+<p>Pigeonhole: <strong>any read quorum of R and write quorum of W share at least R + W − N nodes.</strong> The useful middle is <strong>R + W &gt; N</strong>: the shared node must hold the last committed write, so the reader can find it — picking the newest version by <em>vector clock</em>, section 2. N = 3, R = W = 2 (the Dynamo paper default): overlap 1; writes survive one dead replica, reads stay fresh with one slow one. Cassandra's default <code>ONE</code>/<code>ONE</code> at RF = 3: R + W = 2 ≤ 3 — <strong>no overlap, stale reads legal</strong> — traded for latency: the consistency-latency exchange rate, one equation.</p>
+<p>Leader-follower logs are the structured special case: one replica is the entry point (chapter 04's single-owner principle, networked), appending to a log followers apply in order.</p>
+<h2 id="4-consensus-the-linearizable-write">4. Consensus: the linearizable write</h2>
+<p>Quorums replicate; they don't decide — two clients writing different values to overlapping quorums, or a write a majority saw but nobody was told "done", need one agreed sequence: <strong>consensus</strong>, the linearizable write. Its cleanest expression is Raft.</p>
+<p><strong>Raft in one page.</strong> Time divides into <strong>terms</strong> (monotonic); each has at most one leader, elected by majority vote with randomized timeouts (paper: 10–500 ms; etcd 3.4+: 100 ms heartbeat, 1000 ms election). The leader owns <strong>the log</strong>: entries, each stamped with the term that wrote it. A client write appends an entry; the leader replicates it; once a <strong>majority</strong> stores it, the leader advances the <strong>commit index</strong> — the barrier below which the log is <em>the</em> truth, durable against any minority crash — and only then acks. Failures compare logs: voters refuse less up-to-date candidates; followers refuse entries mismatching their prefix (<strong>log matching</strong>). The log is the distributed memory; the commit index the write barrier; the majority its durability. Watch:</p>
+<pre><code> 5 nodes (S1..S5).  [t:i] = entry at index i, written in term t.  CI = commit index.
+
+ t0  term 1, S1 leader, CI = 3:
+     S1 [1:1][1:2][1:3][1:4][1:5]   &lt;- entries 4,5 reached ONLY S2 (2/5)
+     S2 [1:1][1:2][1:3][1:4][1:5]      -&gt; not a majority -&gt; NOT committed
+     S3 [1:1][1:2][1:3]                -&gt; no ack was ever sent for 4,5
+     S4 [1:1][1:2][1:3]
+     S5 [1:1][1:2][1:3]             &lt;- all five: CI = 3
+
+ t1  S1 CRASHES. Timers fire (etcd default: 1 s no heartbeat); S3
+     stands for election, term 2.
+
+ t2  Up-to-date check, S3's last entry (term 1, index 3) vs each voter's:
+     S4, S5 same -&gt; grant. S2's log is longer -&gt; S2 refuses -- but 3/5
+     is already a majority. S3 leads term 2. (Leaders don't need the
+     longest log, just one a majority accepts as most up-to-date.)
+
+ t3  Client writes x=7. S3 appends [2:4], replicates to 3/5, advances
+     CI 3 -&gt; 4, acks. [1:1..1:3] commit too, via log matching.
+
+ t4  S2 (and a restarted S1) resync. AppendEntries at prevLogIndex=3:
+     S2's [1:4] mismatches -&gt; nextIndex backs up -&gt; S2 TRUNCATES
+     [1:4][1:5], takes the term-2 log. Uncommitted entries vanish --
+     legal: never committed, never acked. THE COMMIT INDEX IS THE
+     DURABILITY BARRIER.</code></pre>
+<p><strong>Why not two-phase commit?</strong> A coordinator broadcasts PREPARE, everyone locks and votes yes, it broadcasts COMMIT. The death window: the coordinator dies <em>after</em> collecting the yes votes, and participants hold locks in "prepared" — unable to commit or abort — until its successor digs through its logs. Consensus's superiority is structural: <strong>no single node's memory decides the outcome</strong> — the majority <em>is</em> the decision, so any surviving quorum can finish it.</p>
+<h2 id="5-commutative-memory-crdts-and-the-lww-pathology">5. Commutative memory: CRDTs, and the LWW pathology</h2>
+<p>Consensus buys linearizability by blocking: without a quorum, writes wait (CP). The other CAP fork accepts writes everywhere and reconciles later — workable only if reconciliation is order-independent. That is a <strong>CRDT</strong>: a replicated type whose operations commute, so reordering any two converges to the same state — the strongest availability you can buy.</p>
+<ul>
+<li><strong>G-Counter</strong>: each node increments only its own slot; merge = componentwise max; value = sum. Increments commute because addition does — a vector clock <em>worn as data</em>.</li>
+<li><strong>PN-Counter</strong>: two G-counters, P and N; value = sum(P) − sum(N).</li>
+<li><strong>OR-Set</strong> (observed-remove set): <code>add(x)</code> stores a <strong>unique tag</strong> — (x, uuid); <code>remove(x)</code> writes a <strong>tombstone</strong> for every (x, tag) the remover could <em>see</em>; membership = tags without tombstones. The concurrent add/remove resolves by construction: A adds x (new tag) while B removes x (killing only tags B observed) — the new tag survives, <strong>add-wins</strong>, because the remove never saw the tag it would need to kill. The tombstone <em>is</em> the remove; an unobserved add isn't in its kill list.</li>
+</ul>
+<p>The pathology is the shortcut people reach for instead of CRDT design: <strong>last-write-wins</strong> on timestamps. With millisecond NTP drift and out-of-order delivery, the earlier-arriving newer write is silently discarded — LWW doesn't delay data, it <em>eats</em> it, no error, forever; the Jepsen Cassandra and Elasticsearch findings were both LWW underneath.</p>
+<h2 id="6-the-menu-pacelc-jepsen-and-the-circle-closing">6. The menu, PACELC, Jepsen, and the circle closing</h2>
+<p>Everything above is one menu, ordered by the <strong>anomaly</strong> each level forbids:</p>
+<pre><code> strong +------------------------------------------------------+
+  | LINEARIZABLE  forbids: stale read after ack.  Write   |
+  | acked at real time t =&gt; every read after t sees it.   |
+  | Real time consulted (Raft ReadIndex, etcd linearizable |
+  | reads) = sequential consistency for a SINGLE location. |
+  | ----------------------------------------------------- |
+  | SEQUENTIAL    forbids: clients observing the same     |
+  | writes in opposite orders. One total order explains   |
+  | all; real time ignored. = SC, the interleaving        |
+  | fiction a mutex gave you (module 01 ch20).            |
+  | ----------------------------------------------------- |
+  | CAUSAL        forbids: seeing the reply before the    |
+  | post. Happens-before respected; concurrent writes may |
+  | still order differently per client.                   |
+  | ----------------------------------------------------- |
+  | READ-YOUR-WRITES  forbids: your own write bouncing    |
+  | back at you (sticky sessions fix it; others'          |
+  | staleness is fine).                                   |
+  v ----------------------------------------------------- |
+ weak | EVENTUAL    forbids: disagreeing forever.          |
+      | "Converge soon" -- by CRDT or by sync.             |
+      +------------------------------------------------------+</code></pre>
+<p>Each step down is an anomaly you accept; each step up, real-time ordering you pay for. <strong>CAP</strong>: under partition, pick availability or consistency. <strong>PACELC</strong> (Abadi, 2012) adds the honest clause: <em>Else</em> — no partition — you still pay <strong>latency or consistency</strong>: a linearizable read must contact a majority, a <code>ONE</code> read doesn't. The partition didn't create the price; it itemized it.</p>
+<p><strong>Jepsen</strong> (Kyle Kingsbury, 2013–) is the distributed TSan: run a database under client load while a <em>nemesis</em> partitions nodes (<code>iptables</code>), kills processes, skews clocks; then check the history against a formal model — a litmus test, automated, at cluster scale. Famous verdicts: 2013 Redis-with-Sentinel split-brained and lost 56% of acknowledged writes in a majority partition; 2013 MongoDB returned writes a deposed primary had acknowledged, then rolled back; 2014 Elasticsearch's LWW mappings silently dropped updates. Vendor consistency claims are hypotheses; Jepsen is the experiment — Knossos the formal-method checker.</p>
+<p>And the circle closes. Chapter 01's store-buffering litmus is the one-machine shape of "stale read after ack". A mutex gave you sequential consistency for a critical section, Raft gives it for one log; a <strong>linearizable register is sequentially-consistent behavior for a single location, with real time respected</strong>. The store buffer became the network, the fence became the quorum, MESI's one agreed truth per line became consensus — the memory model, one scale up, where module 01 chapter 20 said it started.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>Vector clocks cost O(N) everywhere</strong>: N slots per event, componentwise max per receive, 8 bytes per slot. Riak 1.x answered with pruning knobs (<code>small_vclock</code>/<code>big_vclock</code>, order of 50/100 entries) — and pruning bugs birthed "sibling explosions": one key, thousands of versions.</li>
+<li><strong>The R + W &gt; N arithmetic is exact, not a vibe</strong>: overlap = R + W − N ≥ 1. N = 3, R = W = 2 (Dynamo default) survives one dead replica; Cassandra's default <code>ONE</code>/<code>ONE</code> at RF = 3 gives overlap 0 — the number behind the marketing; <em>sloppy</em> quorums (hinted handoff) can violate even that.</li>
+<li><strong>LWW is a data-eater and it ships enabled</strong>: a node 50 ms behind on clock discards every newer racing write, silently. NTP holds a healthy LAN to ~1–10 ms, cloud outliers hundreds of ms — "just use timestamps" is how acknowledged writes vanish.</li>
+<li><strong>Jepsen culture</strong>: partition with <code>iptables</code>, skew clocks, kill primaries, model-check the observed history with Knossos. The 2013 canon — Redis+Sentinel losing 56% of acked writes, MongoDB's acknowledged-then-rolled-back writes — made "Jepsen-verified" table stakes for CP claims.</li>
+<li><strong>Quorum overlap is why the guarantees stack</strong>: the majority intersection that guarantees read freshness also guarantees Raft's election safety — two terms' majorities must share a node, and that voter saw the later term and refuses the stale leader. One pigeonhole argument, reused at every layer.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>Lab A — a two-node vector-clock playground.</strong> Two nodes, local events, one message, then parallel events — the case where Lamport scalars and vector clocks <em>disagree</em>:</p>
+<pre><code class="language-python"># vclock.py -- two-node vector-clock playground (CPython 3.11+)
+def le(A, B): return all(a &lt;= b for a, b in zip(A, B))   # componentwise &lt;=
+
+def relate(A, B):
+    if le(A, B): return "A -&gt; B (happens-before)"
+    if le(B, A): return "B -&gt; A (happens-before)"
+    return "CONCURRENT (no causal order either way)"
+
+class Node:
+    def __init__(s, me): s.me, s.v, s.l = me, [0, 0], 0  # v: vector, l: Lamport
+    def local(s):
+        s.v[s.me] += 1; s.l += 1; return tuple(s.v), s.l
+    def send(s):
+        s.v[s.me] += 1; s.l += 1; return tuple(s.v), s.l
+    def recv(s, mv, ml):                       # max-on-receive, both clocks
+        s.v = [max(a, b) for a, b in zip(s.v, mv)]; s.v[s.me] += 1
+        s.l = max(s.l, ml) + 1; return tuple(s.v), s.l
+
+A, B = Node(0), Node(1)
+a1 = A.local(); b1 = B.local()     # independent local events
+mv, ml = A.send()                  # A -&gt; B (one message)
+b2 = B.recv(mv, ml)                # the causal edge, imported
+a2 = A.local(); b3 = B.local()     # more parallel local events
+
+for x, y in [(a1, b2), (a2, b3), (a1, b1)]:
+    print(f"V={list(x[0])} L={x[1]}  vs  V={list(y[0])} L={y[1]}: {relate(x[0], y[0])}")</code></pre>
+<pre><code class="language-text">$ python3 vclock.py
+V=[1, 0] L=1  vs  V=[2, 2] L=3: A -&gt; B (happens-before)
+V=[3, 0] L=3  vs  V=[2, 3] L=4: CONCURRENT (no causal order either way)
+V=[1, 0] L=1  vs  V=[0, 1] L=1: CONCURRENT (no causal order either way)</code></pre>
+<p>Notice line 2: the Lamport scalars say L=3 &lt; L=4 — an <em>ordering that does not exist</em>; the split vectors [3,0] vs [2,3] are what a race looks like — the predicate TSan computes per access pair.</p>
+<p><strong>Lab B — a Raft failover, traced by hand.</strong> Work the section-4 diagram, answering before the annotations: (1) Why is entry 5 not lost when S2 truncates it? <em>Never committed: 2/5 replicas, no ack.</em> (2) Why do S4/S5 elect S3 when S2's log is longer? <em>Up-to-date is (term, length); 3/5 is a majority without S2.</em> (3) What commits as CI moves 3 → 4? <em>The prefix [1:1..1:3] too, via log matching.</em> (4) Where's the linearizability? <em>The ack for x=7 exists only once a majority stores the entry, and any future leader's majority must intersect it.</em> For a live one: a 3-member etcd (v3.5, docker) shows term and commit index in <code>etcdctl endpoint status -w table</code> — <code>RAFT TERM</code> / <code>RAFT INDEX</code>; kill the leader and watch the term tick up.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Debugging "impossible" data loss.</strong> Writes vanish in a replicated store — run the tree: was the ack issued (quorum / commit index)? If yes, suspect rollback bugs (Jepsen's MongoDB); if no, suspect LWW and clock skew; if versions were involved, suspect dropped siblings.</li>
+<li><strong>Choosing consistency levels with arithmetic.</strong> Know N, compute R + W − N, say the overlap out loud: <code>ONE</code>/<code>ONE</code> at RF = 3 is overlap 0 — legal staleness; <code>QUORUM</code>/<code>QUORUM</code> is overlap 1 at double the latency. PACELC's "else", priced.</li>
+<li><strong>Designing for availability on purpose.</strong> If your operations commute (counters, set adds, merges), a CRDT gives write availability <em>under partition</em> with guaranteed convergence — the one thing CAP says you can't otherwise buy.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 chapter 20</strong> — the origin: store buffers and SB's (0,0) are the one-machine stale-read-after-ack; MESI's per-line truth became consensus; this chapter is that one, three orders up.</li>
+<li><strong>Module 09 chapter 01</strong> — happens-before is the relation both clocks encode; send → receive is Lamport's cross-node rule, verbatim.</li>
+<li><strong>Module 09 chapter 02</strong> — the mutex bought one agreed order; Raft is the same purchase at cluster scale, election timeouts its contention backoff.</li>
+<li><strong>Module 09 chapter 03</strong> — reclamation discipline returns as tombstone GC in OR-Sets: when may you forget a remove?</li>
+<li><strong>Module 09 chapter 04</strong> — at-least-once delivery is why AppendEntries must tolerate duplicates; the mailbox is the lab's channel.</li>
+<li><strong>Module 11 chapters 04/05</strong> — the durability cousins: the WAL is log-as-truth with fsync as the barrier; MVCC version chains are the single-machine siblings — versions kept, conflicts decided.</li>
+<li><strong>Module 05 chapter 03 / Module 06 chapter 03</strong> — Binder and Mach/XPC, the platform IPC layers where the "network" is one copy away and partial failure reappears (dead proxies, dropped one-ways).</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> A request times out. Name the three peer states, why a longer timeout cannot distinguish them, and what this does to dead-or-alive as fact.</li>
+</ol>
+<ol>
+<li><strong>Concept.</strong> Lamport clocks guarantee <code>a → b ⟹ L(a) &lt; L(b)</code>. Why is the converse's failure the reason vector clocks exist, and what becomes decidable at O(N) cost?</li>
+</ol>
+<ol>
+<li><strong>Predict the guarantee.</strong> A 5-node store runs R = 2, W = 2. Compute the read-write overlap, name the anomaly now legal, and give the minimal fix.</li>
+</ol>
+<ol>
+<li><strong>Predict the output.</strong> Before running the lab: A is at V = [3, 0], B at V = [2, 3]. What does <code>relate</code> print, and what would the Lamport scalars print?</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis.</strong> An LWW-resolved column loses ~0.1% of writes during a network blip; no errors logged, no failure detector fires. Give the exact mechanism — two writes, one clock.</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis.</strong> 2PC: the coordinator dies after all participants vote PREPARE-yes. What do participants hold, for how long, and what structural property of Raft closes the window?</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis.</strong> From the section-4 trace: the term-2 leader truncates S2's [1:4] and [1:5]; a teammate files "data loss in our Raft cluster." Refute it with the commit index and the ack rule.</li>
+</ol>
+<ol>
+<li><strong>Cross-module (module 01 ch20 / 09 ch01).</strong> Map store-buffering onto this chapter — the two private buffers, the missing fence, the (0,0) outcome — and name the rung that forbids it, and the weaker rung that permits it.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Crashed, slow, or fine-with-lost-traffic.</strong> A timeout measures <em>my</em> absence of an answer, conflating peer, network, and load state; lengthening it only trades detection latency against accuracy. One machine has a kernel that knows a thread is runnable or not; distributed, "alive" is a per-observer opinion — so systems <em>agree</em> on fates (terms, leases, quorums) rather than discover them.</li>
+</ol>
+<ol>
+<li><strong><code>L(a) &lt; L(b)</code> does not imply <code>a → b</code></strong> — the scalar collapses "caused" and "merely later-numbered" into one order, hiding concurrency. Vector clocks make concurrency itself decidable: neither <code>A ≤ B</code> nor <code>B ≤ A</code> proves the third state, "concurrent" — the race predicate, at the cost of N counters per event.</li>
+</ol>
+<ol>
+<li><strong>Overlap = 2 + 2 − 5 = −1, i.e. 0 shared nodes.</strong> A read's R = 2 nodes can both sit in the 3 nodes the write's W = 2 never touched — stale reads after completed writes are legal. Minimal fix: R = 3 (or W = 4), overlap ≥ 1, at one extra node per read — PACELC's "else" priced.</li>
+</ol>
+<ol>
+<li><strong><code>CONCURRENT (no causal order either way)</code></strong> — A's slot 0 is 3 &gt; 2 while its slot 1 is 0 &lt; 3, so neither vector dominates. The Lamport scalars print L = 3 &lt; L = 4, which <em>looks</em> ordered — the trap: scalars manufacture order where none exists. (Lab line 3 is the other half: equal scalars, equally silent.)</li>
+</ol>
+<ol>
+<li><strong>Two clients write the same key nearly simultaneously; the write with the genuinely newer value carries an older timestamp because its node's clock is behind.</strong> LWW resolves to the "newer" timestamp and silently discards the actual later write — as a normal update, so no error or detector fires. Fix ladder: client timestamps → version vectors → CRDT value types.</li>
+</ol>
+<ol>
+<li><strong>Participants hold locks and in-doubt prepared state until a new coordinator recovers the decision from the old one's log — blocked for failover time, potentially minutes.</strong> Raft's structural difference: the decision lives in a majority of replicas — any surviving majority <em>is</em> the outcome, and the window closes by election.</li>
+</ol>
+<ol>
+<li><strong>Nothing was lost, because nothing was promised.</strong> Entries 4 and 5 existed on 2 of 5 nodes — below the majority barrier — so CI never advanced past 3; no client was acked. Raft's contract: acked ⇒ committed ⇒ on a majority ⇒ survives any failover. The real bug is client code treating "accepted by the old leader" as "durable".</li>
+</ol>
+<ol>
+<li><strong>Each core's store buffer ↔ each node's private, unsynchronized state; the missing fence ↔ the missing quorum/consensus round; the (0,0) outcome ↔ a read that misses an acknowledged write.</strong> The rung forbidding it is <strong>linearizable</strong> — real time respected: ack at t forces reads after t to see it. <em>Sequential</em> permits it: SC ignores real time, as the interleaving fiction let the stale interleaving stand.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch04.html"><span class="cn-label">previous</span><span class="cn-title">Ch 04</span></a>
+<a class="next" href="index.html"><span class="cn-label">next</span><span class="cn-title">Module index</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 09 — Concurrency &amp; distributed memory</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

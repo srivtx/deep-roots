@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mach ports &amp; XPC — deep-roots</title>
+<meta name="description" content="Chapter 03 of module 06: Mach ports &amp; XPC">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Mach ports &amp; XPC — deep-roots">
+<meta property="og:description" content="Chapter 03 of module 06: Mach ports &amp; XPC">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Mach ports &amp; XPC — deep-roots">
+<meta name="twitter:description" content="Chapter 03 of module 06: Mach ports &amp; XPC">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 06 &middot; a memory-distrust machine</div>
+<h1 class="post-title">Mach ports &amp; XPC</h1>
+<div class="post-meta">chapter 03 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Two processes cannot name each other's memory (module 01 ch03), so IPC is a memory problem. A Mach port is a message queue that lives <em>in the kernel</em>; the right to use it (send, receive, send-once, port set) is an entry in a per-task table you can only acquire by being handed one — an unforgeable capability. Messages are a 24-byte header plus typed descriptors; an out-of-line (OOL) descriptor is memory the kernel copies — or, page-aligned, <em>moves</em> — into the receiver's space, transferring page ownership. MIG compiles interface definitions into RPC stubs (module 05 ch03's AIDL pattern, again), and XPC wraps it all: launchd-bootstrapped services, typed dictionaries, a kernel-stamped audit token naming the caller. Rights are reference-counted kernel objects, so dangling rights are impossible by construction — an entire use-after-free family (module 03 ch02) dies here.</blockquote>
+<h2 id="the-referee-problem-why-the-queue-lives-in-the-kernel">The referee problem: why the queue lives in the kernel</h2>
+<p>Two tasks share zero memory (module 06 ch01: a task is a VM map, threads, and a port table), so anything A tells B crosses through the one address space both trust — the kernel. A pipe or socket (the BSD half of XNU) makes the crossing with two copies. Copying solves neither identity nor authority:</p>
+<ul>
+<li><strong>Identity.</strong> If "who sent this" is a field the sender wrote, the answer is a lie; only the kernel witnessed the call.</li>
+<li><strong>Authority.</strong> "Check a uid on every operation" is <em>ambient</em> authority: permission derives from who the process is, not what it was handed. If B holds power and A can talk B into exercising it, B is a confused deputy — and the check runs <em>before</em> the use, a check-to-use window to race.</li>
+</ul>
+<p>Mach's answer (CMU, mid-1980s; inherited by XNU essentially unchanged): make the queue a kernel object. A <strong>port</strong> is a kernel-protected message queue with a bounded backlog, and one trap — <code>mach_msg</code> — sends, receives, and does timed variants of both. It is a Mach trap, not a BSD syscall (module 06 ch01's two number spaces). The kernel referees queueing, identity (it stamps the sender into the message), and teardown.</p>
+<h2 id="a-right-not-a-name-the-capability-derivation">A right, not a name: the capability derivation</h2>
+<p>User code refers to a port by a <code>mach_port_name_t</code> — a 32-bit index into <em>your task's</em> port table; the kernel entry behind it says which right you hold. Why this is a capability, not a permission string:</p>
+<ol>
+<li><strong>You cannot manufacture a table entry.</strong> Entries arise three ways: inherited at spawn, inserted when a message <em>carrying a right</em> is delivered to you, or created by <code>mach_port_allocate</code>. Guessing a name achieves nothing: no entry, no right, <code>mach_msg</code> fails with <code>MACH_SEND_INVALID_DESTINATION</code>.</li>
+<li><strong>Every use is validated against the table.</strong> The permission check and the capability are the same object — no separate check to race. Possession <em>is</em> the permission.</li>
+<li><strong>The table is kernel memory</strong>, which your process cannot write (module 01 ch03's page tables are the premise). The handle is an index, not a pointer — exactly what makes it unforgeable.</li>
+</ol>
+<p>The right kinds (XNU as of macOS 14 / iOS 17, arm64):</p>
+<ul>
+<li><strong>Send right</strong> — enqueue; any number of holders, reference counted.</li>
+<li><strong>Receive right</strong> — dequeue; exactly <em>one</em> holder per port, ever. Holding it <em>is</em> being the service.</li>
+<li><strong>Send-once right</strong> — enqueue exactly one message, then self-destructs; the reply mechanism, derived below.</li>
+<li><strong>Port set</strong> — a container of receive rights; one blocking receive returns the first message from any member, so one thread watches many services.</li>
+<li><strong>Dead name</strong> — what a right becomes when the port dies: inert but observable — how you learn a peer is gone.</li>
+</ul>
+<p>The load-bearing mechanism: <strong>you can send a send right inside a message.</strong> The kernel parses the descriptor, bumps the reference count, inserts a fresh right into the receiver's table. That one operation is capability delegation — launchd, XPC, and every handshake below is this move repeated.</p>
+<h2 id="the-message-24-bytes-of-header-and-descriptors-that-change-hands">The message: 24 bytes of header and descriptors that change hands</h2>
+<p>A message is a fixed header, an optional descriptor list, and inline data. On a 64-bit Apple platform (XNU, macOS 14) the header is 24 bytes — six 32-bit words, <em>no</em> 64-bit fields, because ports are names, not pointers.</p>
+<pre><code class="language-text">offset  field              size   meaning
+------  -----------------  -----  ----------------------------------
+  0     msgh_bits          4 B    descriptor types; complex flag
+  4     msgh_size          4 B    whole message size in bytes
+  8     msgh_remote_port   4 B    destination (send) / reply (rcv)
+ 12     msgh_local_port    4 B    reply port / sender
+ 16     msgh_voucher_port  4 B    vouchers (10.9 era); usually NULL
+ 20     msgh_id            4 B    operation number (MIG subsystem)
+------  -----------------  -----  ----------------------------------
+ total                      24 B  (six 32-bit words, no 64-bit fields)</code></pre>
+<p>If <code>msgh_bits</code> marks the message <em>complex</em>, the body is a typed descriptor list the kernel must parse — Binder's offsets-table idea (module 05 ch03): a wire format the kernel only half-parses. A <strong>port descriptor</strong> moves a right to the receiver; an <strong>OOL ports descriptor</strong> moves an array of them; an <strong>OOL memory descriptor</strong> is where IPC meets memory lifecycle.</p>
+<p>Inline data is copied into a kernel message object (<code>ipc_kmsg</code>, from module 06 ch01's kalloc zones) at send and into the receiver's buffer at receive — two copies, fine for kilobytes. An OOL descriptor instead names a range in the <em>sender's</em> space, and at send time the kernel wraps those pages in a <code>vm_map_copy</code> object:</p>
+<pre><code class="language-text">     SENDER (task A)            KERNEL                      RECEIVER (task B)
++-------------------+  +------------------------+  +--------------------------+
+| mach_msg(SEND)    |  | port 0x2f03: the queue |  | thread blocked in        |
+|  header 24 B      |-&gt;| [msg A][msg B][...]    |-&gt;| mach_msg(RCV)            |
+|  remote = 0x2f03  |  | one kmsg each          |  | header+descriptors copied|
+|  local  = 0x33    |  | (kalloc-backed)        |  | into the rcv buffer      |
+|  (send-once reply |  +------------------------+  +--------------------------+
+|   right)          |  | OOL 64 KB descriptor:  |  | OOL 64 KB re-appears at  |
+| OOL 64 KB at      |  | COPY: pages copied     |  | a kernel-chosen address, |
+|  0x10400000       |  | ONCE into kernel mem;  |  | MAPPED into B's map.     |
+| sender's pages    |  | aligned+deallocate:    |  | B OWNS them and must     |
+| UNTOUCHED (COPY)  |  | pages MOVE, 0 copies   |  | vm_deallocate() them.    |
+| or GONE           |  +------------------------+  +--------------------------+
++-------------------+
+                       last send right dies -&gt; NO_SENDERS notification
+                       to the receive-right holder</code></pre>
+<p>The receiver's descriptor comes back with a <em>new</em> address: fresh pages mapped into its map, which the receiver owns and must <code>vm_deallocate</code> — ownership transfer, not sharing. With the <code>deallocate</code> bit set and the range page-aligned, the kernel <em>moves</em> the pages: zero copies, the sender's mapping vanishes, the pages reappear in the receiver — the ownership semantics Rust and Erlang give message passing (module 09 ch04), built from module 01 ch03's page-mapping machinery.</p>
+<p>The cost ledger: inline = two copies of few bytes; OOL = one copy (or zero) plus remapping plus receiver-owned teardown. The theoretical inline ceiling, <code>MACH_MSG_SIZE_MAX</code>, is just under 2 GiB (XNU), but kmsg bodies come from kalloc and the idiom is kilobytes inline, pages out-of-line — the same ledger as Binder: sockets 2, Binder 1 (into a mapped pool), Mach inline 2, Mach OOL 1-or-0 plus remapping.</p>
+<h2 id="mig-the-stub-generator-you-already-met-as-aidl">MIG: the stub generator you already met as AIDL</h2>
+<p>Raw <code>mach_msg</code> means hand-built headers, descriptor lists, reply ports, error paths. MIG (Mach Interface Generator) compiles a <code>.defs</code> interface into C: client stubs that marshal arguments and await the reply, plus a server-side dispatch table and a <code>mach_msg_server</code> receive loop; the routine's number rides in <code>msgh_id</code>.</p>
+<p>Two disassembly recognition keys (module 04's skill): MIG <strong>reply IDs are request ID + 100</strong> — a rule from the CMU server-writer's guide that XNU's generated code still follows — and server routines are emitted with an <code>_X</code> prefix, dispatched from a per-subsystem table; <code>mig_get_reply_port</code> and <code>MIG_TYPE_ERROR</code> complete the fingerprint. It is exactly AIDL's architecture (module 05 ch03): IDL in, stubs plus a dispatch switch out.</p>
+<h2 id="port-death-no-more-senders-and-the-bug-class-that-dies-here">Port death, no-more-senders, and the bug class that dies here</h2>
+<p>When a task exits, the kernel walks its port table and drops every right (every right is a reference-counted kernel object). Two notifications turn that bookkeeping into application-visible lifecycle:</p>
+<ul>
+<li><strong><code>MACH_NOTIFY_NO_SENDERS</code></strong> — delivered to the receive-right holder when the last send right dies. Not default: you arm it with <code>mach_port_request_notification</code>, and it carries the port's <em>make-send count</em> (monotone count of send rights ever created) so a late arming is detectable — arm before publishing the right via launchd. This is how a service notices it has no clients left.</li>
+<li><strong>Dead name</strong> — when a port is destroyed, every right still held on it converts to a dead name; a client holding a send right to a crashed service learns of the death this way, and its next send returns <code>MACH_SEND_INVALID_DESTINATION</code>.</li>
+</ul>
+<p>Send-once closes the reply loop: each MIG request carries a fresh send-once right to a reply port; the server's one reply consumes it, and a server death turns the client's right into a dead name — completion-or-death with no polling.</p>
+<p>The payoff: <em>dangling rights are impossible.</em> Module 03 ch02's use-after-free is a pointer that outlives its object, so the memory is reused and the stale handle resolves to live-but-wrong data. Here the handle is an index into a kernel table validated on every use; a dropped right is an entry the kernel removed. A stale name is either invalid (clean error) or — after slot recycling — a name the <em>kernel</em> reassigned to a new right: you cannot manufacture "a valid right to an object I shouldn't reach." The UAF family is not patched here; it is defined out of existence. What survives is logic — who <em>you</em> delegated rights to — which is why iOS exploit chains start with logic bugs, not memory bugs.</p>
+<h2 id="xpc-launchd-typed-dictionaries-and-the-audit-token">XPC: launchd, typed dictionaries, and the audit token</h2>
+<p>XPC (libxpc) is the user-space wrapper, every piece a thin layer over the machinery above:</p>
+<ul>
+<li><strong>Bootstrapping.</strong> launchd (pid 1) holds the receive rights. Every task inherits a <em>bootstrap port</em> (a task special port) from its parent. A daemon's plist carries a <code>MachServices</code> dictionary: launchd creates the named port, holds the receive right, spawns the daemon on demand, and hands the receive right over at <code>bootstrap_check_in</code> — with the first client message already waiting. Clients get a send right via <code>bootstrap_look_up(bootstrap_port, "name")</code> — spawn-on-first-lookup, servicemanager's role (module 05 ch03). Lookups are scoped to <em>domains</em> — system (LaunchDaemons) versus per-login GUI (LaunchAgents) on macOS; a service in one is invisible from the other.</li>
+<li><strong>Serialization.</strong> An XPC message is a typed tree — <code>xpc_dictionary</code> of <code>xpc_string</code>, <code>xpc_int64</code>, <code>xpc_bool</code>, <code>xpc_data</code>, <code>xpc_uuid</code>, <code>xpc_array</code>: JSON with typed atoms. Underneath, libxpc builds a Mach message, and large <code>xpc_data</code> buffers ride OOL descriptors.</li>
+<li><strong>Caller identity.</strong> The <strong>audit token</strong> is 32 bytes — eight 32-bit words: pid, pid-version (guards pid reuse), real and effective uid/gid, audit session id, a version word, and (macOS 12.3 / iOS 15.4+) an eighth word of kernel-validated code-signing identity. It is <em>not</em> in the message body: the kernel stamps it into the trailer of every Mach message received with the audit trailer requested — the sender cannot forge what it cannot write.</li>
+</ul>
+<p>The pattern this enables is privilege separation: a large untrusted UI app plus a small XPC daemon holding the entitlement or the root access — the <em>small trusted core</em>, whose attack surface is its handlers, whose first job per message is to check the audit token against a code-signing requirement (<code>SecCodeCopyGuestWithAttributes</code>). The capability model authenticates the <em>connection</em>; what you do with that is still your policy — XPC bugs are almost always policy bugs.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><code>mach_msg_header_t</code> is 24 bytes on 64-bit Apple platforms — six 32-bit words including <code>msgh_voucher_port</code>, which nearly everyone leaves as <code>MACH_VOUCHER_NULL</code> (the OS X 10.9-era voucher mechanism). Ports staying 32-bit <em>names</em> on LP64 is the unforgeability story in miniature.</li>
+<li>MIG reply IDs are request ID + 100; server routines carry the <code>_X</code> prefix; the per-subsystem dispatch table plus <code>mach_msg_server</code> and <code>MIG_TYPE_ERROR</code> are your MIG fingerprint in disassembly.</li>
+<li><code>xpc_connection_get_audit_token</code> returns the token of the <em>most recently received message</em>, so it changes per message. Authorize inside the handler, never once at setup — the classic XPC TOCTOU.</li>
+<li><code>MACH_NOTIFY_NO_SENDERS</code> must be armed, and it carries the make-send count precisely so you can detect arming late — arm before publishing the right through launchd.</li>
+<li>On iOS, <code>task_for_pid</code> on another process needs an entitlement (debug builds get <code>get-task-allow</code>), so Mach-level debugging of <em>other</em> apps is Mac-only (module 06 ch05 signs that gate).</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>On a Mac (commands from macOS 14, arm64; if you have no Mac, read this as a documented walkthrough — output fragments abridged, field names as shipped).</p>
+<p><strong>1. launchd's service table.</strong></p>
+<pre><code class="language-bash">sudo launchctl print system/com.apple.securityd</code></pre>
+<pre><code class="language-text">        domain = system
+        mach services = {
+                "com.apple.securityd" =&gt; 0 users
+        }</code></pre>
+<p>The <code>mach services</code> block is the <code>MachServices</code> registration — the bootstrap name whose receive right launchd owns or has handed off. <code>launchctl print gui/$(id -u)</code> shows the per-login GUI domain.</p>
+<p><strong>2. A minimal XPC service, anatomized.</strong> An XPC bundle's <code>Info.plist</code> is nearly empty on purpose:</p>
+<pre><code class="language-xml">&lt;dict&gt;
+    &lt;key&gt;CFBundleIdentifier&lt;/key&gt;&lt;string&gt;com.acme.thumbnailer&lt;/string&gt;
+    &lt;key&gt;CFBundlePackageType&lt;/key&gt;&lt;string&gt;XPC!&lt;/string&gt;
+    &lt;key&gt;XPCService&lt;/key&gt;
+    &lt;dict&gt;
+        &lt;key&gt;ServiceType&lt;/key&gt;&lt;string&gt;Application&lt;/string&gt;
+        &lt;key&gt;RunLoopType&lt;/key&gt;&lt;string&gt;dispatch_main&lt;/string&gt;
+    &lt;/dict&gt;
+&lt;/dict&gt;</code></pre>
+<p><code>XPC!</code> tells the loader this is a service, not an app; <code>RunLoopType: dispatch_main</code> says the service's main is a GCD run loop (the <code>EVFILT_MACHPORT</code> receive loop). The launchd side registers the name:</p>
+<pre><code class="language-xml">&lt;key&gt;MachServices&lt;/key&gt;
+&lt;dict&gt;&lt;key&gt;com.acme.thumbnailer&lt;/key&gt;&lt;true/&gt;&lt;/dict&gt;</code></pre>
+<p>That key is the bootstrap registration — the name launchd answers <code>bootstrap_look_up</code> for; find live examples with <code>plutil -p /System/Library/LaunchDaemons/*.plist</code>.</p>
+<p><strong>3. Ports on a live process.</strong></p>
+<pre><code class="language-bash">sudo lsmp -p 1                          # launchd: hundreds of receive rights
+lsmp -p $(pgrep -x Finder)
+lsof -p $(pgrep -x Finder) | grep KQUEUE</code></pre>
+<pre><code class="language-text">$ lsmp -p 501                     # abridged
+  port name    rights
+    0x103      send               &lt;- client rights: just names
+    0x2f03     recv               &lt;- the one and only receive right
+    0x3503     send-once
+    0x400a     dead name</code></pre>
+<p><code>lsmp</code> shows the port table with the right kind per name — the capability table made visible. In <code>lsof</code>, the KQUEUE rows are the <code>EVFILT_MACHPORT</code> watchers GCD uses to drain port sets — the receive loop, in fd-table form.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Privilege-separation design.</strong> Put the entitlement in the smallest XPC daemon that can hold it; keep the UI app sandboxed. Design the API for hostile callers, and gate every handler on a per-message audit-token check against a code-signing requirement — not on the existence of a connection.</li>
+<li><strong>IPC debugging.</strong> "Connection invalidated" is a dead-name notification: the peer's receive right is gone. Work the ladder: did the service crash (launchd relaunches it — reconnect, don't cache endpoints), is the name registered (<code>mach services</code> in <code>launchctl print</code>), and are you in the <em>same bootstrap domain</em>?</li>
+<li><strong>Performance decisions.</strong> Run the copy ledger before shipping payloads: kilobytes inline, pages OOL, aligned-plus-deallocate for zero-copy handoffs. A 2 MB <code>xpc_data</code> per keystroke is a self-inflicted battery drain.</li>
+<li><strong>Reverse engineering.</strong> MIG fingerprints (<code>_X</code> routines, reply ID + 100, subsystem tables) let you name a server's API from a dump before reading a handler — and the audit-token check (or its absence) is the first thing to audit in any XPC daemon. "Why do iOS exploit chains start with logic bugs?" — because this layer made dangling rights impossible, leaving policy mistakes in capability <em>delegation</em>.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 05 ch03 (Binder)</strong> — the copies-counting derivation repeats one for one; AIDL ↔ MIG, servicemanager ↔ launchd, Parcel offsets table ↔ Mach descriptor list; Binder's one copy into a mapped pool versus Mach's OOL remap.</li>
+<li><strong>Module 01 ch03 (virtual memory)</strong> — OOL messaging <em>is</em> the VM machinery (page mapping, <code>vm_map_copy</code>, deallocation) reused as transport.</li>
+<li><strong>Module 09 ch04 (actors &amp; channels)</strong> — a port is an actor mailbox; send-once and OOL transfer are message-passing-as-ownership-transfer; port sets are the selective-receive problem in kernel clothing.</li>
+<li><strong>Module 03 ch02 (UAF family)</strong> — kernel-table validation plus reference-counted rights define dangling rights out of existence: "every pointer needs an owner," enforced by the kernel.</li>
+<li><strong>Module 06 ch01</strong> — tasks own port tables; <strong>module 06 ch05</strong> — the audit token's eighth word and the code-signing machinery behind it.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>On a 64-bit Mac (XNU, macOS 14), how many bytes is <code>mach_msg_header_t</code>, why doesn't it grow on LP64, and which field would you remove to recover the 20-byte pre-voucher layout — breaking what?</li>
+<li>Task A sends task B a 64 KB buffer as an OOL descriptor with plain COPY semantics. B crashes after the message is queued but before receiving it. What happens to the 64 KB, and who ran the code that decided that?</li>
+<li>An XPC handler reads a <code>"uid"</code> integer from the message dictionary and, if it equals 0, performs the privileged operation. Name the bug, the threat, and the fix.</li>
+<li>A daemon calls <code>bootstrap_look_up</code> for a helper on every request but never calls <code>mach_port_deallocate</code> on the returned send right. What grows, what never fires, and why is this worse than a normal leak?</li>
+<li>Why does MIG build its reply port as a send-once right rather than a plain send right? Give the security reason and the lifecycle reason.</li>
+<li>"Checking a uid on every operation" and "holding a send right" both control access. What does the first permit that the second makes structurally impossible? Use the confused deputy and the check-to-use window.</li>
+<li>In a kernel disassembly you find <code>_Xhost_info</code>, a table of function pointers indexed by message ID, and replies whose IDs are exactly 100 more than the requests. What generated this code, and what is the table?</li>
+<li>Compare three transports for a 4 MB payload: a POSIX socket, a Binder transaction (module 05 ch03), and a Mach OOL descriptor with page-aligned <code>deallocate</code>. Count copies, name who frees, and say which hits a hard size limit first.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>24 bytes</strong> — six 32-bit words: <code>msgh_bits</code>, <code>msgh_size</code>, <code>msgh_remote_port</code>, <code>msgh_local_port</code>, <code>msgh_voucher_port</code>, <code>msgh_id</code>. No LP64 growth because ports are 32-bit <em>names</em> — indices into the per-task port table, never pointers; an index, not an address, is why it cannot be forged. Removing <code>msgh_voucher_port</code> recovers the 20-byte pre-voucher layout, breaking voucher users and the header ABI.</li>
+<li>The kernel. B's teardown destroys its port table; a destroyed receive right destroys its queued messages, and destroying a message destroys its descriptors — the <code>vm_map_copy</code> is released, pages freed, no user-space code involved: the kernel is the reference counter of trust.</li>
+<li>The bug: authenticating from <em>message contents</em> — self-attested identity. Anyone who can look up the name gets a send right and can claim uid 0. Fix: read identity from the <strong>audit token</strong> the kernel stamped into the trailer (pid, pid-version, uids; macOS 12.3+ the code-signing word), and verify the calling <em>code</em> against a signing requirement (SecCode/SecTask) — inside the handler, since <code>xpc_connection_get_audit_token</code> reflects only the latest message.</li>
+<li>What grows: kernel memory — each lookup creates a new send right (a reference-count bump plus a kalloc-backed table entry), leaked per request. What never fires: <code>MACH_NOTIFY_NO_SENDERS</code> — the leaked rights keep the count above zero, so the helper never learns "no clients left." Worse than a userspace leak: charged to kernel memory, and it pins someone else's lifecycle.</li>
+<li>Security: a send-once right is usable exactly once, so a stolen or replayed reply port cannot be spammed or reused. Lifecycle: consumed by the reply, or turned into a dead name when the server dies — an automatic completion-or-death signal, which is how timeouts work with no polling.</li>
+<li>Ambient authority keeps re-deriving permission from the caller's identity per operation, and the power stays addressable by anyone passing the identity check — a deceived privileged process (confused deputy) acts on the attacker's behalf, and an operation approved at check time can differ at use time. A capability holder cannot even <em>name</em> a resource it was never handed: no table entry, no check to fool, no window to race. Capabilities authenticate the channel, not intent — the audit-token policy is still yours.</li>
+<li>MIG, the Mach Interface Generator, which compiled a <code>.defs</code> subsystem (here <code>host_info</code>) into client stubs and a server: <code>_X</code>-prefixed routines, a per-subsystem dispatch table indexed by <code>msgh_id</code>, reply IDs = request ID + 100 — the demultiplexer <code>mach_msg_server</code> feeds with dequeued requests.</li>
+<li>Socket: two copies (into a kernel buffer, out to the receiver); the receiver frees its own buffer. Binder: one copy — the parcel lands in the receiver's pre-mapped ~1 MiB pool, so 4 MB <em>dies as <code>TransactionTooLargeException</code></em> (module 05 ch03); the pool limit is the first wall. Mach OOL, page-aligned with <code>deallocate</code>: zero copies — the pages are <em>moved</em> into the receiver's map and must be <code>vm_deallocate</code>d (or leak until exit). The ~2 GiB inline ceiling is irrelevant: the payload never rides inline.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch02.html"><span class="cn-label">previous</span><span class="cn-title">Ch 02</span></a>
+<a class="next" href="ch04.html"><span class="cn-label">next</span><span class="cn-title">Ch 04</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 06 — iOS internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

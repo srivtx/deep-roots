@@ -70,8 +70,8 @@ processes: 200 live programs × one 50 KB copy is 10 MB; × 5,000 tasks is
 bytes don't change, so nobody needs per-task pages of them; program text
 becomes a shared read-only asset, only data private.
 
-You have seen this design in [module 05 chapter
-01](../../05-android-internals/chapters/01-boot-zygote.md): Android preloads the
+You have seen this design in module 05 chapter
+01: Android preloads the
 Zygote process; every app forks from it, sharing the preloaded pages
 copy-on-write. CICS is the same economics — share the expensive common
 pages, privatize the per-instance bytes — on late-1960s hardware with no
@@ -88,8 +88,8 @@ every program, forever — hence the discipline's name, compile option
 
 COBOL records are compile-time-known (chapter 02); tasks are not:
 unknowable count, transaction-length lifetime. That
-is the heap problem of [module 01 chapter
-05](../../01-memory-models/chapters/05-the-heap.md) — allocation not
+is the heap problem of module 01 chapter
+05 — allocation not
 nested, not predictable — so CICS grows a heap API on the MVS storage
 manager:
 
@@ -108,8 +108,8 @@ manager:
 `GETMAIN` is malloc with two mainframe twists. Returned storage is
 **dirty** — the previous owner's bytes — unless you ask for initialization
 (`INITPIC`, CICS's calloc). And the address space has a wall in it. The
-**16MB line** (0x01000000) from [module 08 chapter
-01](../chapters/01-z-machine.md) is a real allocation constraint:
+**16MB line** (0x01000000) from module 08 chapter
+01 is a real allocation constraint:
 `LOC(BELOW)` returns storage addressable by 24-bit code (AMODE 24, the 1964
 heritage); `LOC(ANY)` may return an address above the line, valid only to
 AMODE-31 programs. Old code holds addresses in fields or registers that
@@ -125,15 +125,15 @@ fetch-protection) with a request; CICS uses different subpools for user-key
 task scratch, CICS-key control storage, and long-lived shared storage. And
 the malloc déjà vu: FREEMAIN needs no size because the DSA prefix carries
 it, exactly like `free()` reading the glibc chunk header before your
-pointer ([module 01 chapter
-19](../../01-memory-models/chapters/19-allocators-deep.md)).
+pointer (module 01 chapter
+19).
 
 ## Keys: the safety net C never had
 
 Now the reversal of C's lesson. A task runs with PSW
 key 8 (user key); CICS's own storage — queues, control blocks, the
 dispatcher — is CICS-key (key 0). The 4-bit keys on every 4KB page
-([module 08 chapter 01](../chapters/01-z-machine.md)) are checked *by
+(module 08 chapter 01) are checked *by
 hardware, on every store*. A task that runs off the end of its DSA and
 writes into CICS-key storage takes a protection exception immediately:
 interruption code 4, the S0C4 program check.
@@ -209,8 +209,8 @@ continuous availability was the design goal.)
   low; the keys catch it only if the victim page is CICS-key.
 - **GETMAIN hands you dirty bytes by default** — no zeroing without
   `INITPIC`; with FILLER (chapter 02), this is the mainframe face of
-  [module 03 chapter
-  02](../../03-software-bugs/chapters/02-memory-bug-family.md).
+  module 03 chapter
+  02.
 - **Task-end auto-cleanup covers only task storage.** The real leaks:
   `SHARED` GETMAINs never FREEMAIN'd, CICS-key storage, AUXILIARY TS queues
   never deleted — watch storage statistics and TS data set size, not

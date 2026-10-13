@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linux: the memory machinery — deep-roots</title>
+<meta name="description" content="Chapter 05 of module 07: Linux: the memory machinery">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Linux: the memory machinery — deep-roots">
+<meta property="og:description" content="Chapter 05 of module 07: Linux: the memory machinery">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Linux: the memory machinery — deep-roots">
+<meta name="twitter:description" content="Chapter 05 of module 07: Linux: the memory machinery">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 07 &middot; Windows, Linux, macOS side by side</div>
+<h1 class="post-title">Linux: the memory machinery</h1>
+<div class="post-meta">chapter 05 &middot; ~13 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Linux hands every process a generous fiction — a huge address space it may never back — and keeps the real books in <code>/proc</code>. <code>smaps</code> prices each mapping: RSS double-counts shared pages, PSS splits them fairly, <code>Private_Dirty</code> is the irreducible heap bill. The page cache quietly spends spare RAM as a disk cache; THP and slab are the kernel's own optimization layers over the 4 kB page; overcommit and the OOM killer break the promise when RAM runs out. All outputs below: kernel 5.10.134, x86_64, 4 GiB RAM, no swap.</blockquote>
+<h2 id="what-a-mapping-costs-the-smaps-anatomy">What a mapping costs: the smaps anatomy</h2>
+<p>Chapter 04's <code>ld.so</code> built the address space; <code>/proc/self/maps</code> lists it — one line per VMA (virtual memory area): range, permissions (<code>rwx</code> + <code>p</code>/<code>s</code>), offset, backing file. Each VMA's price is in <code>/proc/self/smaps</code> — a <em>real</em> entry, a shell's heap, dissected:</p>
+<pre><code class="language-text">55f666ce6000-55f666d07000 rw-p 00000000 00:00 0  [heap]
+Size:          132 kB   &lt;- virtual: what the VMA could hold
+Rss:            32 kB   &lt;- 4 kB pages actually in physical RAM
+Pss:            32 kB   &lt;- private + shared/N (here all private)
+Shared_Clean:    0 kB   &lt;- file-backed pages others map too
+Shared_Dirty:    0 kB   &lt;- shared pages someone wrote (COW leftovers)
+Private_Clean:   0 kB   &lt;- your file-backed pages, untouched
+Private_Dirty:  32 kB   &lt;- YOUR written/anon pages: nobody else can claim these
+Anonymous:      32 kB   &lt;- no file behind it (heap lives here)
+AnonHugePages:  0 kB   &lt;- how much is 2 MB huge pages
+VmFlags: rd wr mr mw me ac</code></pre>
+<p>A page in RAM is counted in the <code>Rss</code> of <em>every</em> process mapping it — that is what <em>shared</em> means. The real <code>libc.so.6</code> text mapping here shows <code>Rss: 160 kB</code>, <code>Pss: 16 kB</code>: ten processes share it, so PSS charges each 160/10. PSS = private + shared/N, per VMA — hence insiders plan capacity from PSS: sum-of-RSS <strong>exceeds</strong> physical RAM (shared pages double-counted); sum-of-PSS ≈ the true user-space footprint, the number a container budget should carry.</p>
+<p><code>Private_Dirty</code> is the sharpest number: anonymous <em>and written</em> pages — the real cost of heap. malloc can promise a gigabyte; until you <em>write</em> each page it costs nothing, and after the first touch only freeing or swap-out reduces the bill.</p>
+<h2 id="the-page-cache-the-ram-you-didn-t-budget-for">The page cache: the RAM you didn't budget for</h2>
+<p>A file's second read is fast because the kernel keeps a 4 kB page of RAM per touched file offset — the <strong>page cache</strong>. <code>read()</code> copies cache→heap; <code>write()</code> copies heap→cache and marks the page <em>dirty</em>. Nothing has hit the disk yet:</p>
+<pre><code class="language-text">Cached:   2804236 kB   &lt;- 68% of RAM is page cache
+Dirty:          0 kB</code></pre>
+<p>Writing 192 MB moved <code>Cached</code> 204036 → 400860 kB — into RAM, not my process.</p>
+<p>Writeback has two thresholds (here: <code>dirty_background_ratio = 10</code>, <code>dirty_ratio = 20</code>):</p>
+<ol>
+<li>Dirty &gt; <strong>10% of RAM</strong> → flusher threads write in the background.</li>
+<li>Dirty &gt; <strong>20%</strong> → the <em>writer itself</em> blocks in <code>balance_dirty_pages()</code> — the real mechanism behind "my writer stalls every few seconds," not disk slowness.</li>
+</ol>
+<p><code>fsync(fd)</code> flushes dirty data <strong>and metadata</strong> — size, mtime, block allocation. <code>fdatasync(fd)</code> flushes data plus only metadata needed to retrieve it: a size-extending append forces the size update anyway, an in-place overwrite does not — why databases rewriting fixed-size records prefer it. Neither flushes the <em>directory</em> of a new file — "file appears" durability needs an fsync on the directory fd.</p>
+<p>The full flow:</p>
+<pre><code class="language-text">       user heap (anonymous pages)            page cache (file pages)
+  +------------------------------+    +------------------------------------+
+  | malloc'd, memset'd pages     |    | 4 kB page per file offset          |
+  | -&gt; Private_Dirty in smaps    |    | -&gt; Shared_Clean / Shared_Dirty     |
+  +---------------+--------------+    +------+-----------------------+------+
+                  |                        | read(): copy to heap   | write():
+        anonymous fault                     v                       mark DIRTY
+                  |                   page stays cached            |
+          [ 4 kB page or 2 MB THP ]                                     |
+                  v                                                    v
+        +--------------------------+        (1) dirty &gt; 10% RAM: flushers write
+        | free / reclaim pool     |&lt;----------- (2) dirty &gt; 20%: WRITER throttled
+        | (buddy allocator,       |
+        |  /proc/buddyinfo)       |
+        +------+-------------------+---+  O_DIRECT: read/write skips the cache
+               | swap out          ^ page-in
+               v                   |
+        +-----------------------------+-----+
+        | swap: disk | zram | zswap(LZ4)    |  &lt;- compressed tier
+        +-----------------------------------+</code></pre>
+<p><code>O_DIRECT</code> bypasses the cache (alignment required: 512 B or 4 kB). The database argument (module 11 ch01): a DB engine runs its <em>own</em> buffer pool, so the kernel cache is double buffering — an extra copy, extra RAM, dirty spikes; hence PostgreSQL/Oracle open data files O_DIRECT. For everyone else the cache is free: <code>MemFree</code> looks tiny while <code>MemAvailable</code> (3.4 GB here) counts cache as reclaimable.</p>
+<h2 id="transparent-huge-pages-tlb-reach-vs-granularity">Transparent huge pages: TLB reach vs granularity</h2>
+<p>Module 01 ch02's payoff: the TLB holds ~1536–2048 entries for 4 kB pages — ~8 MB of reach at best. A 1 GB heap is 262,144 pages; every TLB miss is a 4-level page-table walk (~4 memory references). A 2 MB transparent huge page (THP) maps 512 pages with one entry: the same heap becomes 512 entries, and the walk is 3 levels deep.</p>
+<p>THP upgrades anonymous VMAs behind your back: faults allocate 2 MB when alignment allows (<code>thp_fault_alloc</code>), and the kernel thread <code>khugepaged</code> collapses 4 kB-filled 2 MB regions (<code>thp_collapse_alloc</code>). Policy here:</p>
+<pre><code class="language-text">/sys/kernel/mm/transparent_hugepage/enabled:  [always] madvise never
+/sys/kernel/mm/transparent_hugepage/defrag:   always defer defer+madvise madvise [never]</code></pre>
+<p>Touching 768 MB by memset (lab below) left <code>AnonHugePages: 260096 kB</code> of 788 MB resident — a third: malloc's mmap chunks are page- not 2 MB-aligned, and fragments break collapse.</p>
+<p>The cost made THP infamous: a 2 MB page needs 2 MB <em>contiguous</em> physical memory, so under fragmentation the kernel runs synchronous <strong>compaction</strong> — migrating live pages to build a free 2 MB run — <em>inside your allocation latency</em>. The Redis folklore (antirez, 2014): sub-millisecond ops with occasional 10–100 ms spikes — three orders of magnitude — traced to THP defrag. Latency-sensitive servers set <code>never</code>/<code>madvise</code>; Redis disables THP itself via <code>prctl(PR_SET_THP_DISABLE)</code> (kernel 3.15+). Reserve <code>MADV_HUGEPAGE</code> for dense regions (JVM heaps, analytics).</p>
+<h2 id="slab-slub-the-kernel-s-own-allocator">slab/slub: the kernel's own allocator</h2>
+<p>The kernel allocates millions of same-shaped objects — <code>dentry</code>s, <code>inode</code>s, <code>task_struct</code>s, network buffers — plus arbitrary <code>kmalloc(n)</code>, so it keeps per-object-type caches: <strong>slab</strong> (kernel 2.2, Solaris lineage), replaced as default by <strong>SLUB</strong> in 2.6.23 — per-CPU lists of slabs (contiguous pages of same-sized objects). Same shape as glibc's tcache over arenas (module 01 ch19), one layer down.</p>
+<p>The generic <code>kmalloc</code> size ladder on 4 kB-page x86_64, kernel 5.10:</p>
+<pre><code class="language-text">8  16  32  64  96  128  192  256  512  1024  2048  4096  8192  (bytes)</code></pre>
+<p>Everything is a power of two except <strong>96 and 192</strong> — the kmalloc-192 lore: profiling when SLUB landed showed allocations clustering at 65–96 B and 129–192 B; 160 B in a 256 B bucket wastes ~96 B, so two odd classes were added, roughly halving fragmentation for the most common sizes. Above 8 kB, <code>kmalloc</code> falls to the page allocator.</p>
+<p>Read it live: <code>/proc/slabinfo</code> (mode 0400, root-only):</p>
+<pre><code class="language-text">slabinfo - version: 2.1
+# name            active_objs num_objs objsize objperslab pagesperslab
+kmalloc-192         10638      10752      192       21         1</code></pre>
+<p>10,752 slots, 10,638 in use, 192 B each, 21 objects per 1-page slab (21 × 192 = 4032 B, 60 B lost — the waste the class bounds). SLUB also <strong>merges</strong> same-size caches (your custom 192 B cache <em>is</em> kmalloc-192), saving memory but destroying type isolation; <code>slab_nomerge</code> disables it — why hardened kernels boot with it (module 02 explains the cross-cache attacks). Under pressure, caches register <strong>shrinkers</strong>: reclaim calls <code>shrink_slab()</code> and dentry/inode caches evict cold objects; <code>echo 2 &gt; /proc/sys/vm/drop_caches</code> just runs them by hand.</p>
+<h2 id="overcommit-and-the-oom-killer">Overcommit and the OOM killer</h2>
+<p>mmap is a promise to pay later. <code>/proc/sys/vm/overcommit_memory</code> selects the promise policy:</p>
+<ul>
+<li><strong>0 (heuristic, default):</strong> refuse only "obvious" overcommits — a single allocation bigger than RAM+swap — while the total drifts.</li>
+<li><strong>1 (always):</strong> never refuse.</li>
+<li><strong>2 (strict):</strong> every mapping is charged to <code>Committed_AS</code>; new charges fail with ENOMEM past <code>CommitLimit = RAM × overcommit_ratio/100 + swap</code>.</li>
+</ul>
+<p>Here: <code>4138560 kB × 50% + 0 = 2069280 kB</code> — exactly the CommitLimit in <code>/proc/meminfo</code>. Mode 0 in action: a sleeping Python mapped 2 GB untouched (<code>VmRSS 10188 kB</code>); <code>Committed_AS</code> jumped to <code>3527948 kB</code>, 1.5 GB past the limit — and the mmap succeeded. Only mode 2 enforces.</p>
+<p><strong>mlock interacts twice.</strong> Locked pages are unevictable (OOM reports print <code>mlocked:</code>), permanently shrinking reclaim headroom; in mode 2 they hold their charge forever. Unprivileged users are capped by <code>RLIMIT_MEMLOCK</code>, classically 64 KiB (<code>ulimit -l</code> → 64 here).</p>
+<p>When the promise comes due and no page can be reclaimed, the <strong>OOM killer</strong> fires. The old 2.6 formula scored <code>total_vm</code> plus CPU-time penalties — folklore says it favored long-running, mostly idle processes. Since 2.6.36 (kernel 5.10):</p>
+<pre><code class="language-text">points = rss + swap_entries + page_table_bytes/4096     (all in 4 kB pages)
+score  = points * 1000 / total_pages_of_the_domain       (0..1000, printed in
+          + oom_score_adj (a 3% root discount applies)      /proc/PID/oom_score)</code></pre>
+<p><code>/proc/PID/oom_score_adj</code> (−1000..+1000) is the human override: −1000 makes a task effectively unkillable, +1000 the designated victim. The table below shows this box's daemons (kata-agent, juicefs, ossfs) all at −1000 — a real system protecting itself.</p>
+<p>The choreography, from a genuine kill: a page fault enters <code>__alloc_pages_slowpath</code>, reclaim fails, <code>out_of_memory()</code> calls <code>dump_header()</code> (the dmesg report), picks a victim, and <code>oom_kill_process()</code> sends <strong>SIGKILL</strong> — also to siblings sharing the same mm, since only the last frees the pages; the faulting task then retries. The <strong>memory-cgroup</strong> variant: v1 can disable the kill (<code>memory.oom_control: oom_kill_disable 1</code>) so tasks <em>block</em> while a supervisor — notified via <code>cgroup.event_control</code>/eventfd — frees memory or kills something itself; v2 exposes pollable <code>memory.events</code> (<code>oom</code>/<code>oom_kill</code>) and <code>memory.oom.group</code>. Userspace daemons (earlyoom, systemd-oomd) watch PSI and kill gracefully before the SIGKILL roulette.</p>
+<p>The insider's table — real lines, after demanding 8 GB on this 4 GiB box:</p>
+<pre><code class="language-text">[17095.468760] alloc invoked oom-killer: gfp_mask=0x100dca(...), order=0, oom_score_adj=0
+[17095.469053] Tasks state (memory values in pages):
+[17095.469053] [ pid  ]   uid  tgid total_vm      rss pgtables_bytes swapents oom_score_adj name
+[17095.469078] [ 23939]  1001 23939   918156   883172    7135232        0             0 alloc
+[17095.469079] oom-kill:constraint=CONSTRAINT_NONE,...,global_oom,task_memcg=/k8s.io/...
+[17095.469091] Out of memory: Killed process 23939 (alloc) total-vm:3672624kB, anon-rss:3531024kB, ...</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Column</th><th>Meaning</th><th>alloc's value decoded</th></tr></thead><tbody><tr><td><code>total_vm</code></td><td>virtual size, <strong>pages</strong></td><td>918156 × 4 kB = 3672624 kB (matches total-vm)</td></tr><tr><td><code>rss</code></td><td>resident pages, <strong>pages</strong></td><td>883172 × 4 kB ≈ 3.4 GB — the badness driver</td></tr><tr><td><code>pgtables_bytes</code></td><td>page tables, <strong>bytes</strong></td><td>7135232 ≈ 8 B of page table per 4 kB page</td></tr><tr><td><code>swapents</code></td><td>swapped-out pages</td><td>0 — SwapTotal is 0 here</td></tr><tr><td><code>oom_score_adj</code></td><td>human override</td><td>0 — unprotected</td></tr></tbody></table></div>
+<p>The trap: the table's memory columns are <em>pages</em>, the final line is <em>kB</em>.</p>
+<p><strong>zram/zswap</strong> fill the diagram's bottom tier: zswap is a compressed in-RAM pool in front of real disk swap (<code>/sys/module/zswap/parameters/enabled</code> = <code>N</code> here); zram <em>is</em> the swap device — RAM compressing itself, ~2:1–3:1 with LZ4. Android ships zram as its only swap (module 05 ch04).</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>RSS is for one process; PSS is for a fleet.</strong> Sum-of-RSS double-counts shared pages; sum-of-PSS is the footprint a sizing spreadsheet needs; <code>Private_Dirty</code> never shrinks by sharing. Poll <code>smaps_rollup</code> (4.14+).</li>
+<li><strong>Overcommit arithmetic you can recite:</strong> mode 2 limit = RAM × ratio/100 + swap; on 4 GiB/50%/no-swap that is exactly 2069280 kB. DBA folklore: mode 1 on database servers (huge shared buffers at boot); mode 2 on accounting-strict HPC/embedded boxes.</li>
+<li><strong>kmalloc-192 is the only non-power-of-two in the ladder</strong> (with 96) because the measured average kernel allocation sat just under 200 B; 160 B in a 256 B bucket wastes 37%. SLUB merges same-size caches — <code>slab_nomerge</code> is the hardened-kernel flag.</li>
+<li><strong>OOM badness includes your page tables</strong> (5.10: rss + swapents + pgtables/4096): a sparse 100 GB mmap costs page tables even untouched — the trap behind "swapents=0 but the daemon died anyway." −1000 adj is infrastructure's shield — read the table before blaming the kernel.</li>
+<li><strong>THP latency folklore:</strong> <code>always</code> + <code>defrag</code> = sync compaction inside your allocation path; Redis's 2014 spikes were exactly this. Latency-sensitive: <code>madvise</code>/<code>never</code> + <code>prctl(PR_SET_THP_DISABLE)</code>; dense-heap: <code>MADV_HUGEPAGE</code>. Here: <code>thp_fault_alloc 923</code>, <code>thp_fault_fallback 347164</code> — fallback is normal.</li>
+<li><strong>fsync vs fdatasync:</strong> fdatasync skips mtime/ctime but <em>cannot</em> skip a size update — appending makes them equal, overwriting makes fdatasync strictly cheaper. Neither syncs the parent directory.</li>
+<li><strong>PSI <code>some</code> vs <code>full</code>:</strong> <code>some</code> = at least one task stalled on memory; <code>full</code> = every non-idle task stalled. Sustained <code>full</code> &gt; 0 is the early-warning dial — what lmkd and systemd-oomd watch.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>All captured on kernel 5.10.134, x86_64, 4 GiB RAM, no swap.</p>
+<p><strong>1. The whole process, priced in one read.</strong> <code>cat /proc/self/smaps_rollup</code> (kernel 4.14):</p>
+<pre><code class="language-text">Rss:                1820 kB     &lt;- resident, shared pages fully counted
+Pss:                 426 kB     &lt;- private + shared/N — the fair share
+Pss_Anon:            104 kB     Pss_File:  322 kB   Pss_Shmem:   0 kB
+Shared_Clean:       1672 kB     &lt;- libc/ld/vdso pages, read-only, shared
+Shared_Dirty:          0 kB     Private_Clean:  44 kB
+Private_Dirty:       104 kB     &lt;- the heap bill: only 104 kB is ours
+Anonymous:           104 kB     AnonHugePages:   0 kB
+Swap:                  0 kB     SwapPss:         0 kB</code></pre>
+<p>RSS 1820 vs PSS 426: 1672 kB of libc/loader pages shared with ~five neighbors; irreducible cost <code>Private_Dirty: 104 kB</code>.</p>
+<p><strong>2. Watch an allocation become RSS.</strong> The core of <code>alloc.c</code>:</p>
+<pre><code class="language-c">/* alloc.c: touch argv[1] MB in 256 MB steps; after each step, print
+   VmRSS from /proc/self/status plus the smaps_rollup fields. */
+char *p = malloc(256 &lt;&lt; 20);
+memset(p, 1, 256 &lt;&lt; 20);   /* first touch = real RSS */</code></pre>
+<p>Real output, after 256 MB and 768 MB:</p>
+<pre><code class="language-text">after  VmRSS:  263468 kB   Rss: 263732 kB   Private_Dirty: 262264 kB  AnonHugePages: 239616 kB
+after  VmRSS:  787980 kB   Rss: 788220 kB   Private_Dirty: 786560 kB  AnonHugePages: 260096 kB</code></pre>
+<p><code>VmRSS</code> tracks touches, not mallocs; <code>Private_Dirty</code> ≈ VmRSS (all anonymous); THP covers a third — 2 MB alignment, live.</p>
+<p><strong>3. Fragmentation: /proc/buddyinfo.</strong> Column n = free blocks of order n (4 kB × 2^n), eleven columns to 4 MB:</p>
+<pre><code class="language-text">Node 0, zone   Normal  13  777  689  326  244  439  173  48  14  2  34</code></pre>
+<p>Read right-to-left: 34 free 4 MB blocks but only 2 at 2 MB — the in-between orders fragmented away. High-order blocks feed THP collapse; a tail of zeros with a fat left edge is fragmentation's signature.</p>
+<p><strong>4. Memory pressure: /proc/pressure/memory</strong> (PSI, kernel 4.20+):</p>
+<pre><code class="language-text">some avg10=0.00 avg60=0.04 avg300=0.06 total=538714
+full avg10=0.00 avg60=0.02 avg300=0.04 total=484016</code></pre>
+<p>Captured minutes after the OOM experiment: avg10 clean, avg60/avg300 still show the stall — % of time tasks waited on memory over 10 s/1 min/5 min; <code>total</code> is cumulative microseconds. Sustained nonzero <code>full</code> = thrashing before anything dies.</p>
+<p><strong>5. Controlled OOM, and the cgroup twist.</strong> This sandbox is itself a 4 GiB cgroup (<code>memory.limit_in_bytes</code> → <code>4294967296</code>). Demand more than exists:</p>
+<pre><code class="language-text">$ ./alloc 8192
+after  VmRSS:  3409664 kB ... AnonHugePages:  485376 kB
+Killed                                    &lt;- SIGKILL from the OOM killer
+$ echo $?                                 -&gt; 137 (128 + 9 = SIGKILL)
+$ cat /sys/fs/cgroup/memory/memory.oom_control
+oom_kill_disable 0   under_oom 0   oom_kill 1        &lt;- was 0 before the run</code></pre>
+<p>The report ends <code>Out of memory: Killed process 23939 (alloc) ... anon-rss:3531024kB</code> — and the ledgers disagree on <em>who</em> fired: dmesg says <code>global_oom</code> (the kernel sees the micro-VM's physical RAM) while the container's <code>oom_kill</code> went 0 → 1. For a <em>pure</em> memcg OOM on a cgroup v2 box you administer:</p>
+<pre><code class="language-text">systemd-run --scope -p MemoryMax=200M /tmp/alloc 1024</code></pre>
+<p>and look for <code>constraint=CONSTRAINT_MEMCG</code> plus <code>memory.events</code> <code>oom_kill 1</code>. Don't run the 8 GB experiment on a machine you care about.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Capacity planning:</strong> size from sum-of-PSS + slab, never RSS sums; check <code>MemAvailable</code> (not <code>MemFree</code>); alert on PSI <code>full</code> trends — minutes of warning before the OOM killer.</li>
+<li><strong>OOM forensics from logs:</strong> when a server "just died," pull <code>dmesg</code>/ <code>journalctl -k</code>: the <code>invoked oom-killer</code> line names the faulting task, the table gives the victim (rss in <em>pages</em>) and <code>oom_score_adj</code> — −1000 means something else was supposed to die; <code>CONSTRAINT_MEMCG</code> = the container's limit, <code>CONSTRAINT_NONE</code> = the host.</li>
+<li><strong>Latency engineering:</strong> bursty writers hitting dirty_ratio stalls get smaller, more frequent fsyncs; latency-critical daemons get THP <code>madvise</code>/<code>never</code>; dense heaps get <code>MADV_HUGEPAGE</code>.</li>
+<li><strong>Leak triage:</strong> sample <code>Private_Dirty</code> over time — a monotonic climb is a real leak; climbing RSS with flat <code>Private_Dirty</code> is page cache, i.e. harmless. (Interviews: why 100 MB <code>MemFree</code> doesn't mean OOM; why malloc succeeds and the process dies mid-computation — overcommit + first-touch.)</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch02</strong> — the TLB arithmetic THP cashes in: one entry maps 2 MB instead of 512 × 4 kB.</li>
+<li><strong>Module 01 ch03</strong> — VMAs and page tables made visible: every smaps line is one VMA.</li>
+<li><strong>Module 01 ch19</strong> — allocator design: slab is the kernel's answer to the same size-class problem glibc solves with tcache bins.</li>
+<li><strong>Module 07 ch04</strong> — the loader built these mappings: <code>[vdso]</code>, file-backed text, the anonymous BSS you now price.</li>
+<li><strong>Module 11 ch01</strong> — the page cache from the DB engine's side: buffer pools, O_DIRECT, fsync strategy.</li>
+<li><strong>Module 05 ch04</strong> — lmkd vs OOM killer: Android kills by importance rank on PSI pressure before RAM runs out; the desktop waits and kills by badness.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Ten processes map the same 100 MB read-only file and touch all of it; each has 20 MB of private touched heap. Give each's Rss, Pss, Private_Dirty, and the machine's true footprint.</li>
+<li><code>smaps</code> for one VMA shows <code>Size: 132 kB, Rss: 32 kB, Private_Dirty: 32 kB, Anonymous: 32 kB</code>. The program frees and touches nothing more, yet minutes later the VMA reads <code>Rss: 8 kB</code>. Where did the other 24 kB go on a box with no swap?</li>
+<li>8 GB RAM, <code>overcommit_ratio 50</code>, 4 GB swap, mode 2. Compute CommitLimit. Two processes each mmap 4 GB untouched: does the second succeed?</li>
+<li>From the OOM table: <code>[ 23939] 1001 23939 918156 883172 7135232 0 0 alloc</code>. Convert <code>rss</code> and <code>pgtables_bytes</code> to human units; why is <code>swapents</code> 0?</li>
+<li>Redis shows p99.9 = 40 ms on 0.3 ms-average operations; THP <code>enabled</code> is <code>[always]</code>. Which kernel thread, doing what, and where is the time paid?</li>
+<li>A daemon is killed; the log shows <code>constraint=CONSTRAINT_MEMCG</code> while <code>free -m</code> shows 40 GB free. Where is the limit, and which file do you read next?</li>
+<li>Monitoring shows <code>some avg60=4.2</code> and <code>full avg60=0.0</code> for an hour. Is the box in trouble? Which number moves first if it worsens, and what does it mean?</li>
+<li>Module 05 ch04's lmkd and this chapter's OOM killer both end in SIGKILL. Name two decisions that differ (when they kill; how they pick the victim) and one shared mechanism.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Rss 120 MB</strong> (shared counted fully in each); <strong>Pss 30 MB</strong> (100/10 + 20 private); <strong>Private_Dirty 20 MB</strong> (heap only; the file is Shared_Clean). Footprint: 10 × 30 = 300 MB — PSS as the capacity number.</li>
+<li>glibc trimmed the heap: free() returned the arena's top to the kernel — via brk shrink (shrinks <code>Size</code>) or, here with <code>Size</code> unchanged, <code>MADV_DONTNEED</code>. No swap = nowhere to write them and the data was logically free, so the kernel discards the pages to the buddy pool; next touch faults a fresh zero page. Freed pages stop costing when <em>returned</em>, not when malloc forgets them.</li>
+<li>CommitLimit = 8 GB × 50% + 4 GB = 8 GB. The first 4 GB mmap succeeds; the second brings the charge to exactly 8 GB — it succeeds only if nothing else holds a charge, never true in practice (everything else committed something), so it fails with ENOMEM at mmap time. Strict mode's contract: fail up front instead of an OOM kill later.</li>
+<li>rss 883172 is in 4 kB <strong>pages</strong> → 3532688 kB ≈ 3.4 GB (the final line's <code>anon-rss</code>). pgtables_bytes is already bytes: 7135232 ≈ 7 MB, ~8 B per mapped 4 kB page. swapents 0: SwapTotal is 0 — swap adds nothing to badness.</li>
+<li>khugepaged (or the fault path under <code>always</code>) promotes Redis's anon pages to 2 MB, which needs 2 MB physically contiguous; fragmented memory forces synchronous compaction — migrating live pages — inside the Redis thread's fault path. The ~40 ms tail over the 0.3 ms mean is compaction latency. Fix: <code>never</code>/<code>madvise</code> or <code>prctl(PR_SET_THP_DISABLE)</code> (Redis 6.x+).</li>
+<li>The limit is the memory cgroup's, not the host's: the cgroup exhausted its memory.max (v2) / limit_in_bytes (v1) while host RAM was free. Next: v2 <code>memory.events</code> (<code>oom</code>, <code>oom_kill</code>) or v1 <code>memory.oom_control</code> — in k8s, the pod's memory limit.</li>
+<li>Not yet: <code>some</code> = at least one task stalled (reclaim in progress); <code>full</code> 0.0 = no interval with <em>every</em> non-idle task stalled. <code>full</code> rises first if it worsens — the box-wide thrash signal lmkd and systemd-oomd act on; sustained <code>full</code> precedes livelock and OOM.</li>
+<li>Shared: SIGKILL, and both read kernel pressure bookkeeping (lmkd literally reads PSI). <em>When:</em> lmkd kills proactively on pressure while memory remains; the kernel reacts after an allocation failed. <em>Victim:</em> lmkd ranks by importance (oom_adj hierarchy); the kernel scores badness (RSS + swap + page tables, + oom_score_adj) — importance-blind by default.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch04.html"><span class="cn-label">previous</span><span class="cn-title">Ch 04</span></a>
+<a class="next" href="ch06.html"><span class="cn-label">next</span><span class="cn-title">Ch 06</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 07 — Desktop OS internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

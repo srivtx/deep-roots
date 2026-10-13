@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B-trees — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 11: B-trees">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="B-trees — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 11: B-trees">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="B-trees — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 11: B-trees">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 11 &middot; the disk is the new heap</div>
+<h1 class="post-title">B-trees</h1>
+<div class="post-meta">chapter 02 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A disk read costs ~100 µs (SSD) and moves at least a page, so a disk search structure is judged by one number: page reads per lookup. A balanced binary tree over a billion keys needs log2(10^9) ≈ 30 reads; a tree whose nodes are 16 KiB pages holding ~1,000 keys needs 3-4. That fanout — page size divided by entry size — is the entire invention. The rest is node engineering: InnoDB packs a page as a linked list of records between two sentinels, hangs a sparse directory off the page end so the ragged list can still be binary-searched, splits pages 50-50 for random keys but ~90-10 for appends, and stores primary keys in secondary leaves — why a secondary lookup is <em>two</em> descents unless the index covers the query.</blockquote>
+<h2 id="the-argument-in-one-division-log2-n-versus-log-f-n">The argument in one division: log2(N) versus log_F(N)</h2>
+<p>Chapter 01's cost model: one page, one I/O, ~100 µs on SSD. A lookup costs one page read per node visited, and a balanced BST over 10^9 keys visits log2(10^9) ≈ 30 nodes — comparisons are free next to one I/O; the binary tree loses because <em>every level costs a page</em>.</p>
+<p>So amortize: fill each page with as many routing entries as fit. An interior entry is a separator key plus a child page number — 8 bytes (BIGINT) + 6 bytes + ~2 of bookkeeping, ~16 bytes per child:</p>
+<pre><code class="language-text">fanout F = page size / entry size = 16,384 B / 16 B ≈ 1,000 children
+leaf capacity L ≈ 16,384 B / ~20 B ≈ 800 entries (secondary index leaf)
+
+capacity at height h = F^(h-1) × L:
+h = 3 -&gt; 1,000² × 800 ≈ 8 × 10^8 entries   (3 page reads)
+h = 4 (worst case, 50% fill) -&gt; ≥ 10^9      (4 page reads)</code></pre>
+<p>Three reads versus thirty — a ~10x gap that <em>is</em> the argument; the logarithm's base, normally a footnote, is here the whole design. The top of the tree is nearly free to keep hot: root plus second level is 1 + 1,000 pages ≈ 16 MiB, so the buffer pool (module 01 ch02's tower, applied to disk) pins two levels and a typical lookup costs <strong>one</strong> real read. Two consequences: nodes must stay roughly half-full (depth depends on <em>effective</em> fanout; InnoDB's minimum fill of half a page keeps worst-case fanout ~500, MySQL 8.0), and anything that shrinks entries buys depth — every 2x cut in entry size is a level at a billion rows.</p>
+<h2 id="one-16-kib-page-dissected">One 16 KiB page, dissected</h2>
+<p>InnoDB's index page (MySQL 8.0, COMPACT records) is the node anatomy for most B-trees:</p>
+<pre><code class="language-text">byte 0                                                          byte 16384
++-----------+---------+---------+----------------+-------+-------+---------+
+| FIL hdr   | infimum | supremum| user records   | free  | page  | FIL     |
+| 38 B      | 13 B    | 13 B    | ...grow =====&gt; | space | dir   | trailer |
++-----------+---------+---------+----------------+-------+=======+---------+
+0           38        99       112 125 ...      (shrinks) &lt;====grow 16376 16384
+
+FIL header (38 B): checksum 4 | page no 4 | PREV 4 | NEXT 4 | page LSN 8 |
+  FIL_PAGE_TYPE 2 (17855 = index page) | flush LSN 8 | tablespace id 4
+  PREV/NEXT: leaves DOUBLY LINKED -- the range-scan highway (§6)
+  page LSN: ch04's WAL watermark ("flush only if log is durable past this")
+FIL trailer (last 8 B): checksum + low 32 bits of the page LSN
+
+one user record (COMPACT):          the logical chain, in every page:
++-----------------+---------------+  infimum -&gt; r1 -&gt; r2 -&gt; ... -&gt; rN -&gt; supremum
+| header 5 B      | key fields    |  ("before all keys"/"after all keys";
+| info 4b|owned 4b| (+ PK, if     |   fixed offsets 99/112; real 13 B records)
+| heap# 13b|type 3b|  secondary)  |
+| next-record 2 B-+-&gt; next key    |
++-----------------+---------------+
+page directory (grows leftward from trailer): 2 B slots, each owning 4-8
+records (owned count = the 4-bit field in that record's header)</code></pre>
+<p>Three details are load-bearing. <strong>Records are linked within the page, and physical order is allocation order:</strong> a record inserted between two neighbors is carved from the free gap and spliced in via 2-byte next-pointers — the chain, not byte addresses, is the truth. A page is a tiny heap arena (module 01 ch05, one level down): carve, mark-delete, compact later. <strong>The sentinels make gaps first-class:</strong> every record, sentinels included, has a predecessor, so "the gap before row r" is always defined — even before the first and after the last row. InnoDB's next-key locking (record + preceding gap, REPEATABLE READ's phantom blocker, ch05) is implemented as locks on chain positions; no separate gap structure exists. <strong>The directory exists because you cannot binary search a ragged list:</strong> records are variable-length and unordered, and binary search needs a sorted array of fixed-width entries. So InnoDB keeps a sparse one — 2-byte slots pointing at every 4th-8th record; page lookup is binary-search ~n/6 slots, then walk ≤ 8 next-pointers. A dense directory would rewrite on every insert; the owned-count nibble rebalances slots one record at a time.</p>
+<h2 id="splits-where-the-b-tree-pays-rent">Splits: where the B-tree pays rent</h2>
+<p>Insert into a full leaf and something gives: allocate a new page, move half (or most) of the records, insert a separator into the parent — which may itself split. The split policy is where fragmentation is born. <strong>50-50</strong> (textbook default; InnoDB's choice for mid-page inserts): under random insertion, steady-state fill converges to ln 2 ≈ 69%. <strong>90-10</strong> (the append optimization): when the new key sorts after every key in the page, leave ~90% behind and open a nearly empty right page for the coming appends (MySQL 8.0, <code>btr_page_split_and_insert</code> in <code>storage/innobase/btr/btr0cur.cc</code>). The lab builds the same 100,000 rows three ways: <strong>12,500 leaves at 53.3% fill</strong> (sequential keys, 50-50), <strong>7,143 leaves at 93.3%</strong> (sequential, 90-10), <strong>9,446 at 70.6%</strong> (random, 50-50) — 1.75x the leaf count between the first two, for identical data.</p>
+<p>Random fill lands at 70.6% — theory says ln 2 ≈ 69.3%. But note the first row: sequential keys with naive 50-50 splits give the <em>worst</em> fill (53%), because every frozen left page is stuck at half forever. The 90-10 policy rescues the B-tree's favorite workload, monotonically increasing keys, and appends concentrate insertion at the rightmost leaf — every descent goes right, that page stays hot in the buffer pool, no random page is dirtied. This is why <code>BIGINT AUTO_INCREMENT</code> inserts so much faster than random UUIDs (quiz 3). Deletion runs the film backward: dead records leave holes, and pages below <code>MERGE_THRESHOLD</code> (default 50, MySQL 5.7+) try to merge with a neighbor.</p>
+<h2 id="secondary-indexes-the-locator-decision">Secondary indexes: the locator decision</h2>
+<p><strong>InnoDB: the clustered primary key.</strong> The PK index <em>is</em> the table — its leaves hold full rows; a secondary leaf holds <code>(secondary key, primary key)</code>. Why not a page/record pointer? Rows <em>move</em> — splits, merges, compaction relocate records — and a physical pointer would dangle. The price is the insider trap: <code>SELECT name FROM users WHERE email = ?</code> with an index on (email) is a full descent down the email tree, then a <em>second full descent</em> down the PK tree to fetch the row. The escape is the <strong>covering index</strong>: if every column the query touches is in the secondary index — its columns plus the PK riding in every leaf — one descent suffices, and EXPLAIN shows <code>Using index</code>. The flip side: the PK is duplicated into <em>every</em> secondary leaf, so a fat 16-byte UUID PK inflates every index on the table.</p>
+<p><strong>PostgreSQL: the heap first.</strong> Tables are heaps (8 KiB pages); <em>every</em> index stores 6-byte TIDs (4-byte page + 2-byte line offset) into the heap. The update-path optimization is <strong>HOT</strong> (Heap-Only Tuple, PostgreSQL 8.3+): if an UPDATE changes no indexed column <em>and</em> the new version fits on the same page, the new tuple chains via <code>ctid</code> and <em>no index is touched</em>. Break either condition and every index gains an entry per update — index bloat. The knob is heap <code>fillfactor</code> (default 100; set ~85-90 on update-heavy tables).</p>
+<h2 id="shorter-keys-safer-climbs">Shorter keys, safer climbs</h2>
+<p><strong>Suffix truncation.</strong> An interior separator only <em>routes</em>: keys ≤ it go left, the rest right. It needs just enough bytes to discriminate the left subtree's maximum from the right's minimum — a shared prefix is dead weight. PostgreSQL's nbtree truncates high keys this way; Oracle and MyISAM ship key prefix compression. The payoff routes back to §1: bytes saved per entry are fanout, and fanout is depth.</p>
+<p><strong>Latch crabbing.</strong> The obvious protocol — latch the root and hold the whole path until done — serializes all readers behind one writer. The derived protocol is lock coupling: acquire the child's latch, then release the parent <strong>only when the child is "safe"</strong> — for an insert, when the child has room, so this insert cannot split it. A split propagates a separator into the parent, so an unsafe child means the parent may be written: keep it latched. Splits, merges, and height changes are <em>SMOs</em> (structure modification operations), the events every B-tree concurrency protocol is organized around.</p>
+<p><strong>Optimistic descent.</strong> Splits are rare under appends, so pay for pessimism only when it happens: descend latching nothing (read, copy, release), attempt the leaf insert, and if the leaf lacks room — or anything changed — <em>restart</em> in crabbing mode. InnoDB runs exactly this shape (<code>btr_cur_optimistic_insert</code>, retry via <code>btr_cur_pessimistic_insert</code>). PostgreSQL's nbtree is a Lehman-Yao <em>B-link tree</em>: every page stores a right link plus its high key, so a stale reader that lands on a just-split page compares the high key and walks right — readers never block writers. Assume the world is quiet, verify at the leaf, recover cheaply if not — module 03 ch01's "the world changed under me" family, as a protocol.</p>
+<h2 id="range-scans-the-birthright">Range scans: the birthright</h2>
+<p>Leaves are doubly linked (<code>FIL_PAGE_PREV</code>/<code>FIL_PAGE_NEXT</code>, header bytes 8-16), so a range scan is one descent plus a walk: descend to the first key in range, hop NEXT pointers until past the end. Scanning 10,001 rows at ~14 rows per leaf (the lab's 93% fill) is a 5-page descent plus ~715 leaf hops ≈ 720 page reads — versus 10,001 descents row-at-a-time. The walk is why <code>ORDER BY indexed_col LIMIT 100</code> needs no sort and stops after a few pages, in either direction; and it is <em>almost</em> sequential I/O (ch01's random-vs-sequential gap) in proportion to how unfragmented the tree is.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The fanout arithmetic, memorized:</strong> 16 KiB / ~16 B per interior entry ≈ 1,000 children; at the guaranteed 50% fill ≈ 500; height 3-4 covers 10^8 to 10^10 rows; root + level two ≈ 16 MiB, always cached — a cold point lookup is 1-2 real reads.</li>
+<li><strong>The two-descents trap:</strong> <code>WHERE secondary_key = ?</code> fetching other columns costs a secondary descent <em>plus</em> a clustered descent in InnoDB; the fix is the covering index, and PK columns come free in every secondary leaf.</li>
+<li><strong>The 90-10 split and rightmost hot page:</strong> monotonic keys concentrate inserts on one hot leaf and leave pages ~90% full (measured 93.3% vs 53.3% — 1.75x the leaf count for identical data); random keys (UUIDv4) get mid-page 50-50 splits at ~69% fill.</li>
+<li><strong>HOT updates (PostgreSQL):</strong> zero index writes when an update changes no indexed column and fits on the same page; default <code>fillfactor</code> 100 quietly breaks the second condition; symptom — indexes growing 3x while the heap stays flat.</li>
+<li><strong>The page directory's 4-8 records per slot:</strong> 2 bytes per slot, minimum 2 slots, owned-count nibble in each record header — the two-level search mirrors the tree outside the page: ragged data needs a fixed-width array to binary search.</li>
+<li><strong>Next-key locking is a linked-list operation:</strong> infimum/supremum chain positions are the lockable objects; phantom protection at REPEATABLE READ needs no auxiliary gap structure because the record chain <em>is</em> the gap structure.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Part 1 — build a real B+ tree on disk and measure it (CPython 3.12, ~20 s). Nodes are 256-byte blocks — 4-byte header, fifteen 8-byte key slots, sixteen 8-byte child slots — fanout 16 by construction, §1's arithmetic with the decimal point moved. The split policy is switchable so the 90-10 story is watchable:</p>
+<pre><code class="language-python">#!/usr/bin/env python3
+# A B+ tree in a file: 256 B nodes, 15 keys max -&gt; fanout 16.
+# Split policy: 'mid' = naive 50-50, 'right' = ~90-10 (InnoDB-style append).
+import struct, random, bisect, os, math
+
+BLK, MAXK = 256, 15                  # node block size, keys per node
+HDR = struct.Struct('&lt;?H')           # leaf? + nkeys
+Q = struct.Struct('&lt;Q')              # 8 B slots: keys, pointers
+KB = 8 + 8 * MAXK                    # children base (leaves: next-leaf ptr)
+P = 'right'
+
+class Tree:
+    def __init__(s, path):
+        s.f = open(path, 'wb+'); s.rd = 0; s.splits = 0
+        s.f.write(BLK * b'\0')       # block 0 reserved: offset 0 means NULL
+        s.root = s.alloc(); s.height = 1
+    def alloc(s):
+        s.f.seek(0, 2); off = s.f.tell(); s.f.write(BLK * b'\0')
+        s.put(off, 1, [], []); return off
+    def get(s, off):                 # one node = one counted page read
+        s.rd += 1; s.f.seek(off); b = s.f.read(BLK)
+        leaf, n = HDR.unpack_from(b, 0)
+        keys = [Q.unpack_from(b, 8 + 8*i)[0] for i in range(n)]
+        kids = [Q.unpack_from(b, KB + 8*i)[0] for i in range(n+1)]
+        return leaf, keys, kids, Q.unpack_from(b, KB)[0]
+    def put(s, off, leaf, keys, kids, nxt=0):
+        b = bytearray(BLK); HDR.pack_into(b, 0, leaf, len(keys))
+        for i, k in enumerate(keys): Q.pack_into(b, 8 + 8*i, k)
+        Q.pack_into(b, KB, nxt)
+        if not leaf:
+            for i, c in enumerate(kids): Q.pack_into(b, KB + 8*i, c)
+        s.f.seek(off); s.f.write(b)
+    def _ins(s, off, key):           # returns None or (separator, new page)
+        leaf, keys, kids, nxt = s.get(off)
+        if leaf:
+            keys.insert(bisect.bisect_left(keys, key), key)
+        else:
+            i = bisect.bisect_right(keys, key)
+            r = s._ins(kids[i], key)
+            if not r: return None
+            keys.insert(i, r[0]); kids.insert(i + 1, r[1])
+        if len(keys) &lt;= MAXK:
+            s.put(off, leaf, keys, kids, nxt); return None
+        s.splits += 1                # overflow: split this node
+        at = len(keys)*9//10 if (P == 'right' and leaf and keys[-1] == key) else len(keys)//2
+        if leaf:                     # leaf: copy first key of right page up
+            L, R, sep = keys[:at], keys[at:], keys[at]
+            roff = s.alloc(); s.put(off, 1, L, [], roff); s.put(roff, 1, R, [], nxt)
+        else:                        # interior: move separator up
+            L, R, sep = keys[:at], keys[at+1:], keys[at]
+            roff = s.alloc(); s.put(off, 0, L, kids[:at+1]); s.put(roff, 0, R, kids[at+1:])
+        return (sep, roff)
+    def ins(s, key):
+        r = s._ins(s.root, key)
+        if r:                        # root split: the tree grows one level
+            sep, roff, old = r[0], r[1], s.root
+            s.root = s.alloc(); s.put(s.root, 0, [sep], [old, roff]); s.height += 1
+    def find(s, key):
+        off = s.root
+        while True:
+            leaf, keys, kids, nxt = s.get(off)
+            if leaf: return key in keys
+            off = kids[bisect.bisect_right(keys, key)]
+    def stats(s):                    # walk the leaf chain: count + fill
+        off, n, tot = s.root, 0, 0
+        leaf, keys, kids, nxt = s.get(off)
+        while not leaf:
+            off = kids[0]; leaf, keys, kids, nxt = s.get(off)
+        while off:
+            n += 1; tot += len(keys); off = nxt
+            if off: leaf, keys, kids, nxt = s.get(off)
+        return n, 100.0 * tot / (n * MAXK)
+
+def build(n, order, policy):
+    global P; P = policy
+    if os.path.exists('bt.bin'): os.unlink('bt.bin')
+    t = Tree('bt.bin')
+    for k in (range(n) if order == 'seq' else random.sample(range(10*n), n)):
+        t.ins(k)
+    return t
+
+print(f'{"rows":&gt;7} {"height":&gt;6} {"reads/probe":&gt;11} {"log2":&gt;4} {"log16":&gt;5}')
+for n in (100, 1_000, 10_000, 100_000, 300_000):
+    t = build(n, 'seq', 'right'); t.rd = 0
+    for k in random.sample(range(n), min(200, n)): t.find(k)
+    print(f'{n:&gt;7} {t.height:&gt;6} {t.rd/min(200,n):&gt;11.1f} '
+          f'{math.ceil(math.log2(n)):&gt;4} {math.ceil(math.log(n, 16)):&gt;5}')
+print('same 100k rows, three histories:')
+for order, pol, lab in (('seq', 'mid', 'sequential + 50-50'),
+                        ('seq', 'right', 'sequential + 90-10'),
+                        ('random', 'mid', 'random + 50-50')):
+    t = build(100_000, order, pol)
+    leaves, fill = t.stats()
+    print(f'{lab:&lt;18} leaves={leaves:&gt;6} fill={fill:4.1f}% '
+          f'file={os.path.getsize("bt.bin")//1024:&gt;5} KiB splits={t.splits}')</code></pre>
+<p>Output (CPython 3.12, one run; fill stable to ~±0.5%, leaf counts to ~1%):</p>
+<pre><code class="language-text">   rows height reads/probe log2 log16
+    100      2         2.0    7     2
+   1000      3         3.0   10     3
+  10000      4         4.0   14     4
+ 100000      5         5.0   17     5
+ 300000      6         6.0   19     5
+same 100k rows, three histories:
+sequential + 50-50 leaves= 12500 fill=53.3% file= 3516 KiB splits=14057
+sequential + 90-10 leaves=  7143 fill=93.3% file= 2008 KiB splits= 8029
+random + 50-50     leaves=  9446 fill=70.6% file= 2589 KiB splits=10352</code></pre>
+<p>What to notice: <strong>reads/probe equals height, exactly</strong> — one page read per level, §1's cost model made visible. The tree gains a level per ~9-16x rows, not per 2x like a binary tree (compare log2 to log16). At 300,000 rows height is 6 while log16 says 5, because <em>this toy splits interior nodes 50-50</em>: effective interior fanout ~9, not 16 — the "fanout" in the depth formula is always the fill-adjusted one. The three-history block is §3's argument, measured.</p>
+<p>Part 2 — inspect a real InnoDB page (<strong>documented walkthrough, not run here</strong> — no MySQL in this sandbox; commands and fields are from the MySQL 8.0 manual and the innodb_ruby project, not live output):</p>
+<pre><code class="language-bash">mysql -e "CREATE TABLE t (id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                          pad VARCHAR(200)) ENGINE=InnoDB;
+           INSERT INTO t SELECT NULL, 'x' FROM seq_1_to_10000;"
+mysql -e "SELECT @@innodb_page_size;"     # 16384
+innochecksum --page-type-summary t.ibd    # pages by FIL_PAGE_TYPE
+innochecksum --page=4 t.ibd               # decode page 4's FIL header
+gem install innodb_ruby                   # third-party teaching tool
+innodb_space -f t.ibd -p 4 page-dump | head -40</code></pre>
+<p>In the <code>innochecksum</code> dump look for <code>FIL_PAGE_OFFSET</code> (page number) and <code>FIL_PAGE_TYPE</code> = 17855. In <code>innodb_space</code>'s page-dump you should recognize §2: <code>records:</code> starting with <code>infimum</code> and <code>supremum</code>, per-record <code>next</code> offsets forming the chain, and a <code>directory:</code> of 2-byte slots — one per 4-8 records, minimum two.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Choose primary keys with the mechanism in mind</strong> (InnoDB): short and monotonic — <code>BIGINT AUTO_INCREMENT</code> or a time-ordered ID — gets the rightmost hot page, 90-10 splits, ~93% fill, slim secondary leaves.</li>
+<li><strong>Design covering indexes for hot queries:</strong> add the selected columns and check EXPLAIN for <code>Using index</code>; PK columns are already in the leaf. Each extra index is a whole tree that splits and re-fills — cover the query, don't collect columns.</li>
+<li><strong>Budget latency from height:</strong> warm levels are ~µs, each cold level one page read (~100 µs SSD, ~10 ms HDD); a nested-loop join does outer-rows × descents — multiply before you run it.</li>
+<li><strong>Diagnose "table 2x bigger than its data":</strong> measure fill (page-walk as above, <code>pgstattuple</code> in PostgreSQL); ~69% means random-insert or non-HOT history; a rebuild resets to ~93% only if future inserts are sequential.</li>
+<li><strong>Keep PostgreSQL updates HOT:</strong> don't index columns that change every update (counters, last_seen), and drop heap <code>fillfactor</code> to ~85-90 on churn-heavy tables.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch02 (the hierarchy):</strong> read-per-level is the latency tower applied to trees; root + level two = 16 MiB makes "the index top lives in cache" a derivable budget.</li>
+<li><strong>Module 01 ch05 (the heap):</strong> an index page is a fixed-size arena — carve, mark-delete, compact; the page directory is the arena's bookkeeping inverted.</li>
+<li><strong>Module 11 ch01 (the disk contract):</strong> page-size I/O, checksums, and the random-vs-sequential gap are why leaf linking and 90-10 splits pay; 16 KiB (InnoDB) vs 8 KiB (PostgreSQL) is a tunable, not a truth.</li>
+<li><strong>Module 11 ch03 (LSM trees):</strong> B-tree = update-in-place dynasty, LSM = copy-forward dynasty; splits (write-amp, 69% fill) vs compaction (write-amp, space-amp) is the same trade with axes swapped.</li>
+<li><strong>Module 11 ch04 (WAL &amp; recovery):</strong> the FIL header's page LSN anchors the flush rule; a split is 2-3 logged page writes, doublewrite-protected against ch01's torn pages.</li>
+<li><strong>Module 11 ch05 (MVCC):</strong> next-key locks ride this chapter's record chain; purge of dead entries is what lets MERGE_THRESHOLD merges fire.</li>
+<li><strong>Module 03 ch01 (bugs from first principles):</strong> optimistic descent and the B-link right-walk are "the world changed under me" races converted into verify-and-recover protocols.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Derive the depth.</strong> A B+ tree has 16 KiB pages, interior entries of exactly 16 bytes (key + child page number), and leaves holding 200 entries each. Pages may fall to 2/3 full at worst. What is the guaranteed maximum number of page reads for a point lookup in a 10^9-entry index?</li>
+</ol>
+<ol>
+<li><strong>Predict the layout.</strong> On one InnoDB page you insert keys 100, 200, 300 (in that order), then delete 200, then insert 150. Where does 150's record physically sit relative to 100's and 300's, what is the chain from infimum to supremum, and where is 200's record?</li>
+</ol>
+<ol>
+<li><strong>Diagnose the slowdown.</strong> An InnoDB table with a random UUIDv4 <code>CHAR(36)</code> primary key plus three secondary indexes ingests rows at 1/5 the rate of the identical table with <code>BIGINT AUTO_INCREMENT</code>, and its file is ~40% larger at the same row count. Explain both numbers.</li>
+</ol>
+<ol>
+<li><strong>Diagnose the bloat.</strong> A PostgreSQL table updated hourly has a stable heap size, but all four indexes tripled in two weeks. Which two HOT conditions are failing, what is the likely culprit, and what are the two fixes?</li>
+</ol>
+<ol>
+<li><strong>Concept.</strong> Why does InnoDB store primary-key values in secondary leaves instead of page/record pointers — what breaks with pointers, and what does the choice cost on every non-covered lookup?</li>
+</ol>
+<ol>
+<li><strong>Concept.</strong> Why is the page directory sparse (one slot per 4-8 records) rather than one slot per record? Derive from: slots are fixed 2 bytes, records are variable-length, inserts land mid-page.</li>
+</ol>
+<ol>
+<li><strong>Predict the number.</strong> With the lab's parameters (15 keys per node max, 90-10 leaf splits → ~93% leaf fill, but 50-50 interior splits), what height does a 250,000-key tree reach, and why does that not match ceil(log16(250,000)) = 4?</li>
+</ol>
+<ol>
+<li><strong>Cross-chapter.</strong> Take the 10^9-entry index of question 1 (fanout ~1,000, four levels, 16 KiB pages). How much RAM do the root and second level need, and how many <em>physical</em> reads does a typical lookup cost with those levels cached? Connect to module 01 ch02.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>Worst-case fanout F = (16,384/16) × 2/3 ≈ 682. Capacity at height h = F^(h-1) × 200: h = 3 gives 682² × 200 ≈ 9.3 × 10^7 (too small); h = 4 gives 682³ × 200 ≈ 6.3 × 10^10. <strong>Guaranteed maximum: 4 page reads</strong> (typical fill makes it 3). Guarantees use <em>minimum</em> fanout — the tree is never shallower than average-fill arithmetic promises.</li>
+</ol>
+<ol>
+<li>150's record is carved from the free gap between the record region and the page directory — physically <em>after</em> 300's record (allocation order), not between 100 and 300. The chain is <code>infimum -&gt; 100 -&gt; 150 -&gt; 300 -&gt; supremum</code>, spliced with 2-byte next-pointers. 200's bytes are still on the page, header-marked deleted and bypassed; they become reusable only after purge. This physical/logical split is why the page directory must exist.</li>
+</ol>
+<ol>
+<li>Random keys land at a random leaf per insert: no rightmost hot page (every descent may fault a cold page), mid-page 50-50 splits (fill → ~69%, hence ~40% more bytes: 100/70.5 ≈ 1.42), and splits dirty random pages the buffer pool never keeps. The 36-byte PK is also duplicated into all three secondary leaves, shrinking their fanout and deepening every tree. (§3, §4.)</li>
+</ol>
+<ol>
+<li>HOT needs (a) no indexed column modified and (b) the new version on the same page. Stable heap + growing indexes says updates are non-HOT: an indexed, frequently-updated column (status, counter, last_seen) is the classic culprit, or the page is full (default fillfactor 100). Fixes: un-index that column, and/or set fillfactor ~85-90 and rewrite. Each non-HOT update adds a TID entry to <em>every</em> index; old entries linger until vacuum.</li>
+</ol>
+<ol>
+<li>Rows physically move — splits, merges, compaction — so stored pointers would dangle and need cascading repair on every SMO. The PK is a stable logical locator. The cost: two full descents per non-covered secondary lookup, plus PK bytes taxed onto every secondary leaf.</li>
+</ol>
+<ol>
+<li>A dense directory shifts O(n) slot bytes on every mid-page insert; sparseness costs ~8 pointer walks after a log2(n/6) binary search — logarithmic search but linear maintenance, versus constant maintenance and a bounded walk. The owned-count nibble absorbs inserts incrementally: a slot takes records until its count hits 8, then a new slot appears. The directory also stays small enough to live in the page's tail.</li>
+</ol>
+<ol>
+<li>Height 6. Leaves: 250,000/14 ≈ 17,900. Interior nodes split 50-50, so effective interior fanout is ~9, not 16: ~2,000, then ~220, then ~25 interior pages above the leaves — and ~25 exceeds one root page's 16 children, so the root splits and height goes 5 → 6. ceil(log16) = 4 assumes every node at full fanout; depth is governed by effective, fill-adjusted fanout — the lab-side view of answer 1.</li>
+</ol>
+<ol>
+<li>Root = 1 page; second level = 1,000 × 16 KiB ≈ 16 MiB — both pinned in RAM out of a 10^9-entry index. A lookup then touches level 3 (10^6 pages ≈ 16 GiB, mostly uncached) and one leaf: typically <strong>1-2 physical reads</strong>. That is module 01 ch02's tower in action — each level is ~F times smaller than the one below, so the hot top of a B-tree is exponentially small by design, and the cache exploits it for free.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 11 — Database storage engines</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

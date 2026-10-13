@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 08 final exam — deep-roots</title>
+<meta name="description" content="Final exam for module 08 (the memory model with no heap), with worked answers.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 08 final exam — deep-roots">
+<meta property="og:description" content="Final exam for module 08 (the memory model with no heap), with worked answers.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 08 final exam — deep-roots">
+<meta name="twitter:description" content="Final exam for module 08 (the memory model with no heap), with worked answers.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 08 &middot; the memory model with no heap &middot; final exam</div>
+<h1 class="post-title">Module 08 final exam</h1>
+<div class="post-meta">every chapter &middot; worked answers behind the fold</div>
+<p>Twelve questions, all five chapters, closed book; answers are worked. Scoring: 11+ = you own this module; 8-10 = solid, revisit the flagged chapters; &lt;8 = the chapter quizzes are the study path.</p>
+<p><strong>Part I — the machine and its storage (chapters 01-02)</strong></p>
+<ol>
+<li><em>(concept)</em> z/Architecture twice "just widened" addresses and twice paid. (a) What does it mechanically mean that a 31-bit program "cannot even name" storage above the 2 GB bar? (b) Why did 370-XA (1983) force z/OS common areas such as CSA below the 16 MB line, and what did that do to the extension's new bytes?</li>
+</ol>
+<ol>
+<li><em>(predict the decode)</em> A dump shows <code>PSW AT TIME OF ERROR 079D0005 81008040</code>, <code>INTC 0005</code>. Decode it: DAT state, storage key, problem or supervisor state, addressing mode, failing address relative to the 16 MB line, interruption code, abend. What does that code rule out before any trace?</li>
+</ol>
+<ol>
+<li><em>(concept)</em> The three storage sections each answer one question: <em>who owns these bytes, and when are they born?</em> Give the three answers with C analogs and each section's exact VALUE semantics; derive the static default from one 1964 hardware fact and one 1970s economics fact; name COBOL-85's two-part recursion opt-in.</li>
+</ol>
+<ol>
+<li><em>(diagnosis)</em> A partner audit finds other customers' data in your fixed-length extract records. The copybook has <code>05 FILLER PIC X(4)</code> between two named fields; the program MOVEs only named fields before each WRITE and runs <code>INITIALIZE EXTRACT-RECORD</code> at entry. Where do the four bytes come from, why does nothing fix them, and what is the cheapest fix?</li>
+</ol>
+<p><strong>Part II — the byte-level type system (chapter 03)</strong></p>
+<ol>
+<li><em>(compute the layout)</em> Byte-map this record: every offset, every size, the total. How many bytes do the 88s add? With subscript checking off, which field(s) does <code>CLAIM-REGIONS(7)</code> hit?</li>
+</ol>
+<pre><code class="language-cobol">   01  CLAIM-RECORD.
+       05  CLAIM-ID        PIC 9(7).
+       05  CLAIM-CODE      PIC X(3).
+       05  CLAIM-AMT       PIC S9(7)V99 COMP-3.
+       05  CLAIM-AMT-X     REDEFINES CLAIM-AMT PIC X(5).
+       05  CLAIM-QTY       PIC S9(4) COMP.
+       05  CLAIM-TAX       PIC S9(3)V9 COMP-3.
+       05  CLAIM-REGIONS   PIC X(2) OCCURS 6 TIMES.
+       05  CLAIM-STATUS    PIC X.
+           88  CLAIM-PAID  VALUE "P" "Y".</code></pre>
+<ol>
+<li><em>(compute the layout)</em> Moving wall: give the element stride; the offsets of INV-DATE and INV-TOTAL and the record's length at INV-CNT = 3 and 12; the bytes WORKING-STORAGE allocates; and which bytes land outside the record when a feed sets INV-CNT = 41.</li>
+</ol>
+<pre><code class="language-cobol">   01  INVOICE-RECORD.
+       05  INV-KEY     PIC X(6).
+       05  INV-CNT     PIC 9(3).
+       05  INV-LINE    PIC S9(5)V99 COMP-3 OCCURS 1 TO 40 TIMES
+                      DEPENDING ON INV-CNT.
+       05  INV-DATE    PIC 9(8).
+       05  INV-TOTAL   PIC S9(9) COMP.</code></pre>
+<p><strong>Part III — the transaction world and the long game (chapters 04-05)</strong></p>
+<ol>
+<li><em>(cross-module, derive)</em> An airline region: 200 live programs averaging 50 KB, 5,000 concurrent agents. (a) Show the arithmetic that forces one copy of each program. (b) State the insight module 05 ch01's Zygote shares with it. (c) Name the structural difference in how the two systems keep instances from corrupting the shared copy, and the contract CICS charges every program.</li>
+</ol>
+<ol>
+<li><em>(diagnosis)</em> A CICS transaction abends ASRA. The dump: PSW key 9, problem state, 31-bit mode; interruption code 0004; a store into CICS-key storage; STGPROT=YES. Give the mechanism: which two keys, compared where and when, what the hardware did to the store. Why ten years without the abend? What would the wild write do in C?</li>
+</ol>
+<ol>
+<li><em>(diagnosis)</em> A balance inquiry intermittently shows other customers' amounts. No abends; the single-user test region never reproduces it; it appears only at peak load; it vanishes after a region restart and creeps back. Diagnose, give the two one-line fixes, and name the compile option that retires the bug class post-1991.</li>
+</ol>
+<ol>
+<li><em>(diagnosis)</em> A rehost proposal: recompile the batch estate under GnuCOBOL on Linux, copy the data sets, run an EBCDIC-to-ASCII text conversion over the files. Name at least three byte-level things the plan destroys or silently changes (which fields each hits), and the one rule that prevents all three.</li>
+</ol>
+<ol>
+<li><em>(concept)</em> An estate audit: complete, still-compilable source; pure batch (VSAM, no CICS, no IMS); no multi-year parallel-run budget. Walk the modernization menu to a branch, and name two costs the "recompile and go" pitch leaves out.</li>
+</ol>
+<ol>
+<li><em>(cross-module)</em> Module 01 ch17 closed on COBOL's "completed contract." Price both sides: (a) two bug families that cannot exist in classic (pre-2002) COBOL, with the eliminating mechanism; (b) two that grew in the vacated space, met here; (c) why 40 years of the same design means "the spec is gone" — and what that does to rewrite estimates.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<p><strong>Part I</strong></p>
+<ol>
+<li>(a) 31-bit instructions generate 31-bit effective addresses—arithmetic on bits 0-30—so bits 32-63 are not expressible: above-the-bar bytes cannot be <em>named</em>. 64-bit is a separate execution mode (z900, 2000). (b) AMODE-24 binaries had to keep running and address only 0-16 MB, so common areas like CSA stayed below the line, <em>consuming the bytes the extension added</em>; conversion took a decade. Residue: AMODE (address size generated) and RMODE (load location: 24 below the line, ANY below the bar). (ch01)</li>
+</ol>
+<ol>
+<li>Byte 0 <code>07</code>: DAT on (bit 5), masks on. Byte 1 <code>9D</code>: bits 8-11 = 1001 → <strong>key 9</strong>; bit 15 → <strong>problem state</strong>. Bits 16-31 = <code>0005</code>: <strong>addressing exception</strong>. Bit 32 = 1 → <strong>31-bit mode</strong>; bits 33-63 = 0x1008040 = 16,810,048 &gt; 16,777,216 → failing instruction <strong>above the 16 MB line</strong>. Abend <strong>S0C5</strong>: no valid translation, a wild pointer. Code 5 rules out a key mismatch: code 4 would mean a mapped frame with the wrong key—no such page vs. wrong key. (ch01; the CICS half lands in question 8)</li>
+</ol>
+<ol>
+<li><strong>WORKING-STORAGE</strong>—static: one copy at the program's first activation, persisting across every CALL, VALUE applied <strong>once</strong> (load-time, like a C global's initializer). <strong>LOCAL-STORAGE</strong>—automatic: a fresh copy per invocation, VALUE applied <strong>every</strong> invocation, gone at GOBACK (the stack-frame analog). <strong>LINKAGE</strong>—no storage: a PICTURE over the caller's bytes via USING's raw address list (nothing checked); the pointer analog (<code>f(&amp;x)</code>); reading an unset item is the classic S0C4. Static default: System/360 had <strong>no hardware stack</strong> (<code>BALR R14,R15</code>, return addresses in registers); CPU was metered, so initialization was explicit and rare. COBOL-85's opt-in: RECURSIVE on PROGRAM-ID <em>plus</em> per-invocation data in LOCAL-STORAGE. (ch02)</li>
+</ol>
+<ol>
+<li>The <strong>previous record's residue</strong>. FILLER is unreferenceable by design—no name means no MOVE target, and INITIALIZE skips it <em>by definition</em>—and a FILE SECTION FILLER may not carry VALUE. Record areas are reused, so the prior customer's bytes ride into the next record written: the documented PII-in-unnamed-bytes leak. Cheapest fix: a group-level MOVE (<code>MOVE LOW-VALUES TO EXTRACT-RECORD</code>) fills every byte, FILLER included. (ch02; GETMAIN's no-zeroing default repeats the theme, ch04)</li>
+</ol>
+<p><strong>Part II</strong></p>
+<ol>
+<li>Left to right, REDEFINES buying nothing:</li>
+</ol>
+<pre><code class="language-text">   CLAIM-ID       9(7)     7 B @0     DISPLAY: 1 byte per character
+   CLAIM-CODE     X(3)     3 B @7
+   CLAIM-AMT      S9(7)V99 5 B @10    COMP-3: 9 digits (V free),
+                                       floor(9/2)+1
+   CLAIM-AMT-X    REDEFINES 5 B @10   same bytes, no advance
+   CLAIM-QTY      S9(4)    2 B @15    COMP: 1-4 digits -&gt; halfword
+   CLAIM-TAX      S9(3)V9  3 B @17    COMP-3: floor(4/2)+1
+   CLAIM-REGIONS  X(2) x 6 12 B @20
+   CLAIM-STATUS   X        1 B @32
+   total: 7+3+5+2+3+12+1 = 33 bytes</code></pre>
+<p>The 88s add <strong>zero bytes</strong>: compile-time comparisons over CLAIM-STATUS's byte (<code>IF CLAIM-PAID</code> tests <code>"P"</code> or <code>"Y"</code>). <code>CLAIM-REGIONS(7)</code> addresses 20 + 2x(7-1) = 32, writing [32-33]: byte 32 hits <strong>CLAIM-STATUS</strong>; byte 33 lands one past the record—silent, because subscript checking is off by default: module 01 ch08's unchecked array, reborn. (ch03)</p>
+<ol>
+<li>INV-LINE: S9(5)V99 COMP-3 = 7 digits, floor(7/2)+1 = <strong>4 bytes</strong>—the stride. INV-KEY [0-5], INV-CNT [6-8], table at 9; every field after it moves with the count:</li>
+</ol>
+<pre><code class="language-text">   cnt =  3: table [9-20], INV-DATE 21 [21-28], INV-TOTAL 29 [29-32]; length 33
+   cnt = 12: table [9-56], INV-DATE 57 [57-64], INV-TOTAL 65 [65-68]; length 69</code></pre>
+<p>INV-TOTAL: S9(9) COMP → 4 bytes. WORKING-STORAGE allocates the <strong>maximum</strong>: 9 + 40x4 + 8 + 4 = <strong>181 bytes</strong>—ODO moves the record's <em>logical</em> length, never the allocation. At INV-CNT = 41: INV-DATE at 173 [173-180], INV-TOTAL at 181—<strong>[181-184] land entirely outside the record</strong>, corrupting the next item: the count is data, not enforcement; ODO length checks are hand-written. (ch03)</p>
+<p><strong>Part III</strong></p>
+<ol>
+<li>(a) Shared: 200x50 KB = <strong>10 MB</strong>; per task x 5,000 = <strong>250 MB</strong>— impossible on a 1968 few-MB machine. Program text is read-mostly: it exists once. (b) Zygote: preload the runtime once, fork every app from it sharing pages copy-on-write—<em>share the expensive common pages, privatize the per-instance bytes</em>: one economics, 40 years apart. (c) Zygote isolates instances <strong>with the MMU</strong>—COW makes writes private, free; CICS has no fork, so isolation is <strong>discipline backed by storage keys</strong>: quasi-reentrancy—re-enterable at every EXEC CICS command boundary, no per-task state in WORKING-STORAGE (COMMAREA, 32 KB cap, or GETMAIN'd storage)—paid on every task switch. (ch04; module 05 ch01)</li>
+</ol>
+<ol>
+<li>The store carried <strong>PSW key 9</strong> (bits 8-11); its address went through DAT to a <strong>frame keyed 8</strong>—CICS's own storage, split off by STGPROT=YES. The hardware compares access key with frame key after translation, per access: 9 ≠ 8, neither 0—the store was <strong>suppressed before a byte landed</strong>: interruption code 4, S0C4, the task abending ASRA, the region surviving. Ten silent years: the region ran one key before, so the same store <em>succeeded</em>, surfacing later in an unrelated transaction—the bug is old, the detection new. In C the overwrite lands in the next malloc chunk, stops nothing: someone else's crash, later—the memory-safety net C never got. (ch01, ch04)</li>
+</ol>
+<ol>
+<li><strong>Dirty shared WORKING-STORAGE.</strong> One program copy per region; VALUE clauses fired once, at load. At peak load, tasks interleave through the same bytes at EXEC CICS command boundaries: task B reads task A's residue—first task correct by luck, later tasks inherit the previous customer's leftovers. Single-user test cannot sequence two tasks; a restart re-fires the VALUEs—hence vanishes, then creeps. The lab's three CALLs without CANCEL printed 100, 350, 390. Fixes: INITIALIZE (or MOVE) the state-carrying items at entry; or per-task state in the COMMAREA or GETMAIN'd storage. Compile option: <strong>RENT</strong>, task-scoped static per LE enclave, retiring the class after ~1991. (ch04; VALUE-once mechanics, ch02)</li>
+</ol>
+<ol>
+<li>(1) The character-set pass <strong>destroys every non-DISPLAY field</strong>: COMP-3 balances (two digits per byte plus sign nibble) and COMP binary halfwords are not text—their bytes become garbage. (2) Text fields survive in <em>length</em> only—values change (0xC1 becomes 0x41), so comparisons, hashing, and sort order change: EBCDIC digits (0xF0...) sort above letters, ASCII below. (3) Recompiling re-lays records—<strong>same PICTURE, different bytes</strong>: GnuCOBOL's binary-size gives 1-2-digit COMP items 1 byte; z/OS spends 2; COMP-1/2 are hexadecimal float on z/OS, IEEE-754 on x86. The rule: <strong>record lengths are in bytes, and a record is not text</strong>—migrate via a byte-preserving, field-by-field extract from the hand-computed offset table. (ch01, ch03, ch05)</li>
+</ol>
+<ol>
+<li>Q1 complete source → yes; Q2 CICS/IMS entanglement → no; Q3 multi-year parallel-run budget → no. Branch: <strong>REHOST</strong>—Linux plus GnuCOBOL or Micro Focus. Costs the pitch omits: the data conversion is field-by-field byte surgery, not a utility run (question 10); and the platform leaves with the hardware—JCL, VSAM, scheduling, the systems programmers ("COBOL is easy to learn, mainframe engineering is not"): staffing the language but not the platform mis-prices the skills cliff. (ch05)</li>
+</ol>
+<ol>
+<li>(a) <strong>Use-after-free and double-free</strong>—nothing is ever freed in classic COBOL, so no reference can outlive its target (module 01 ch05's catalog). <strong>Fragmentation</strong>—no allocator, every offset fixed at compile time, no arena to fragment. (b) <strong>ODO overflow</strong>—the length rule is a data field plus hand-written checks; a stale count shifts every later field (question 6); <strong>dirty storage</strong>—WORKING-STORAGE persisting across CICS tasks (question 9). (c) The same decision made records <strong>schema-less</strong>: no metadata on DASD; REDEFINES gives one region several legal readings, and no tag says which is live—the choice lives in whatever program touches it next. Forty years, plus EBCDIC code pages and retired engineers: the spec survives only in running code and microfiche. A rewrite is <strong>archaeology</strong>—recovering the lost spec from its only complete artifact, the running system; TSB 2018 (~£330M plus a £48.65M fine, untested data) is the under-budgeted version. Bugs move; they never disappear. (ch05; module 01 ch17)</li>
+</ol>
+</details>
+<div class="post-footer"><p>Chapter list: <a href="index.html">Module 08</a>. Module 01 also has the <a href="../quiz.html">interactive quiz</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stack exploitation — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 02: Stack exploitation">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Stack exploitation — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 02: Stack exploitation">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Stack exploitation — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 02: Stack exploitation">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 02 &middot; the dark mirror of module 01</div>
+<h1 class="post-title">Stack exploitation</h1>
+<div class="post-meta">chapter 02 &middot; ~16 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Module 01 chapter 04 left the frame to two trusting instructions: <code>leave</code> pops the saved frame pointer, <code>ret</code> pops the return address into the instruction pointer — and nothing checks where a <em>write</em> lands. A copy starting in a 64-byte local buffer can walk straight up the frame and replace the return address: at return, the attacker's bytes are the program counter. This chapter builds that attack from the frame upward, then the defense — the stack canary, glibc's NUL-terminated secret at <code>fs:0x28</code> — and its three roads around: leaking it, overwriting its home in TLS, inheriting it unchanged through <code>fork()</code>.</blockquote>
+<h2 id="one-missing-bound-check-the-frame-read-as-an-attack-surface">One missing bound check: the frame read as an attack surface</h2>
+<p>Start from the machinery module 01 chapter 04 derived: allocation is <code>sub rsp, N</code>, deallocation is <code>leave; ret</code>, and the design has zero bookkeeping — no headers, no bounds — because the compiler <em>proves</em> every access stays in the frame; the proof lives only in the compiler's head. At runtime the frame is bytes: <strong>data (locals) and control data (saved RBP, return address) interleaved in one region, separated by nothing but distance.</strong> The attacker needs one copy whose length comes from anywhere but the destination.</p>
+<p>The stack grows downward, so a local buffer sits at the <em>low</em> end of the frame with the control data above it. A linear upward copy — exactly what <code>strcpy</code> and friends do — crosses, in order: the remaining locals, the canary (if built with one), the saved frame pointer, the return address. The epilogue then pops those bytes into <code>rbp</code> and <code>rip</code>. That is the whole mechanism of the classic stack smash (Aleph One, "Smashing the Stack for Fun and Profit," Phrack 49, 1996) — the first diagram every defender must draw:</p>
+<pre><code>      higher addresses (an upward copy climbs TOWARD these)
++----------------------------------------+  caller's frame / arg area
+|  RETURN ADDRESS (saved RIP)            |  rbp+0x08  &lt;- ret pops THIS into rip
++----------------------------------------+  rbp       &lt;- leave pops this into rbp
+|  saved RBP (caller's frame pointer)    |             &lt;- corrupt = poisoned backtrace
++----------------------------------------+  rbp-0x08
+|  STACK CANARY (8 B, low byte = 00)     |             &lt;- must be reproduced exactly
++----------------------------------------+  rbp-0x10
+|  alignment slack (0-8 B, builds vary)  |             &lt;- absorbs stray bytes
++----------------------------------------+
+|  char buf[64]   &lt;- "AAAAAAAAAA..."     |             &lt;- the copy starts HERE
++----------------------------------------+  rbp-0x50   bottom of frame proper
+      lower addresses (rsp, then deeper frames)</code></pre>
+<p>The minimal vulnerable program:</p>
+<pre><code class="language-c">/* smash.c — deliberately vulnerable training target. Never ship this shape. */
+#include &lt;stdio.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;stdlib.h&gt;
+
+void win(void) { puts("*** control flow hijacked: win() reached ***"); exit(0); }
+
+void greet(void) {
+    char buf[64];        /* destination: 64 bytes */
+    read(0, buf, 256);   /* bug: 256 is a source-side constant, not buf's size */
+    write(1, buf, 64);   /* echo only the legal part */
+}
+
+int main(void) { puts("feed me:"); greet(); puts("returned normally"); }</code></pre>
+<p>Input comes from <code>read()</code>, not <code>strcpy(argv[1])</code>, because <code>argv</code> is NUL-terminated strings: no <code>0x00</code> survives <code>execve</code>, and real 64-bit addresses are full of NULs (<code>0x0000000000401156</code>). Payloads travel by stdin, sockets, or files — the channels production bugs read from.</p>
+<p>The arithmetic is pure chapter 04: the defenseless build puts <code>buf</code> at <code>[rbp-0x40]</code>, so the saved return address sits at 64 + 8 = <strong>72 bytes</strong>. Send 72 filler bytes plus the 8-byte little-endian address of <code>win</code>, and <code>ret</code> delivers you there — verified on this chapter's platform (gcc 14.2.0, glibc 2.41, Debian 13, x86-64):</p>
+<pre><code class="language-console">$ python3 -c 'import sys; sys.stdout.buffer.write(
+    b"A"*72 + (0x401156).to_bytes(8,"little"))' | ./smash
+*** control flow hijacked: win() reached ***</code></pre>
+<h2 id="what-gcc-actually-emits-now-and-why-the-classic-lab-must-opt-out">What gcc actually emits now — and why the classic lab must opt out</h2>
+<p>The 1996 target no longer exists by accident; two defaults stand in the way.</p>
+<p><strong>The canary.</strong> With <code>-fstack-protector-strong</code>, gcc brackets the function with a prologue that stashes the secret and an epilogue that verifies it (gcc 14.2.0, <code>-O0</code>, trimmed):</p>
+<pre><code class="language-asm">push   rbp
+mov    rbp,rsp
+sub    rsp,0x50                 ; frame grew: 64 buf + 8 canary + 8 alignment
+mov    rax,QWORD PTR fs:0x28    ; load the canary master from TLS
+mov    QWORD PTR [rbp-0x8],rax  ; frame's copy, just below saved RBP
+...
+mov    rax,QWORD PTR [rbp-0x8]  ; epilogue: reload the copy
+sub    rax,QWORD PTR fs:0x28    ; compare against the master
+je     &lt;ok&gt;                     ; equal -&gt; return normally
+call   __stack_chk_fail@plt     ; not equal -&gt; abort, loudly
+&lt;ok&gt;:  leave
+       ret</code></pre>
+<p>gcc 14 here emits <code>sub</code> + <code>je</code>; clang and older gcc emit the textbook <code>xor rax, QWORD PTR fs:0x28</code> / <code>jne __stack_chk_fail</code> — same predicate, different spelling; recognize both.</p>
+<p><strong>PIE.</strong> The defenseless build has <code>greet</code> at a fixed <code>0x401173</code>; the default build is position-independent and ASLR moves it every run, killing the "hardcode <code>win</code>" step — the attacker needs a leak first (chapter 06 quantifies the entropy). So the classic lab opts out with <code>-fno-stack-protector -no-pie</code> — and one surprise remains: <code>readelf -lW</code> shows <code>GNU_STACK RW</code>, not RWX. NX has been default for two decades; the lab recovers the <em>canary-free, fixed-address</em> layout, not 1996's executable stack — chapter 03 is why attackers stopped caring.</p>
+<p>One distro trap, exposed by this chapter's own platform: <strong>defaults are per-distribution, not per-gcc.</strong> Debian 13's bare gcc 14 enables PIE but <em>not</em> the protector (Debian injects <code>-fstack-protector-strong</code> via <code>dpkg-buildflags</code> for packages, not ad-hoc builds); Ubuntu's gcc: strong since 16.10, PIE since 17.10. Ask, don't assume: <code>gcc -Q --help=common | grep stack-protector</code>.</p>
+<h2 id="deriving-the-canary-a-secret-in-the-path-a-nul-at-the-front">Deriving the canary: a secret in the path, a NUL at the front</h2>
+<p>Build the defense from the attack's shape. The overflow is <em>linear</em> and <em>upward</em>, so it must physically cross every byte between the buffer and the return address. Place an 8-byte <strong>secret</strong> in that path and refuse to return if the frame's copy no longer matches the master. Three requirements fall out; glibc answers each:</p>
+<ol>
+<li><strong>Unpredictable.</strong> A guessable secret just gets replayed in the overflow. The value is random per <code>exec</code>: the kernel hands each new process 16 random bytes via the ELF auxiliary vector (<code>AT_RANDOM</code>); glibc derives the canary's 8 bytes from them (glibc 2.41, x86-64).</li>
+<li><strong>Master off the stack.</strong> A secret in the frame is a copy the attacker reads on the way past. The master lives in TLS — <code>fs:0x28</code>, the <code>stack_guard</code> field of glibc's <code>tcbhead_t</code> — behind a segment register with a per-thread base.</li>
+<li><strong>The low byte is <code>0x00</code> — the <em>terminator canary</em>.</strong> It earns its keep twice: - <strong>It stops string-shaped leaks.</strong> The bug pair's other half is a <em>read</em> running past the buffer — <code>printf("%s", buf)</code> on unterminated data, <code>strlen</code>, anything that walks until a zero. Climbing into the canary, such a read stops dead at its first byte: zero of the seven secret bytes leak. Without the terminator, the same bug prints all seven and hands over the canary. - <strong>It absorbs the classic off-by-one.</strong> <code>strcpy</code> writes one terminating NUL past the copied bytes. A stray NUL landing on the canary's low byte changes <code>0x00</code> into <code>0x00</code> — a no-op. The most common byte of stack corruption in C is swallowed by design.</li>
+</ol>
+<p>What the canary does <em>not</em> do matters as much: it is a <strong>detector, not a corrector</strong> — when <code>__stack_chk_fail</code> fires, every local is already overwritten; the process dies to stop control-flow capture, not to repair data. It guards the return path only — the arg area above the return address is outside its promise — and does nothing about leaks of stack <em>contents</em> (module 01 chapter 04's dead-frame bytes).</p>
+<h2 id="the-canary-s-home-tls-and-the-three-roads-around-it">The canary's home: TLS, and the three roads around it</h2>
+<p>A mitigation is a claim about what an attacker cannot do; the canary's claim has three roads around it, in rising order of effort.</p>
+<p><strong>Road 1: leak it.</strong> Any read primitive reaching the frame's canary slot yields the seven secret bytes, replayed in the overflow. The terminator stops <em>string-shaped</em> reads, not reads in general — format-string bugs, length-confused echoes, partial-overwrite-then-read pairs all work (module 02 chapter 01's primitive ladder: leak first, corrupt second). One good leak and the canary is a toll already paid.</p>
+<p><strong>Road 2: overwrite the master.</strong> The epilogue compares the frame's copy against <code>fs:0x28</code>. For a <code>pthread_create</code>'d thread, glibc maps the TCB and its TLS block at the <strong>top of that thread's stack region</strong> — the guard page is at the <em>bottom</em> (growth end), and nothing patrols the top border. So a bug that accepts very long input — a decompressor filling a stack buffer in a loop, a path-builder appending without bounds — can write up through its own frame, the caller frames, out the top of the stack, and into <code>tcbhead_t</code>, replacing <code>stack_guard</code> with attacker bytes. Corrupted copy equals corrupted master; the check passes. The distance is on the order of the remaining stack — megabytes against glibc's 8 MB default (glibc 2.41). The main thread's TCB is an ld.so mapping elsewhere — hence a <em>threaded-daemon</em> road; check with <code>p $fs_base</code>.</p>
+<p><strong>Road 3: never learn it, never change it.</strong> <code>fork()</code> copies the parent's address space, TLS included: the child's canary is byte-for-byte the parent's. A daemon forking a child per connection makes the arithmetic cruel: a failing child dies of <code>SIGABRT</code> — one dropped connection — while the canary never changes; only <code>exec</code> consults <code>AT_RANDOM</code> again, and the parent never execs. The attacker brute-forces <em>byte by byte</em>: the low byte is known (<code>0x00</code>), seven remain, at most 255 wrong values each — worst case 7 × 255 = <strong>1,785 crashes</strong> (expected ~893) against a daemon that will fork 100,000 connections. This is the <strong>"crash resets the canary" trap</strong>: the belief that a crashing child re-randomized the secret. It does not — <em>fork inherits, exec re-rolls.</em> The historical defense is the inetd shape: <code>fork</code> plus <code>exec</code> per connection, buying a fresh <code>AT_RANDOM</code> each time.</p>
+<p>The pattern across all three roads: the canary defends against <em>linear, secret-blind</em> overflows, and its guarantee ends where some other mechanism — leak discipline, mapping layout, process architecture — must take over.</p>
+<h2 id="the-off-by-one-one-nul-byte-against-one-frame-pointer">The off-by-one: one NUL byte against one frame pointer</h2>
+<p>The classic smash needs enough input to reach the return address. A subtler weapon needs exactly <strong>one</strong> byte — and turns the frame pointer itself into a delayed detonator.</p>
+<p>On 32-bit x86, pack a buffer against the top of the frame and let a copy run one byte long — <code>for (i = 0; i &lt;= 256; i++) buf[i] = src[i];</code> with <code>char buf[256]</code>, or a <code>strcpy</code> one byte too long. The 257th byte (the terminating NUL, for <code>strcpy</code>) lands on the <strong>low byte of saved EBP</strong>:</p>
+<pre><code>        32-bit frame, no canary (the 1990s layout)
++-----------------------+  ebp+0x04   return address  (UNTOUCHED)
++-----------------------+  ebp         saved EBP: 0xffffc8f0
+| low byte was f0       |              one NUL writes 0x00 -&gt; 0xffffc800
++-----------------------+  ebp-0x100   buf[256] ... attacker-planted data below</code></pre>
+<p>The function's return address is untouched, so it returns <em>normally</em> — the crash is not here. The poison detonates in the <em>caller's</em> epilogue, one frame later: <code>leave</code> does <code>mov esp, ebp; pop ebp</code>, so the caller's <code>ebp</code> becomes the poisoned <code>0xffffc800</code>, shifted down by up to 252 bytes (i386 stacks are 4-byte aligned) — into the attacker's dead-but-intact buffer bytes. Every <code>[ebp-...]</code> access in the caller now reads attacker data, and when the <em>caller</em> runs <code>leave; ret</code>, its <code>ret</code> pops from the fake frame: <code>rip</code> control, one frame later, from a single NUL.</p>
+<p>The technique entered the literature around 1999 (klog's Phrack write-up on overwriting EBP) as <strong>"poison NULL byte"</strong> — a name that survives mostly in heap lore, where the same one-NUL idea attacks glibc chunk metadata (module 02 chapter 04).</p>
+<p>Why did x86-64 kill it? Derive, don't memorize:</p>
+<ul>
+<li><strong>The canary stands in the byte path.</strong> Between the buffer's end and saved RBP lie 8 canary bytes. The stray NUL lands on the canary's low byte — <code>0x00</code> → <code>0x00</code>, absorbed silently. Reaching saved RBP's low byte at all means crossing all eight canary bytes, and the process aborts.</li>
+<li><strong>16-byte alignment.</strong> The System V AMD64 ABI forces <code>rsp</code> 16-byte aligned at call boundaries, so saved RBP's low nibble is already zero and compilers insert slack — the poison's ≤ 240-byte shift rarely lands on controlled bytes.</li>
+<li><strong>Frame pointers became optional.</strong> This chapter's own <code>-O2</code> build ends with <code>add rsp,0x50; pop rbx; ret</code> — no <code>leave</code>, no saved RBP to poison. (Policy, not law: Ubuntu 24.04 re-enabled frame pointers for profiling, so the surface breathes with compiler flags.)</li>
+</ul>
+<p>For a defender the lesson is sharper than "the bug is dead": on a modern build the off-by-one NUL is <em>absorbed and invisible</em> — no crash, no canary trip. Silence is not safety.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The terminator earns its low byte twice</strong>: it stops string-primitive leaks (<code>%s</code>, <code>strlen</code>) at the canary's first byte, and makes the one-NUL off-by-one a no-op (<code>0x00</code> over <code>0x00</code>). glibc 2.41 derives the 8 bytes from the kernel's 16-byte <code>AT_RANDOM</code> blob, low byte forced to <code>0x00</code>.</li>
+<li><strong>The master lives at <code>fs:0x28</code>, in <code>tcbhead_t.stack_guard</code></strong> — the first 0x30 bytes of glibc's <code>struct pthread</code>. A pthread's TCB is mapped at the <em>top</em> of that thread's stack region (guard page at the growth end only), so the "long overflow into your own canary" road is a threaded-daemon road with megabytes of runway. The main thread's TCB is an ld.so mapping elsewhere — check with <code>p $fs_base</code>.</li>
+<li><strong><code>fork()</code> inherits the canary verbatim; only <code>exec</code> re-rolls it.</strong> The "crash resets the canary" assumption is the trap: brute-forcing a fork-per-connection daemon costs ≤ 255 crashes per byte × 7 unknown bytes = ≤ 1,785 dead children. The inetd-style fork+exec per connection is the historical answer.</li>
+<li><strong>The gcc flag genealogy</strong>: <code>-fstack-protector</code> (gcc 4.1, 2006; only frames with arrays &gt; 8 bytes or <code>alloca</code>), <code>-fstack-protector-all</code> (every frame), <code>-fstack-protector-strong</code> (gcc 4.9, 2014; any array or address-taken local — catches <code>char buf[64]</code>), <code>-fstack-protector-explicit</code> (gcc 6, attribute-marked only). Ubuntu gcc = strong since 16.10 + PIE since 17.10; Debian's bare gcc = PIE only, protector injected via <code>dpkg-buildflags</code>.</li>
+<li><strong>Off-by-one lore</strong>: the saved-EBP overwrite dates to klog's 1999 Phrack write-up — its window was a buffer's top byte abutting saved EBP's low byte on i386. The name "poison NULL byte" now lives mostly in heap lore (glibc size-field off-by-ones, module 02 chapter 04); on x86-64 the canary occupies the stack variant's byte path.</li>
+<li><strong>Triage signature</strong>: canary failure is <code>SIGABRT</code> (signal 6; shell exit 134) with <code>*** stack smashing detected ***: terminated</code> on stderr (glibc 2.41 wording; older glibc also printed the program path). A <code>SIGSEGV</code> with <code>rip</code> full of <code>0x41</code>s means <em>no canary was in that frame</em> — a different rung missing.</li>
+<li><strong>Modern builds find this bug at compile/CI time</strong>: gcc 14 flags the lab's <code>read(0, buf, 256)</code> with <code>-Wstringop-overflow</code> even at <code>-O0</code>; <code>-D_FORTIFY_SOURCE=2</code> (needs <code>-O1+</code>) swaps in <code>__memcpy_chk</code>-style calls checked against compile-time object sizes; ASan's redzones catch the <em>first</em> byte past the buffer, including the off-by-one the canary absorbs.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>The whole chapter on one laptop (gcc 14.2.0, glibc 2.41, Debian 13, x86-64; addresses vary by compiler and distro — the instruction sequences are the durable part):</p>
+<pre><code class="language-console">$ gcc -g -O0 -fno-stack-protector -no-pie smash.c -o smash        # the 1996 target
+$ gcc -g -O0 -fstack-protector-strong -pie smash.c -o smash_prot  # the 2024 defense
+smash.c:14:5: warning: 'read' writing 256 bytes into a region of size 64
+   overflows the destination [-Wstringop-overflow=]</code></pre>
+<p>First: the compiler already told you — treat <code>-Wstringop-overflow</code> as the review comment it is. (On Ubuntu those are the defaults.)</p>
+<p><strong>Part 1 — the classic, no defenses:</strong></p>
+<pre><code class="language-console">$ gdb -q ./smash
+(gdb) disas greet
+   sub    rsp,0x40            ; frame = 0x40: buf is the only local
+   lea    rax,[rbp-0x40]      ; &amp;buf -- the attack starts here
+   ...
+   leave                      ; mov rsp,rbp ; pop rbp
+   ret                        ; pops saved RIP into rip
+(gdb) p win
+$1 = {void (void)} 0x401156 &lt;win&gt;
+(gdb) run &lt; &lt;(python3 -c 'import sys;
+      sys.stdout.buffer.write(b"A"*72 + (0x401156).to_bytes(8,"little"))')
+feed me:
+*** control flow hijacked: win() reached ***</code></pre>
+<p>72 filler bytes reach the saved RIP exactly (64 buffer + 8 saved RBP); 80 overwrite it with <code>0x4141414141414141</code> — <code>Program received signal SIGSEGV</code>, exit 139. The distance between "echoed my input" and "executed my input": 8 bytes.</p>
+<p><strong>Part 2 — the defense, same function:</strong></p>
+<pre><code class="language-console">$ gdb -q ./smash_prot
+(gdb) disas greet
+   sub    rsp,0x50                 ; frame grew: buf + canary + alignment
+   mov    rax,QWORD PTR fs:0x28    ; &lt;-- load canary master from TLS
+   mov    QWORD PTR [rbp-0x8],rax  ; &lt;-- frame's copy, below saved RBP
+   ...
+   mov    rax,QWORD PTR [rbp-0x8]  ; &lt;-- epilogue check
+   sub    rax,QWORD PTR fs:0x28    ; (clang / older gcc: xor + jne)
+   je     0x11ee &lt;greet+0x58&gt;
+   call   0x1050 &lt;__stack_chk_fail@plt&gt;
+(gdb) run &lt; &lt;(python3 -c 'import sys; sys.stdout.buffer.write(b"A"*80)')
+Program received signal SIGABRT, Aborted.</code></pre>
+<p>Outside gdb the same run prints <code>*** stack smashing detected ***: terminated</code> to stderr, exit 134. Eighty bytes cross the canary at offset 72 — detector tripped, control flow not taken.</p>
+<p><strong>Part 3 — look at the secret itself:</strong></p>
+<pre><code class="language-console">(gdb) p $fs_base
+$1 = 0x7ffff7c8e740
+(gdb) x/8bx $fs_base+0x28
+0x7ffff7c8e768: 0x00  0x3a  0x9c  0x12  0x4f  0x6b  0xd2  0x77</code></pre>
+<p>Your value differs every run (<code>AT_RANDOM</code>-derived), but the first byte is always <code>0x00</code> — the terminator, in plain view. Run again and the canary changes; <code>catch fork</code> in gdb, re-read in the child, and the copy is identical.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Crash triage and CVE reading.</strong> <code>SIGABRT</code> + "stack smashing detected" means a canary did its job; <code>SIGSEGV</code> with garbage <code>rip</code> means no canary was in the path — enough to name the missing rung in any write-up.</li>
+<li><strong>Code review shapes.</strong> Any copy whose bound is a source-side constant (the lab's <code>read(0, buf, 256)</code>), any <code>&lt;=</code> in a fill loop, any stack buffer fed by unbounded string calls — block those diffs.</li>
+<li><strong>Build audits.</strong> Never assume distro or embedded-toolchain defaults: check <code>gcc -Q --help=common</code>; for shipped binaries check <code>readelf</code> for <code>Type: DYN</code> (PIE), <code>GNU_STACK RW</code>, and <code>__stack_chk_fail</code> imports.</li>
+<li><strong>Process architecture.</strong> A fork-per-connection daemon ships a brute-forceable canary (≤ 1,785 crashes), and per-thread stacks put the master above the stack it guards — design facts for any long-lived service's threat model.</li>
+<li><strong>CI that finds what the canary absorbs.</strong> Test builds with <code>-fsanitize=address</code>, release builds with <code>-D_FORTIFY_SOURCE=2</code>: ASan flags the first byte past the buffer — including the off-by-one production builds swallow.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 chapter 04</strong> — the frame machinery under attack: <code>leave; ret</code>, and the zero-bookkeeping design that leaves buffers unfenced.</li>
+<li><strong>Module 01 chapter 07</strong> — the assembly fluency this chapter assumes: reading a prologue fast enough to find <code>&amp;buf</code> and the frame size in seconds.</li>
+<li><strong>Module 02 chapter 03</strong> — where saved-RIP control goes under NX: the ret2libc/ROP answer to "you control <code>rip</code>, but the stack won't execute."</li>
+<li><strong>Module 02 chapter 06</strong> — the canary as rung one of the mitigation ladder, with ASLR entropy, RELRO, and the shadow stacks that would retire canaries.</li>
+<li><strong>Module 03 chapter 02</strong> — the overflow and off-by-one as <em>bug-class shapes</em> in real diffs.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Derive the canary's <em>position</em>: why must the secret sit between the locals and the saved RBP rather than above the return address? What property of the classic overflow makes that the only spot that pays?</li>
+<li><strong>Concept.</strong> glibc's canary has its low byte forced to <code>0x00</code>. Name the two attack families that single byte blunts, and the mechanism of each.</li>
+<li><strong>Predict the number.</strong> A no-protector build has <code>char buf[64]</code> at <code>[rbp-0x40]</code>; a protected build has it at <code>[rbp-0x50]</code>, canary at <code>[rbp-0x8]</code>. For each build: bytes from <code>buf</code>'s start to (a) the first canary byte, (b) the return address.</li>
+<li><strong>Predict the behavior.</strong> A fork-per-connection daemon has a triggerable overflow; the attacker crashes children while brute-forcing the canary. Does the 1,000th child see the same canary as the 1st, and what is the worst-case crash count?</li>
+<li><strong>Predict the output.</strong> In gdb, <code>x/8bx $fs_base+0x28</code> prints <code>00 5f 3a c1 77 2b 90 e4</code>. What is the canary's 64-bit value, and how many of its bytes can a <code>printf("%s", buf)</code> running past the buffer leak?</li>
+<li><strong>Bug diagnosis.</strong> A pen-test report: "attacker triggered stack-smashing aborts in three children, then gave up; the canary appears unbreakable." What is wrong with that conclusion, and which process change closes the hole?</li>
+<li><strong>Bug diagnosis.</strong> A 32-bit program has <code>for (i = 0; i &lt;= 256; i++) buf[i] = src[i];</code> with <code>char buf[256]</code>. It crashes not in this function but in its <em>caller's</em> epilogue, one frame later — explain. Why does the same source on x86-64 with <code>-fstack-protector-strong</code> abort inside the function if the copy is 256+8 bytes, yet do <em>nothing at all</em> at exactly 257?</li>
+<li><strong>Cross-chapter.</strong> You control the saved RIP of the lab's <code>-no-pie</code> <code>smash</code>. Name the two module 01 chapter 04 instructions that made this possible. Via chapter 03: why does pointing RIP at stack bytes you wrote fail on default builds, and what do attackers do instead?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>The classic overflow is a <em>linear upward copy</em> toward the control data above it, so the secret must sit on the only path the copy must cross — between the locals and the saved RBP. Above the return address it sits <em>past</em> the smash's destination, never compared against overwritten bytes; below the buffer it is skipped.</li>
+<li>String-shaped <em>leaks</em>: a NUL-seeking read (<code>%s</code>, <code>strlen</code>) running past the buffer stops at the canary's first byte — zero of the seven secret bytes leak. Off-by-one <em>copies</em>: <code>strcpy</code> writes one terminating NUL past the data; on the canary's low byte that rewrites <code>0x00</code> with <code>0x00</code> — a no-op.</li>
+<li>No-protector: the buffer spans <code>[rbp-0x40, rbp)</code> — (a) no canary exists; (b) 64 + 8 = <strong>72</strong> bytes to the return address. Protected: (a) 0x50 − 0x8 = <strong>72</strong> bytes to the canary's first byte; (b) 0x50 + 8 = <strong>88</strong> bytes to the return address (64 buffer + 8 slack + 8 canary + 8 saved RBP) — the defense's footprint, and why payload lengths change between builds.</li>
+<li>Yes — the child inherits the parent's TLS verbatim; <code>fork</code> never consults <code>AT_RANDOM</code>, only <code>exec</code> does. Worst case: low byte known, 7 × 255 wrong values = <strong>1,785</strong> crashes (expected ≈ 893), each a forked child.</li>
+<li>Little-endian, low byte first: <code>0xe4902b77c13a5f00</code>. The string read stops at the canary's first byte, <code>0x00</code> — <strong>zero</strong> canary bytes leak; without the terminator it would print all seven for replay in the overflow.</li>
+<li>It assumes crashing re-randomizes the canary. It does not: <code>fork</code> copies the secret, <code>__stack_chk_fail</code> kills only the child, and the parent keeps forking children with the <em>same</em> value — the attacker was on track to recover it within 1,785 crashes. The fix is architecture, not flags: fork <strong>plus exec</strong> per connection (the inetd shape), for a fresh <code>AT_RANDOM</code> per connection.</li>
+<li>The 257th write lands on the low byte of saved EBP (the buffer's top edge abuts it in the 1990s layout): the NUL turns <code>0xffffc8f0</code> into <code>0xffffc800</code>, shifting EBP down by up to 252 bytes. This function's return address is untouched, so it returns normally; the <em>caller's</em> <code>leave</code> loads the poisoned EBP and its <code>ret</code> pops from attacker-planted bytes — RIP control one frame later. On x86-64 with the protector, the 8 canary bytes sit between the buffer's end and saved RBP: a 256+8-byte copy crosses them all and the epilogue compare fails (abort here), while exactly 257 bytes puts one NUL on the canary's low byte — already <code>0x00</code>: nothing changes, nothing is detected, the bug stays latent. That silence is why CI needs ASan, not just hardening flags.</li>
+<li><code>leave</code> (pops the saved RBP) and <code>ret</code> (pops the return address into <code>rip</code>) — the epilogue's two trusting pops are the whole hijack mechanism. Injected stack code fails because default builds map the stack non-executable (<code>GNU_STACK RW</code>, NX — even the lab's opt-out build). Chapter 03's answer: <em>reuse</em> existing code — ret2libc/ROP chains of gadget addresses, which NX cannot stop: nothing executes off the stack.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 02 — Memory security &amp; exploitation</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

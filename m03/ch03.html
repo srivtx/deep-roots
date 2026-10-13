@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The race family — deep-roots</title>
+<meta name="description" content="Chapter 03 of module 03: The race family">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The race family — deep-roots">
+<meta property="og:description" content="Chapter 03 of module 03: The race family">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The race family — deep-roots">
+<meta name="twitter:description" content="Chapter 03 of module 03: The race family">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 03 &middot; the four families and the machinery that finds them</div>
+<h1 class="post-title">The race family</h1>
+<div class="post-meta">chapter 03 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Memory bugs corrupt one thread's view of the heap; race bugs corrupt the <em>ordering</em> between threads. Two facts generate the whole family: the scheduler interleaves threads at times you cannot observe, and the hardware memory model (module 01 ch20) reorders operations even within one thread. Those two facts derive data races, TOCTOU, deadlock, livelock, starvation, priority inversion, and lost wakeup — each with its fix and its detector (ThreadSanitizer). Every fix makes the same move: make the check and the act one atomic step.</blockquote>
+<h2 id="1-the-mechanism-interleaving-plus-reordering">1. The mechanism: interleaving plus reordering</h2>
+<p>Single-threaded code gets a property for free: lines run in source order, and you read what the last line wrote. Threads delete that property twice. First, the scheduler: two threads of three steps each can interleave 20 ways; six steps each, 924 ways. The OS owes you no order, yet correctness may silently depend on the subset you tested under. Chapter 01 called this an <em>invisible input</em>: time changes the output without changing the code — the Heisenbug property, and the reason these bugs vanish under a debugger.</p>
+<p>Second, the memory model. Even with the interleaving pinned, you don't get source order: store buffers let a core's later loads pass its earlier stores, and the compiler may reorder or cache in registers if the single-threaded result is unchanged. Module 01 ch20 derived this — two threads can both read 0 after both wrote 1. "It looks sequential" is not a guarantee the machine ever made.</p>
+<h2 id="2-data-race-vs-race-condition-two-different-diseases">2. Data race vs race condition: two different diseases</h2>
+<p>A <strong>data race</strong> is a language-rules term: two accesses to the same location, at least one a write, from different threads, with nothing synchronizing them. In C and C++ (C11 §5.1.2.4) that is <em>undefined behavior</em> — not "a wrong value" but anything: torn reads, stale values, loads hoisted out of loops. "Benign data race" is a bet that the compiler and CPU stay polite forever; it loses on 32-bit platforms (see "insiders").</p>
+<p>A <strong>race condition</strong> is a logic-level term: correctness depends on the interleaving — you can have one with zero data races (check-then-act with each half locked in a separate critical section). The dangerous bug is having both.</p>
+<p>The canonical shape is <strong>check-then-act</strong>, lazy initialization:</p>
+<pre><code class="language-c++">// C++ — broken double-checked locking. Do not ship.
+static Widget* instance;              // plain pointer, not atomic
+std::mutex m;
+
+Widget* get() {
+    if (instance == nullptr) {            // CHECK: unlocked read (data race)
+        std::lock_guard&lt;std::mutex&gt; g(m);
+        if (instance == nullptr)          // re-check inside the lock
+            instance = new Widget();      // ACT: allocate, construct, publish
+    }
+    return instance;
+}</code></pre>
+<p>Two failure modes: (1) the unlocked check is a data race, hence UB; (2) even granting sequential semantics, <code>new Widget()</code> is three events — allocate, construct, publish — and the compiler/CPU may publish the pointer <em>before</em> the constructor's writes, so thread B's fast path returns a half-built object. The fix in one paragraph: make publication itself ordered — <code>std::atomic&lt;Widget*&gt;</code> with a release store to publish and an acquire load on the fast path; Java's <code>volatile</code> does the same since JEP 133. <em>Why</em> release/acquire suffices is module 09 ch01–02's proof; here you need only the rule: one synchronization edge between the write and the read, and the race is gone.</p>
+<p>Detector: TSan — it convicts on <em>order</em>, not outcomes, reporting both unsynchronized stacks even when the count is right (chapter 05: happens-before via vector clocks, ~5–15x slowdown).</p>
+<h2 id="3-toctou-the-filesystem-is-a-shared-variable">3. TOCTOU: the filesystem is a shared variable</h2>
+<p>Put the two threads in separate <em>processes</em> and the shared variable becomes the filesystem: a path is a name the whole machine can rebind between any two of your syscalls — <strong>TOCTOU</strong>, time-of-check to time-of-use:</p>
+<pre><code>  your process                            attacker's process
+  +------------------+                  +--------------------------+
+  | lstat("/tmp/x")  | "regular file,   | mv /tmp/x /tmp/stolen    |
+  |                  |  12 bytes, safe" | ln -s /etc/passwd /tmp/x |
+  | open("/tmp/x")   |  &lt;- follows      +--------------------------+
+  | read()           |     the SYMLINK now
+  +------------------+
+        |                    |
+        v                    v
+   CHECK answered        USE sees a
+   the OLD file          DIFFERENT file
+
+   (the window between the two syscalls is unbounded)</code></pre>
+<p>The classic exploit: privileged code lstats a path, decides it is safe to write, and the attacker swaps in a symlink to <code>/etc/passwd</code> during the window: the check passed, the act hit a different object.</p>
+<p>The <code>/tmp</code> lore: <code>/tmp</code> is world-writable (mode 1777; the sticky bit stops only deletion of others' files), so any name you did not create is attacker-controlled. The fixes collapse check and act into one step:</p>
+<ul>
+<li><strong>Create atomically</strong>: <code>open(path, O_CREAT|O_EXCL, 0600)</code> fails if the name exists — the existence check and the creation are one kernel operation, no window. glibc's <code>mkstemp()</code> adds a random name; <code>mkdtemp()</code> does directories.</li>
+<li><strong>Open first, fstat the fd</strong>: the descriptor points at the object; later rebinding the name changes nothing.</li>
+<li><strong>Refuse indirection</strong>: <code>open(path, O_NOFOLLOW)</code> (Linux, BSD) fails if the final component is a symlink.</li>
+</ul>
+<p>No tool flags cross-process TOCTOU (TSan sees threads only) — review catches it: grep <code>lstat</code>/<code>access</code> followed by <code>open</code>/<code>unlink</code>/<code>chmod</code> on one path.</p>
+<h2 id="4-deadlock-the-four-coffman-conditions-derived">4. Deadlock: the four Coffman conditions, derived</h2>
+<p>Locks remove data races by forbidding interleavings — and thereby create the possibility of removing <em>all</em> interleavings. Derive the necessary conditions with two threads and two mutexes:</p>
+<ol>
+<li><strong>Mutual exclusion</strong> — a mutex is held by one thread at a time, or nothing here is interesting.</li>
+<li><strong>Hold-and-wait</strong> — a thread holds one mutex while asking for another (with empty hands no cycle can form).</li>
+<li><strong>No preemption</strong> — you cannot wrest a mutex from its holder (otherwise the cycle breaks from outside).</li>
+<li><strong>Circular wait</strong> — a ring of threads, each holding what the next wants.</li>
+</ol>
+<p>Coffman, Elphick, and Shoshani stated these in 1971; the derivation shows they are <em>jointly necessary</em> — break any one and a cycle can never close, so deadlock is impossible. The engineering move is to break the condition you can control globally: <strong>circular wait</strong>, via <strong>lock ordering</strong> — number every lock, require ascending acquisition, and A→B in one function versus B→A in another becomes a coding error, not a hang. (With no global order, acquire all locks in one bundle instead, starving hold-and-wait.)</p>
+<p>Dijkstra's dining philosophers (1965), each taking his left fork, then reaching for his right:</p>
+<pre><code class="language-text">dining philosophers — 5 forks = 5 mutexes, every philosopher grabs LEFT first:
+
+                P1
+              /    \
+         F1  /      \  F2
+           v        v
+      +------+    +------+
+      | fork |    | fork |
+      +------+    +------+
+           ^        ^
+            \      /
+         F5  \    /  F3
+             v    v
+       P5 +--------+ P3
+          | each holds one fork,
+          | each waits forever     &lt;-- ring of waiting closes:
+          +--------+                  CIRCULAR WAIT, all 4 conditions met</code></pre>
+<p>All five take the left fork "simultaneously": every fork held, every philosopher blocked forever. The textbook fix — odd philosophers take left-then-right, even ones right-then-left — is lock ordering in costume; the minority breaks the circle.</p>
+<p>Deadlock is not the only way waiting goes wrong — livelock and starvation are distinct outcomes, not synonyms:</p>
+<ul>
+<li><strong>Livelock</strong>: threads run at full speed and make no progress — each detects the conflict, backs off, retries, collides again (100% CPU, 0% output). Randomized backoff exists to break exactly this symmetry.</li>
+<li><strong>Starvation</strong>: a runnable thread the scheduler effectively never picks — the lock repeatedly grabbed by new arrivals before the queued waiter is served ("barging" in pthreads folklore). Fair/FIFO ticket mutexes fix it; a watchdog cannot tell "slow" from "starved" until it has already fired.</li>
+</ul>
+<p>Detectors: TSan reports "lock-order-inversion (potential deadlock)" when it sees the same lock pair acquired in both orders anywhere in a run — before any hang. A post-mortem hang is read from all stacks (<code>gdb -p &lt;pid&gt;</code>; <code>thread apply all bt</code>): the Coffman ring is threads parked in <code>__pthread_mutex_lock</code>.</p>
+<h2 id="5-priority-inversion-mars-pathfinder-1997">5. Priority inversion: Mars Pathfinder, 1997</h2>
+<p>Priorities promise the important thread runs first; a mutex can silently break that promise. The textbook accident is the Mars Pathfinder lander (July 1997), whose flight software ran VxWorks on a radiation-hardened RAD6000 (PowerPC-derived, ~20 MHz). A <strong>high-priority bus-management task</strong> drove the spacecraft bus; a <strong>low-priority ASI/MET task</strong> (meteorological data) touched the same bus through the same mutex; a <strong>medium-priority communications task</strong> ran long bursts. The schedule landed like this:</p>
+<ol>
+<li>The low-priority task acquires the mutex.</li>
+<li>The high-priority task wakes, preempts it, then blocks on the mutex — its fate tied to the low task's.</li>
+<li>The medium-priority communications task preempts the <em>low</em> task — the holder.</li>
+<li>So the high task is blocked by a medium task through a lock held by a low task: <strong>priority inversion</strong> — the <em>unbounded</em> kind, since the stall lasts as long as the medium task's whim, a party unrelated to the lock.</li>
+<li>The high task misses its deadline; the watchdog resets the spacecraft — on Mars, every few days, losing science data each time, but never crashing, which is why it kept calling home and JPL could debug it remotely.</li>
+</ol>
+<p>The detail interviews actually probe: <strong>the fix was a flag, not a redesign.</strong> VxWorks mutexes support <strong>priority inheritance</strong> (creation flag <code>SEM_INVERSION_SAFE</code>): the holder temporarily inherits the priority of its highest-priority waiter — the low task becomes high, preempts the medium task, releases the mutex, drops back. Pathfinder's mutex had been created without it. JPL reproduced the failure on a ground replica using the spacecraft's own onboard trace logs, then <strong>uplinked a short C program that ran on Mars and flipped the mutex into inheritance mode</strong> — no reboot, no restructuring. The lesson: know which of your primitives have the knob — Linux's is <code>PTHREAD_PRIO_INHERIT</code> (<code>pthread_mutexattr_setprotocol</code>).</p>
+<h2 id="6-lost-wakeup-why-the-predicate-is-a-while">6. Lost wakeup: why the predicate is a <code>while</code></h2>
+<p>The last family member needs no adversary — a standards document causes it. A condition variable is how a thread sleeps until "something changed":</p>
+<pre><code class="language-c">// C11/pthreads — the waiting side MUST re-check inside a loop
+pthread_mutex_lock(&amp;m);
+while (!data_ready) {              // while, never if
+    pthread_cond_wait(&amp;cv, &amp;m);    // atomically: unlock, sleep, relock
+}
+consume();
+pthread_mutex_unlock(&amp;m);</code></pre>
+<p>Two distinct bugs both force the <code>while</code>. <strong>Spurious wakeup</strong>: POSIX explicitly permits <code>pthread_cond_wait</code> to return with nobody having signaled — demanded by implementers so condvars can be built on Linux futexes without wake-machinery races (glibc 2.x: <code>pthread_cond_signal</code> is a <code>futex(FUTEX_WAKE)</code> underneath). With <code>if</code>, a spurious return makes you consume data that does not exist. <strong>Lost wakeup</strong>: the signaler may finish <em>before</em> the waiter arrives — the state changed, the signal was consumed, and an <code>if</code> sleeps through the very event it waited for. The loop re-checks the predicate — the <em>state</em>, not the notification. Signals are edge events that may be lost or forged; the predicate is the level, and only levels are truth. That is the while-not-if rule, one of the few places a standard mandates defensive code for a derivable reason.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The Coffman conditions are a code-review checklist, in order</strong>: scan hold-and-wait (a lock taken while holding another), no-preemption (retry loops around lock attempts), then hunt circular wait — the only condition fixable with one global rule (lock ordering). Linux lockdep and TSan's "lock-order-inversion" reports mechanize this scan.</li>
+<li><strong>The Pathfinder fix was a flag</strong>: VxWorks <code>SEM_INVERSION_SAFE</code> (priority inheritance) flipped on by a C program uplinked to Mars, 1997, after the failure was reproduced on a ground replica from the craft's own trace logs. The interview version: "unbounded priority inversion, watchdog reset, inheritance as the fix."</li>
+<li><strong><code>O_EXCL</code> is the one-flag TOCTOU fix</strong>: <code>open(path, O_CREAT|O_EXCL, 0600)</code> makes existence-check and create a single kernel operation; <code>mkstemp()</code> adds the random name; <code>O_NOFOLLOW</code> refuses the final symlink; <code>O_TMPFILE</code> (Linux 3.11+) hands you an unnamed inode the attacker cannot even name.</li>
+<li><strong>The predicate is <code>while</code>, never <code>if</code></strong> — not style: POSIX allows spurious wakeups (so futex-based condvars stay race-free), and a signal is an edge, not a level — it can be lost before you sleep. Every <code>pthread_cond_wait</code> return must re-read the level.</li>
+<li><strong>TSan convicts on order, not outcome</strong>: it flags the unsynchronized pair with both stacks even when the counter came out correct — "ran clean under TSan" means "no racy pair executed together," so run it on interleaving-rich tests. Cost: ~5–15x slowdown, 5–10x memory (TSan v2; chapter 05).</li>
+<li><strong>"Benign data race" loses on 32-bit</strong>: an aligned 64-bit load on x86-64 is one instruction, but the same <code>int64_t</code> on 32-bit ARM/x86 is two loads — the torn value appears only on the smaller machine. UB by C11 §5.1.2.4 on both.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>Lab 1 — a data race, caught red-handed.</strong></p>
+<pre><code class="language-bash"># race.cpp — two threads, one unsynchronized counter
+cat &gt; race.cpp &lt;&lt;'EOF'
+#include &lt;thread&gt;
+long long counter = 0;                  // plain (non-atomic) global
+void hammer() {
+    for (int i = 0; i &lt; 100000; ++i) counter++;   // read-modify-write, no lock
+}
+int main() {
+    std::thread a(hammer), b(hammer);
+    a.join(); b.join();
+    return counter == 200000 ? 0 : 1;   // silently wrong when the race fires
+}
+EOF
+clang++ -fsanitize=thread -g -O1 -std=c++17 -pthread race.cpp -o race  # g++ 12+ identical
+./race ; echo "exit=$?"</code></pre>
+<p>It prints <code>exit=66</code> (TSan's default failure exit) and:</p>
+<pre><code>WARNING: ThreadSanitizer: data race (pid=30449)
+  Read of size 8 at 0x...88 by thread T2:
+    #0 hammer() race.cpp:4
+  Previous write of size 8 at 0x...88 by thread T1:
+    #0 hammer() race.cpp:4
+  Location is global 'counter' of size 8
+SUMMARY: ThreadSanitizer: data race race.cpp:4 in hammer()</code></pre>
+<p>What to notice: both stacks are the <em>same line</em> — <code>counter++</code> is both the read and the write; the race is reported even though this run's count was correct; and one line fixes it — <code>std::atomic&lt;long long&gt; counter;</code> — making the report disappear.</p>
+<p><strong>Lab 2 — the TOCTOU window, live</strong> (<code>mv</code> + <code>ln -s</code>):</p>
+<pre><code class="language-bash">mkdir -p /tmp/toctou &amp;&amp; echo "salary_data" &gt; /tmp/toctou/target.txt
+cat &gt; checker.py &lt;&lt;'EOF'
+import os, stat, time
+path = "/tmp/toctou/target.txt"
+st = os.lstat(path)                     # STEP 1: inspect the path
+if not stat.S_ISREG(st.st_mode): raise SystemExit("refusing")
+print(f"[checker] lstat: regular file, {st.st_size} bytes -- safe")
+time.sleep(2)                           # the window (any scheduling gap)
+print(f"[checker] opened and read: {open(path).read()!r}")
+EOF
+python3 checker.py &amp; sleep 0.2
+mv /tmp/toctou/target.txt /tmp/toctou/stolen.txt
+ln -s /etc/passwd /tmp/toctou/target.txt   # attacker rebinds the name
+wait</code></pre>
+<p>Observed output:</p>
+<pre><code>[checker] lstat: regular file, 12 bytes -- safe
+[checker] opened and read: 'root:x:0:0:root:/root:/bin/bash\n...'</code></pre>
+<p>The checker <em>verified</em> a 12-byte regular file, then read <code>/etc/passwd</code> through a symlink. Fix it — <code>os.open(path, os.O_RDONLY | os.O_NOFOLLOW)</code>, or open-then-<code>fstat</code> the fd — rerun, and the attack fails with <code>OSError: [Errno 40] Too many levels of symbolic links</code> instead of silently succeeding. The window didn't shrink; it was removed.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Review as mechanism matching</strong>: <code>lstat</code>-then-<code>open</code>, check-then-act outside a lock, two locks in opposite order in sibling functions, <code>if</code> around a <code>wait</code> — each shape names a bug and its fix on sight.</li>
+<li><strong>The right detector, chosen not guessed</strong>: wrong values under load → TSan (needs the racy threads to actually run); a hung process → <code>gdb -p</code>, all stacks, look for the Coffman ring; intermittent failures in a privileged daemon → grep the TOCTOU pattern.</li>
+<li><strong>Design leverage</strong>: collapse check+act with the primitives built for it — <code>O_EXCL</code>, <code>std::call_once</code>, compare-and-swap (module 09), open-then-fstat — and impose a lock order on day one; retrofitting one costs an incident.</li>
+<li><strong>Incident and interview fluency</strong>: derive Pathfinder instead of reciting it, and explain why the fix was cheap — the primitive already had the knob.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch20</strong> — the root of the family: store buffers and reordering are <em>why</em> "it looks sequential" fails; this chapter is ch20 read as a bug catalog.</li>
+<li><strong>Module 03 ch01</strong> — the Heisenbug: timing as an invisible input is this family's elusiveness.</li>
+<li><strong>Module 03 ch05</strong> — TSan's insides: vector clocks, happens-before, why lock-order-inversion warnings fire before the hang.</li>
+<li><strong>Module 09 ch01–02</strong> (queued) — the depth deferred: acquire/release proven; why double-checked locking needs exactly them.</li>
+<li><strong>Module 05 ch03</strong> (queued) — Binder threads: one process, a thread pool, and every bug here reachable from a Binder callback.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Two threads each increment a plain (non-<code>atomic</code>) <code>int</code> 1,000,000 times; the final value is 1,999,998. Data race, race condition, both, or neither — and which <em>document</em> makes one of those words apply?</li>
+</ol>
+<ol>
+<li>A colleague ships a "benign data race": a plain, aligned <code>int64_t</code> progress counter no thread branches on. Give the 32-bit counterexample and the standard's verdict.</li>
+</ol>
+<ol>
+<li><em>Predict:</em> <code>pthread_cond_wait</code> returns and the waiter immediately consumes a message from an empty queue. Name both mechanisms and the defending construct.</li>
+</ol>
+<ol>
+<li><em>Predict the output:</em> in Lab 2, the attacker's <code>ln -s</code> lands between the checker's <code>lstat</code> and its <code>open(path).read()</code>. What do the printed lines show — and which <code>open</code> flag turns the outcome into an error?</li>
+</ol>
+<ol>
+<li><em>Diagnose:</em> this code deadlocks a few times per million runs. Why? Name the exact Coffman condition your fix removes.</li>
+</ol>
+<pre><code class="language-c">   void transfer(A, B)     { lock(A); lock(B); move(); unlock(B); unlock(A); }
+   void transfer_rev(A, B) { lock(B); lock(A); move(); unlock(A); unlock(B); }</code></pre>
+<ol>
+<li><em>Diagnose:</em> Pathfinder's mutex was held by a <strong>low</strong>-priority task and wanted by a <strong>high</strong>-priority one, yet the high task stalled for the duration of a <strong>medium</strong> task's work. Why didn't priority scheduling just run the high task — and what made the stall <em>unbounded</em> rather than bounded?</li>
+</ol>
+<ol>
+<li><em>Diagnose:</em> a C++ service pegs all 16 cores at 100% CPU with zero log output. Deadlock, livelock, or starvation — and what from <code>top</code> plus <code>gdb -p</code> distinguishes them?</li>
+</ol>
+<ol>
+<li><em>Cross-chapter:</em> module 01 ch20's SB litmus test has both threads read 0 after both wrote 1, with no incoherent line anywhere. How does that explain why the unlocked read in broken double-checked locking (§2) can return a half-built object even when the interleaving looks right?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Both.</strong> The off-by-two value proves lost updates — increments are read-modify-write, and interleavings drop updates: a race <em>condition</em> (outcome depends on interleaving). But the two unsynchronized accesses (one a write) to one location are also a <strong>data race</strong>, and the <em>language standard</em> — C11 §5.1.2.4, the C++ memory model — makes that term mean undefined behavior: any behavior is permitted, torn reads included.</li>
+</ol>
+<ol>
+<li><strong>Alignment buys nothing on 32-bit</strong>: an aligned <code>int64_t</code> load on x86-64 is one instruction, but on 32-bit x86/ARM the compiler emits two 32-bit loads — a writer landing between them leaves the reader with a value that never existed whole. Verdict: a data race, therefore UB on both platforms; "benign" bets on compiler kindness, not a machine guarantee.</li>
+</ol>
+<ol>
+<li><strong>Mechanism 1 — spurious wakeup</strong>: POSIX permits <code>pthread_cond_wait</code> to return with no signal, so implementations (glibc, over <code>futex</code>) stay race-free. <strong>Mechanism 2 — lost wakeup</strong>: the signaler fired before the waiter slept — the return is legitimate, but the level changed and changed back. The construct: the predicate loop <code>while (queue_empty()) wait(...)</code> re-reads the state after every return, so forged and lost edges are both harmless.</li>
+</ol>
+<ol>
+<li><strong>The first line reports a 12-byte regular file ("safe"); the second prints the contents of <code>/etc/passwd</code></strong> — the check answered the old file, the use followed the symlink. Fix: open with <code>O_NOFOLLOW</code> — it fails with <code>ELOOP</code> (errno 40) instead of silently reading the target: the follow-or-fail decision happens inside one kernel call.</li>
+</ol>
+<ol>
+<li><strong>Circular wait</strong> (condition 4): thread 1 runs <code>transfer(A,B)</code> (holds A, wants B), thread 2 runs <code>transfer_rev(A,B)</code> (holds B, wants A) — the ring closes, and no-preemption means nothing breaks it. The fix: a global lock <em>order</em> — always lock <code>min(A,B)</code> before <code>max(A,B)</code> in both functions. It removes exactly circular wait; that suffices, because with a total order the holds-wants graph can never contain a cycle.</li>
+</ol>
+<ol>
+<li><strong>The high task was blocked, not runnable</strong> — priority scheduling only ranks <em>runnable</em> threads. Once it blocks, the low-priority owner would run next — except the medium task, higher than the low owner, preempts the holder, so the mutex is never released. The stall is <strong>unbounded</strong>: its length is set by the medium task's workload, unrelated to the lock. Priority inheritance — the low owner inherits the high waiter's priority — bounds it to the low task's critical section.</li>
+</ol>
+<ol>
+<li><strong>Livelock.</strong> Deadlock threads are <em>blocked</em> (those cores idle); starvation means one thread starves while others progress (uneven CPU). All cores at 100% with zero progress is threads <em>running</em> — retry/backoff loops colliding; <code>gdb -p</code> shows all stacks in retry loops (around <code>try_lock</code> + backoff), none asleep in <code>__pthread_mutex_lock</code>.</li>
+</ol>
+<ol>
+<li><strong>Store buffers publish the pointer before the constructor's writes become visible.</strong> SB shows a thread's writes can reach another core out of program order. In the broken double check, the constructor's field stores and the pointer store are ordinary writes: the pointer can drain before the fields, or the reader can see the fields after the pointer — so the unlocked check reads stale or zero fields. No single address was incoherent, only the order <em>across</em> addresses, SB's exact lesson; the fix is an acquire/release edge (<code>std::atomic</code>), not "check more often."</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch02.html"><span class="cn-label">previous</span><span class="cn-title">Ch 02</span></a>
+<a class="next" href="ch04.html"><span class="cn-label">next</span><span class="cn-title">Ch 04</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 03 — Software bugs: the taxonomy of failure</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

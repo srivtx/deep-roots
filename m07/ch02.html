@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Windows: PE &amp; the loader — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 07: Windows: PE &amp; the loader">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Windows: PE &amp; the loader — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 07: Windows: PE &amp; the loader">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Windows: PE &amp; the loader — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 07: Windows: PE &amp; the loader">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 07 &middot; Windows, Linux, macOS side by side</div>
+<h1 class="post-title">Windows: PE &amp; the loader</h1>
+<div class="post-meta">chapter 02 &middot; ~12 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A Windows executable is a PE file: a 64-byte DOS header kept for tradition, the real headers after it, and a section table that translates between two layouts — 0x200-aligned bytes on disk, 0x1000-aligned pages in memory. The loader (ntdll) maps sections at <code>ImageBase</code> or, with ASLR, anywhere; a <code>.reloc</code> list of fixups repairs every absolute address that move broke. Per-thread (TEB) and per-process (PEB) state live at addresses reachable through the <code>gs</code> segment register — no syscall needed. Then the loader runs your code: every DLL's <code>DllMain</code> under one process-wide LoaderLock — which is why "keep DllMain to four instructions" is a survival rule.</blockquote>
+<h2 id="a-dos-program-that-isn-t-the-header-stack">A DOS program that isn't: the header stack</h2>
+<p>Start from the loader's problem: handed a file, decide — cheaply — <em>is this for me, and where do I look next?</em> Windows answers with a chain of fixed-offset signposts, and the first is a joke that became load-bearing.</p>
+<p>Offset 0 is <code>"MZ"</code> (Mark Zbikowski), the DOS magic. Everything DOS after those two bytes is theater: a 64-byte DOS header, then a stub of 16-bit code that prints <code>This program cannot be run in DOS mode.</code> and exits — so a 1994 DOS box failed politely instead of launching garbage. Microsoft keeps it in 2025 because the DOS header's <strong><code>e_lfanew</code> field (offset 0x3C)</strong> points to the real headers: the loader reads <code>MZ</code>, then <code>e_lfanew</code>, then jumps; everything between is skipped. On MSVC builds that gap holds the <em>Rich header</em>, an obfuscated fingerprint of the compiler versions used — useless to the loader, gold to analysts.</p>
+<pre><code class="language-text"> file offset  contents                                   who reads it
+ 0x0000   +-----------------------------------------+
+          | DOS header, 64 B: "MZ", ... e_lfanew ---+--&gt; the ONE field the
+ 0x003C   |              (offset 0x3C, 4 B)         |    loader uses from here
+          | DOS stub: "This program cannot be run   |
+          | in DOS mode."  (the theater)            |
+ 0x0080*  +-----------------------------------------+
+          | PE signature: "PE\0\0" (4 B)            |  magic check #2
+          | COFF header, 20 B:                       |
+          |   Machine = 0x8664 (x64)                 |
+          |   NumberOfSections = 5                   |
+          |   SizeOfOptionalHeader = 0xF0            |
+          |   Characteristics = 0x22 (exe, &gt;4GB)     |
+          | Optional header, 240 B (PE32+):          |
+          |   Magic = 0x20B   &lt;---------------------- "optional" is     |
+          |   AddressOfEntryPoint = RVA (0x1234)     historical; every  |
+          |   ImageBase = 0x140000000 (preferred)     image needs it    |
+          |   SectionAlignment = 0x1000              |
+          |   FileAlignment  = 0x200                 |
+          |   16 data directories x 8 B             |
+          |     (1 = imports, 2 = resources,         |
+          |      5 = relocations, 9 = TLS, ...)      |
+ 0x0200*  | Section table, 40 B per section:         |
+          |   name, VirtSize, VirtAddr(RVA),         |
+          |   RawSize, RawPtr, characteristics      |
+ 0x0400*  | .text raw bytes ...                      |
+
+ * lab-build offsets; MSVC puts its Rich header in this gap (e_lfanew 0xF8).</code></pre>
+<p>Naming: <strong>COFF header</strong> — the same 20 bytes an <code>.obj</code> starts with. <strong>Optional header</strong> — "optional" only in object files; in an executable it is mandatory and holds everything interesting, and its <strong><code>Magic = 0x20B</code> for PE32+ (64-bit; PE32 is <code>0x10B</code>)</strong> sizes every field after it — ELF's class byte, PE edition. The tail is the <strong>data directories</strong>: 16 <code>(RVA, size)</code> pairs — imports (1), resources (2), relocations (5), TLS (9), the IAT (12, so the loader can write-protect it after resolving — Windows' RELRO).</p>
+<h2 id="rvas-the-address-system-that-survives-relocation">RVAs: the address system that survives relocation</h2>
+<p>Everything inside a PE is addressed by <strong>RVA — relative virtual address</strong>: distance from <code>ImageBase</code>. The loader wants to place the image wherever ASLR chooses; file offsets and absolute VAs both break under that, and the RVA is the <em>stable</em> name. <code>VA = ImageBase + RVA</code>, invariant across rebasing.</p>
+<p>Disk and memory disagree on layout: in memory, sections sit <code>SectionAlignment</code> (0x1000) apart so each gets its own permissions; on disk, packing at <code>FileAlignment</code> (0x200) saves bytes. "The header says RVA X — where are those bytes?" is answered by the section table:</p>
+<ol>
+<li>Find the section with <code>VirtAddr &lt;= RVA &lt; VirtAddr + max(VirtSize, RawSize)</code>.</li>
+<li><code>file offset = RawPtr + (RVA − VirtAddr)</code>.</li>
+<li>If that offset is past <code>RawPtr + RawSize</code>, the bytes exist only in memory: the loader zero-fills the tail.</li>
+</ol>
+<p><strong>By hand:</strong></p>
+<pre><code class="language-text"> section   VirtSize  VirtAddr  RawSize   RawPtr     characteristics
+ .text     0x1A2B0   0x1000    0x1A400   0x400      code, execute, read
+ .rdata    0x09C10   0x1C000   0x09E00   0x1A800    read-only data
+ .data     0x01530   0x26000   0x1200    0x24600    initialized data, RW
+ .rsrc     0x00890   0x28000   0xA00     0x25800    resources
+ .reloc    0x00B40   0x29000   0xC00     0x26200    relocations, discardable</code></pre>
+<p>A C++ vtable entry sits at RVA <code>0x1D5F8</code>. Step 1: <code>0x1C000 &lt;= 0x1D5F8 &lt; 0x26000</code> → <code>.rdata</code>. Step 2: <code>0x1A800 + (0x1D5F8 − 0x1C000)</code> = <strong>file offset <code>0x1BDF8</code></strong> — at the preferred base, VA <code>0x14001D5F8</code>; at ASLR base <code>0x7FF6A0000000</code>, VA <code>0x7FF6A001D5F8</code>. Same RVA either way.</p>
+<p>Step 3 is the trap: <code>.data</code> has VirtSize <code>0x1530</code> but RawSize <code>0x1200</code>. An uninitialized global <code>char g_buf[0x600]</code> at RVA <code>0x27300</code> is <em>inside</em> <code>.data</code> (end <code>0x27530</code>) but past the file-backed range (ends <code>0x27200</code>): its bytes exist nowhere on disk; the loader zero-fills that tail. <strong>Windows has no <code>.bss</code> section — the bss is the zero-filled tail of <code>.data</code>, visible only as <code>VirtualSize &gt; SizeOfRawData</code>.</strong></p>
+<h2 id="what-the-sections-become-and-where-aslr-gets-its-fixups">What the sections become — and where ASLR gets its fixups</h2>
+<ul>
+<li><strong><code>.text</code></strong> — machine code, R-X; <code>AddressOfEntryPoint</code> points here.</li>
+<li><strong><code>.rdata</code></strong> — read-only data: string literals, import tables, the IAT, C++ vtables.</li>
+<li><strong><code>.data</code></strong> — read-write initialized globals plus the zero tail above.</li>
+<li><strong><code>.rsrc</code></strong> — icons, dialogs, version resources (data directory 2).</li>
+<li><strong><code>.reloc</code></strong> — the relocation list, data directory 5, <em>discardable</em>.</li>
+</ul>
+<p>Now derive ASLR's price. <code>ImageBase</code> is a <em>preference</em> — MSVC x64 defaults <code>0x140000000</code> for EXEs, <code>0x180000000</code> for DLLs. Map the image elsewhere and every absolute address baked into the file is wrong. Unlike Linux PIE, PE code is not position-independent: it contains real absolute qwords — vtable entries, function-pointer tables — and <code>.reloc</code> is the catalog of those bytes:</p>
+<pre><code class="language-text"> .reloc, a sequence of blocks, one per 4 KB page holding fixups:
+
+ +0x00  PageRVA   = 0x1D000        (4 B)   page this block covers
+ +0x04  BlockSize = 0x18           (4 B)   8 header + 16 entry bytes
+ +0x08  entry[0]  = 0xA5F8         (2 B)   (Type &lt;&lt; 12) | Offset
+ +0x0A  entry[1..7] = 0x0000               type 0 = ABSOLUTE: padding, skipped
+
+ 0xA5F8 decoded: Type = 0xA = 10 = IMAGE_REL_BASED_DIR64 (x64: patch a qword)
+                Offset = 0x5F8  -&gt;  target RVA = 0x1D000 + 0x5F8 = 0x1D5F8
+ loader action:  *(qword*)(base + 0x1D5F8) += (actualBase - preferredBase)</code></pre>
+<p>Concretely: the qword at RVA <code>0x1D5F8</code> is <code>0x1400011000</code> (a preferred-base pointer into <code>.text</code>). ASLR picks <code>0x7FF6A0000000</code>; delta <code>0x7FF560000000</code>; patched value <strong><code>0x7FF6A0011000</code></strong>. x86 would use type 3 (<code>HIGHLOW</code>, 4-byte patch); x64 uses type 10 — and the x64 list is <em>short</em>, because MSVC x64 code addresses image-local data RIP-relatively: most references need no fixup. <strong><code>/DYNAMICBASE</code></strong> (bit <code>0x40</code> in DllCharacteristics) permits the loader to ignore the preferred base; <code>/HIGHENTROPYVA</code> (bit <code>0x20</code>) widens the range past 4 GB. Strip <code>.reloc</code> or clear bit 0x40 and the image must load at its preferred base or crash — module 02 ch06's ASLR rung, implemented here.</p>
+<h2 id="teb-and-peb-the-loader-s-notepad-addressed-through-gs">TEB and PEB: the loader's notepad, addressed through <code>gs</code></h2>
+<p>The loader needs state any code can find without handles or syscalls. x64 Windows' answer: the <strong><code>gs</code> segment register</strong>. In user mode, <code>gs</code> base = the current thread's <strong>TEB</strong> (Thread Environment Block); the kernel swaps <code>gs</code> base to its KPCR on every transition. The TEB opens with the NT TIB, so stack facts cost one load:</p>
+<pre><code class="language-text"> x64, Windows 10/11 -- one load, no syscall, any ring-3 code:
+
+   gs base --+--&gt;  TEB (per thread; kernel-allocated)
+             |
+             |     +0x00  NtTib.ExceptionList
+   gs:[0x08] |     +0x08  NtTib.StackBase      &lt;- top of the stack
+   gs:[0x10] |     +0x10  NtTib.StackLimit     &lt;- guard page above this
+   gs:[0x30] |     +0x30  NtTib.Self           == gs base (self-pointer:
+             |                                    gs:0x30 *is* "TEB address")
+             |
+   gs:[0x60] +--&gt;  PEB (per process)
+                   +0x02  BeingDebugged        &lt;- 1 byte, set by debuggers
+                   +0x10  ImageBaseAddress     &lt;- where the EXE actually landed
+                   +0x18  Ldr                  -&gt; PEB_LDR_DATA: THREE doubly-
+                   +0x20  ProcessParameters       linked lists of loaded modules
+                   +0xBC  NtGlobalFlag          (ImagePathName, CommandLine,
+                                                    env pointer -- the "argv"
+                                                    the loader built for you)</code></pre>
+<ul>
+<li><strong><code>gs:0x30</code></strong> is how code says "my TEB" without knowing where it is (<code>fs:0x18</code> on 32-bit). <strong>Stack base/limit</strong> are the only inputs <strong><code>_chkstk</code></strong> has: MSVC emits <code>call __chkstk</code> whenever a frame exceeds 0x1000 bytes — it touches each page down to the new stack pointer, probing guard pages in order, and fast-fails with stack overflow (<code>0xC00000FD</code>) on crossing <code>StackLimit</code> (module 01 ch04's stack growth, Windows dialect).</li>
+<li><strong><code>PEB+0x18 Ldr</code></strong> is the loader's own bookkeeping: three parallel lists (InLoadOrder, InMemoryOrder, InInitializationOrder) of entries holding DllBase, entry point, names — which <code>GetModuleHandle</code> and <code>EnumProcessModules</code> simply walk. Unlinking your entry from all three hides the module from every module-walking tool.</li>
+</ul>
+<h2 id="the-loader-runs-your-code-dll-order-dllmain-loaderlock">The loader runs your code: DLL order, DllMain, LoaderLock</h2>
+<p>Import resolution (data directory 1) hands the loader a dependency graph; it maps DLLs depth-first and runs each <code>DllMain(DLL_PROCESS_ATTACH)</code> in dependency order. Where it finds them is folklore — and attack history:</p>
+<ol>
+<li><strong>KnownDLLs first.</strong> At boot, the Session Manager creates shared section objects for a few dozen DLLs (kernel32, user32, ntdll, advapi32, ...) in the <code>\KnownDlls</code> object directory, per the registry list at <code>HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\KnownDLLs</code>. Resolving one of those <em>by base name</em> maps that section and never touches disk: you cannot plant a fake <code>kernel32.dll</code>.</li>
+<li><strong>Then the search order</strong> (SafeDllSearchMode on by default for two decades): application directory → system32 → system16 → Windows directory → current directory → <code>PATH</code>. Application directory is <em>first</em> — the reason "drop a DLL next to the EXE" is an attack. Anything outside KnownDLLs (version.dll, uxtheme.dll, ...) is plantable wherever the app runs with privileges you can reach: search-order hijacking (module 02 ch06).</li>
+<li><strong>The modern fix:</strong> <code>SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32)</code> drops CWD and PATH from the process's default order entirely.</li>
+</ol>
+<p>Then the rule everyone learns the hard way. All module-list updates and every <code>DllMain</code> dispatch happen under <strong>LoaderLock</strong> (<code>ntdll!LdrpLoaderLock</code> — a critical section historically, a push lock on Windows 8+). While your <code>DllMain</code> runs, you hold it, and the documented-safe set is nearly empty: memory allocation, <code>CreateThread</code> <em>without waiting</em>, initializing a critical section. The insider's summary: "DllMain should be about four instructions." Everything else is a deadlock lottery — <code>CreateThread</code> + <code>WaitForSingleObject</code> (the canonical hang, below), <code>LoadLibrary</code> (recursive acquisition mid-initialization), waiting on anything that might fault into a <em>delay-loaded</em> import (the helper takes LoaderLock), COM or WinSock init (RPC into other processes). The crash twin: <code>DLL_PROCESS_DETACH</code> during <code>ExitProcess</code> runs in reverse init order after other DLLs — possibly the heap's own — are gone: the classic "crashes only on exit" bug. And every thread start walks every module that didn't call <code>DisableThreadLibraryCalls</code>.</p>
+<h2 id="wow64-two-ntdlls-pretending-to-be-one">Wow64: two ntdlls pretending to be one</h2>
+<p>A 32-bit process on x64 Windows loads a <em>32-bit</em> ntdll from <code>SysWOW64</code> (the file-system redirector rewrites its <code>system32</code> accesses). Its syscall stubs can't use the syscall instruction — the kernel is 64-bit — so wow64cpu.dll far-jumps the CPU into 64-bit mode through code selector 0x33 ("Heaven's Gate"), the wow64 layer translates the 32-bit frame to a 64-bit one, calls the 64-bit ntdll, and jumps back through 0x23. Two architectures, one process, and a 32-bit module reaches its TEB via <code>fs</code>, not <code>gs</code>.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The DOS stub is theater, but <code>e_lfanew</code> at 0x3C is load-bearing.</strong> Zero out the stub and the binary still runs. The Rich header between stub and signature is the compiler's fingerprint: free attribution on every MSVC binary.</li>
+<li><strong><code>gs:0x30</code> is the TEB self-pointer on x64</strong> (<code>fs:0x18</code> on x86); <code>gs:0x60</code> the PEB; <code>gs:0x10</code> <code>StackLimit</code>. <code>__chkstk</code> reads <code>gs:[0x10]</code> and probes one page at a time — a 0x5000-byte local array emits that call; a 0x100-byte one doesn't.</li>
+<li><strong><code>BeingDebugged</code> at <code>PEB+0x02</code></strong> is one byte and famously spoofable; the real check is <code>NtGlobalFlag</code> at <code>PEB+0xBC</code> (debug-heap magic <code>0x70</code>).</li>
+<li><strong>KnownDLLs means kernel32.dll cannot be planted — and that's the whole list.</strong> Anything outside those few dozen names (registry key, or <code>\KnownDLLs</code> in WinObj) resolves through the disk search order, application directory first.</li>
+<li><strong>The DllMain rule: ~4 instructions.</strong> No <code>LoadLibrary</code>, no <code>CreateThread</code>+wait, no COM, no waiting on another thread's progress.</li>
+<li><strong>LoaderLock is diagnosable by name.</strong> In a hang dump, <code>!locks</code> shows <code>ntdll!LdrpLoaderLock</code> owned by the thread parked in <code>DllMain</code>, everyone else queued. One command, verdict.</li>
+<li><strong><code>.reloc</code> is discardable</strong> — a sample with no <code>.reloc</code> (or no Dynamic-base bit) is pinned to a fixed base: an ASLR-neutralized binary. And <strong>TLS callbacks (data directory 9) run <em>before</em> <code>AddressOfEntryPoint</code></strong> — malware puts anti-debug checks there; breakpointing <code>main</code> is already too late.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>No Windows box was used to write this chapter; part 1 runs on any Linux box with Python and binutils (objdump's PE support is standard); parts 2-3 are <em>documented walkthroughs</em> for a Windows 10/11 x64 box or VM with VS Build Tools.</p>
+<p><strong>1. Build a minimal PE and decode it (reproducible anywhere):</strong></p>
+<pre><code class="language-python"># mini_pe.py — a PE32+ file: 5 sections, one vtable-ish qword, one reloc block
+import struct
+secs = [  # name, VirtSize, VirtAddr(RVA), RawSize, RawPtr
+    (b".text\0\0\0", 0x1A2B0, 0x1000,  0x1A400, 0x400),
+    (b".rdata\0\0",  0x09C10, 0x1C000, 0x09E00, 0x1A800),
+    (b".data\0\0\0", 0x01530, 0x26000, 0x01200, 0x24600),
+    (b".rsrc\0\0\0", 0x00890, 0x28000, 0x00A00, 0x25800),
+    (b".reloc\0\0",  0x00B40, 0x29000, 0x00C00, 0x26200)]
+out = bytearray(0x26E00)
+out[0:2] = b"MZ"                          # DOS magic
+out[0x3C:0x40] = struct.pack("&lt;I", 0x80)  # e_lfanew
+out[0x80:0x84] = b"PE\0\0"                # PE signature
+out[0x84:0x98] = struct.pack("&lt;HHIIIHH",  # COFF: x64, 5 sections, exe
+    0x8664, 5, 0, 0, 0, 0xF0, 0x22)
+opt = bytearray(0xF0)                     # optional header, PE32+
+struct.pack_into("&lt;H",  opt, 0,  0x20B)          # Magic
+struct.pack_into("&lt;I",  opt, 16, 0x1234)         # AddressOfEntryPoint (RVA)
+struct.pack_into("&lt;Q",  opt, 24, 0x140000000)    # preferred ImageBase
+struct.pack_into("&lt;II", opt, 32, 0x1000, 0x200)  # Section/FileAlignment
+out[0x98:0x188] = opt
+pos = 0x188                               # section table, 40 B each
+for name, vs, va, rs, rp in secs:
+    out[pos:pos+40] = name + struct.pack(
+        "&lt;IIIIIIHHI", vs, va, rs, rp, 0, 0, 0, 0, 0x60000020)
+    pos += 40
+out[0x1BDF8:0x1BE00] = struct.pack("&lt;Q", 0x1400011000)  # qword at RVA 0x1D5F8
+blk = struct.pack("&lt;II", 0x1D000, 0x18) + \       # reloc block: page 0x1D000
+      struct.pack("&lt;8H", 0xA5F8, 0, 0, 0, 0, 0, 0, 0)
+out[0x26200:0x26218] = blk
+open("mini.exe", "wb").write(out)</code></pre>
+<pre><code class="language-console">$ python3 mini_pe.py
+$ objdump -h mini.exe            # section table: both layouts side by side
+  1 .rdata  00009c10  000000014001c000  ...  0001a800   &lt;- VMA vs File off
+$ od -A x -t x8 -j 0x1bdf8 -N 8 mini.exe
+0000000001bdf8 0000001400011000            &lt;- the qword at RVA 0x1D5F8
+$ od -A x -t x1 -j 0x26200 -N 24 mini.exe
+026200 00 d0 01 00 18 00 00 00 f8 a5 00 00 00 00 00 00
+026210 00 00 00 00 00 00 00 00          &lt;- PageRVA=0x1D000, BlockSize=0x18,
+                                          entry[0]=0xA5F8 (type 10, off 0x5F8)</code></pre>
+<p>The reloc entry's target (<code>0x1D000 + 0x5F8 = 0x1D5F8</code>) names the same qword the arithmetic found — output above is real, from binutils 2.38 on Linux.</p>
+<p><strong>2. <code>dumpbin /headers</code> on a real binary (documented walkthrough).</strong> From a VS developer prompt: <code>copy C:\Windows\notepad.exe . &amp;&amp; dumpbin /headers notepad.exe</code>. Find: <code>8664 machine (x64)</code> in FILE HEADER VALUES (<code>14C</code> on a 32-bit file); <code>20B magic # (PE32+)</code>, <code>140000000 image base</code>, <code>1000</code> / <code>200</code> section / file alignment, <code>DLL characteristics: Dynamic base</code> (the 0x40 bit) in OPTIONAL HEADER VALUES; then per section the VMA, raw-data offset, and characteristics — including <code>Discardable</code> on <code>.reloc</code>.</p>
+<p><strong>3. The DllMain horror story (documented pattern).</strong> Compile as a DLL and load it first into a test EXE:</p>
+<pre><code class="language-c">/* deadlock.c — do not ship */
+static DWORD WINAPI worker(LPVOID a) { return 0; }
+BOOL WINAPI DllMain(HINSTANCE h, DWORD why, LPVOID r) {
+    if (why == DLL_PROCESS_ATTACH) {
+        HANDLE t = CreateThread(0, 0, worker, 0, 0, 0);
+        WaitForSingleObject(t, INFINITE); /* LoaderLock held; worker needs it */
+    }
+    return TRUE;
+}</code></pre>
+<p>The process hangs before any of your code runs, zero CPU. Under WinDbg (<code>windbg -g host.exe</code>, or break on it with <code>bp deadlock!DllMain</code>), <code>!locks</code> shows <code>LdrpLoaderLock</code> owned by the thread in <code>DllMain</code>, everyone else queued; <code>!peb</code> prints the same PEB fields the diagram showed. Fix: signal and return.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Crash triage reflex.</strong> "Access violation at <code>0x7FF6A0011AF4</code>" becomes actionable when you subtract the module's actual base to get the RVA and convert RVA→section by hand: <code>.rdata</code> — a corrupted function-pointer table, not code.</li>
+<li><strong>Hijack audits.</strong> An app's import table plus the KnownDLLs list names the plantable DLLs — a five-minute attack-surface audit (module 02 ch06).</li>
+<li><strong>Startup-hang triage.</strong> "Service hangs at boot, no CPU" — dump it and check LoaderLock first; one <code>!locks</code> command recognizes the signature.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 04 ch01 (binary formats)</strong> — the PE member of that chapter's format trio; its RVA arithmetic is the skill drilled by hand here.</li>
+<li><strong>Module 02 ch06 (mitigation ladder)</strong> — ASLR's rung is this chapter's 0x40 bit and <code>.reloc</code> machinery; DLL search-order hijacking is the same ladder's attack-surface side.</li>
+<li><strong>Module 07 ch04 (Linux: ELF &amp; ld.so)</strong> — the twin: PIE + <code>R_X86_64_RELATIVE</code> bulk rebase instead of <code>.reloc</code> blocks, ld.so's search order instead of KnownDLLs folklore, and no DllMain at all.</li>
+<li><strong>Module 03 ch03 (race family)</strong> — LoaderLock deadlock is a textbook wait-for cycle: a lock holder waiting on a thread whose startup needs the lock; that chapter's lock-order analysis applies verbatim.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Microsoft could delete the DOS stub tomorrow and every PE file would still load. Why, and which single DOS-header field must survive?</li>
+<li><strong>Concept.</strong> The "optional header" is mandatory in every executable. Where did the name come from, and what do <code>0x10B</code> and <code>0x20B</code> each select for everything parsed after them?</li>
+<li><strong>Predict the number.</strong> Using the chapter's section table: an IAT entry sits at RVA <code>0x26880</code>. What is its file offset, and its VA if the image loads at base <code>0x7FF920000000</code>?</li>
+<li><strong>Predict the number.</strong> A <code>.reloc</code> block has <code>PageRVA = 0x1D000</code>, <code>BlockSize = 0x24</code>. How many entries? Decode <code>0xA7F0</code>: type, target RVA, and the loader's action on x64.</li>
+<li><strong>Predict the number.</strong> With <code>.data</code> VirtSize <code>0x1530</code>, RawSize <code>0x1200</code>, VirtAddr <code>0x26000</code>: <code>g[0x300]</code> lives at RVA <code>0x27300</code>. How many bytes come from the file, and where do the rest come from?</li>
+<li><strong>Bug diagnosis.</strong> A DLL does exactly this in <code>DllMain(PROCESS_ATTACH)</code>: <code>CreateThread(worker)</code> then <code>WaitForSingleObject(t, INFINITE)</code>. The service hangs at startup, no CPU. Explain the exact circular wait, naming the lock and the notification that cannot be delivered.</li>
+<li><strong>Bug diagnosis.</strong> An attacker plants <code>kernel32.dll</code> next to a victim EXE — nothing happens. Planting <code>version.dll</code> next to the same EXE gets code execution. What mechanism made one impossible and the other trivial?</li>
+<li><strong>Cross-chapter (module 03 ch03).</strong> Classify the quiz-6 deadlock in that chapter's terms: which resources are held, which are waited for, and why is "just add a timeout" not a fix?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The loader never executes the stub.</strong> It reads <code>"MZ"</code> at offset 0, loads the 4-byte <strong><code>e_lfanew</code> at 0x3C</strong>, and jumps to the PE signature; everything between is skipped. The stub exists so a 1994 DOS box fails gracefully; on Windows only <code>e_lfanew</code> must survive.</li>
+</ol>
+<ol>
+<li><strong>From COFF object files</strong>, where the optional header really is optional — an <code>.obj</code> has none; the linker fills it in. <code>0x10B</code> = PE32: 32-bit fields, <code>HIGHLOW</code> fixups. <code>0x20B</code> = PE32+: 8-byte <code>ImageBase</code>, <code>DIR64</code> relocations.</li>
+</ol>
+<ol>
+<li><strong>File offset <code>0x24E80</code>; VA <code>0x7FF920026880</code>.</strong> <code>0x26000 &lt;= 0x26880 &lt; 0x27530</code> → <code>.data</code>; offset = <code>0x24600 + (0x26880 − 0x26000) = 0x24E80</code>; <code>0x26880 &lt; 0x27200</code> (RawSize end), so it is file-backed.</li>
+</ol>
+<ol>
+<li><strong>14 entries</strong> (<code>(0x24 − 8) / 2</code>). Entry <code>0xA7F0</code>: type <code>0xA</code> = 10 = <code>IMAGE_REL_BASED_DIR64</code>; offset <code>0x7F0</code>; target RVA <code>0x1D7F0</code> — the loader reads the qword at <code>base + 0x1D7F0</code> and adds <code>(actualBase − preferredBase)</code>.</li>
+</ol>
+<ol>
+<li><strong>Zero from the file; all 0x300 zero-filled by the loader.</strong> File-backed <code>.data</code> covers RVAs <code>[0x26000, 0x27200)</code>; <code>0x27300</code> is past RawSize but inside VirtualSize (end <code>0x27530</code>) — Windows' nameless bss.</li>
+</ol>
+<ol>
+<li><strong>A wait-for cycle through LoaderLock and a thread.</strong> The service thread holds <code>LdrpLoaderLock</code> inside <code>DllMain</code> and waits on the worker. But the worker cannot run user code yet: thread startup must first deliver <code>DLL_THREAD_ATTACH</code> to every module — which requires LoaderLock — held by the thread waiting on the worker. Holder waits on waiter; waiter waits on the lock: deadlock, both threads blocked — hence zero CPU. Fix: create the thread, never wait on it.</li>
+</ol>
+<ol>
+<li><strong>KnownDLLs vs the disk search order.</strong> <code>kernel32.dll</code> is on the KnownDLLs list: resolved by base name to the pre-created section in <code>\KnownDLLs</code>, never consulted on disk — the planted copy is inert. <code>version.dll</code> is not, so it resolves through the standard search order, whose <em>first</em> directory is the EXE's own folder (module 02 ch06's search-order hijacking).</li>
+</ol>
+<ol>
+<li><strong>A single-lock circular wait where the second "resource" is a thread's initialization, not another mutex.</strong> Held: LoaderLock, by the DllMain thread. Waited: the worker's completion; the worker waits on LoaderLock in the attach path — module 03 ch03's ABBA cycle with "thread start" in the second role. A timeout converts the deadlock into a lie: the wait fails and <code>DllMain</code> returns success with the worker never run — the hang is traded, not the bug.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 07 — Desktop OS internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

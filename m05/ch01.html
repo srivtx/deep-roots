@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Boot &amp; the Zygote — deep-roots</title>
+<meta name="description" content="Chapter 01 of module 05: Boot &amp; the Zygote">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Boot &amp; the Zygote — deep-roots">
+<meta property="og:description" content="Chapter 01 of module 05: Boot &amp; the Zygote">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Boot &amp; the Zygote — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of module 05: Boot &amp; the Zygote">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 05 &middot; an OS designed by memory constraints</div>
+<h1 class="post-title">Boot &amp; the Zygote</h1>
+<div class="post-meta">chapter 01 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Press power and a chain fires: immutable ROM code verifies the bootloader, the bootloader verifies the system image, the kernel demand-pages itself in, and init — PID 1 — boots services as a <em>data</em> problem, parsing <code>.rc</code> text instead of running a script. One of those services is the Zygote: a JVM that loads thousands of framework classes once, then never launches an app the naive way again. Every app process is a <code>fork()</code> of that warm process — copy-on-write hands each app the whole framework for a page-table copy, charging RAM only for pages the app actually writes. system_server is the first, privileged sibling, and most of your boot animation is the framework paying its startup cost once: module 01 ch03's COW promoted to an OS design decision.</blockquote>
+<h2 id="1-the-chain-six-stages-six-memory-tricks">1. The chain: six stages, six memory tricks</h2>
+<p>At power-on the CPU fetches its first instruction from a fixed address — baseline: mask ROM, a few KB burned in at the factory. Unpatchable, which is the point: nothing precedes it, so it is the root of trust. Its one job — load the next stage and check its signature — is the rule that repeats up the chain, <em>hash the next stage before you trust it</em>: the bootloader verifies the OS image via Android Verified Boot 2.0 (AVB, since Android 8.0) — hashes in <code>vbmeta</code> — and dm-verity keeps checking the system partitions' blocks at runtime. Chapter 06 owns the cryptography; here only the shape matters — every stage does one small load-and-check.</p>
+<p>The kernel (Linux 6.1 on Android 14) contributes demand paging, module 01 ch03: pages materialize only on fault. Then init (PID 1) runs, and from here on boot is a data problem — the last two links supply this chapter's two tricks, <em>pay once</em> and <em>copy-on-write</em>.</p>
+<pre><code class="language-text">[ ROM ]     mask ROM, immutable. Trick: nothing precedes it — trust is
+   |        silicon.
+   v
+[ bootloader ]  ABL / U-Boot class. Trick: hash before trust — vbmeta
+   |        (AVB 2.0, Android 8+), dm-verity from here on (ch06).
+   v
+[ kernel ]  Linux 6.x (Android 14). Trick: demand paging — pages appear
+   |        on fault (module 01 ch03).
+   v
+[ init ]    PID 1. Trick: boot as DATA — .rc text parsed into a service
+   |        table + trigger rules; no boot script.
+   v
+[ zygote ]  app_process64 --zygote. Trick: pay once — boot image +
+   |        ~3-4k classes + resources preloaded; forks system_server,
+   |        parks in accept().
+   v
+[ app ]     fork + specialize. Trick: COW — inherits the warm heap
+            read-only, shared until written. An app never exec()s.</code></pre>
+<h2 id="2-init-the-boot-sequence-as-a-data-problem">2. init: the boot sequence as a data problem</h2>
+<p>init is a plain C program whose behavior is almost entirely not coded: it is compiled at boot from text — <code>/init.rc</code> plus every <code>/system/etc/init/*.rc</code> and <code>/vendor/etc/init/*.rc</code> (Treble, Android 8+). Three shapes matter:</p>
+<pre><code class="language-text"># schematic .rc — the idiom every Android boot file uses (AOSP syntax)
+
+service zygote /system/bin/app_process64 -Xzygote /system/bin \
+    --zygote --start-system-server     # a service = executable + policy
+    class core                         # which start wave it belongs to
+    user root                          # uid it runs as
+    socket zygote stream 660 root system   # init creates /dev/socket/zygote
+    critical                           # restart policy lives HERE, as data
+
+on property:sys.boot_completed=1       # an action = trigger + commands
+    stop bootanimation                 # fires whenever that property is set</code></pre>
+<p>Read it as a database, not a script: <code>service</code> records declare what can run, with restart policy, sockets, uid, and SELinux context as attributes; <code>on &lt;trigger&gt;</code> records are pattern rules over the property store. Boot order <em>emerges from data dependencies</em> (services start in class waves: <code>core</code>, <code>main</code>, <code>late_start</code>), and a vendor adds a daemon by shipping a <code>.rc</code> file, not by editing code. Failure policy is data too: a <code>critical</code> service crashing more than 4 times within 4 minutes (AOSP init's constants) reboots the device — zygote has it (see question 8).</p>
+<p>The stanza is real (trimmed from AOSP's <code>init.zygote64.rc</code>, Android 14). The <code>socket</code> line matters most: <strong>init, not zygote, creates <code>/dev/socket/zygote</code></strong> before the service runs — the fork trigger of section 4.</p>
+<h2 id="3-zygote-pay-the-framework-s-cost-once">3. Zygote: pay the framework's cost once</h2>
+<p><code>app_process</code> is a small native binary whose job is to become a JVM — link ART, enter the runtime. Started with <code>--zygote</code>, it pays the expensive half of "Android boots" once:</p>
+<ul>
+<li><strong>Maps the boot image</strong> (<code>/system/framework/boot.art</code>/<code>boot.oat</code>) — the framework AOT-compiled at build/OTA time, guided by the boot-image profile shipped with the image (Android 10+; pipeline in ch02).</li>
+<li><strong><code>preloadClasses()</code></strong> — static initializers for every class in <code>frameworks/base/preloaded-classes</code>: ~3,000–4,000 entries (Android 14 AOSP), hand-curated like an ABI.</li>
+<li><strong><code>preloadResources()</code></strong> — framework-res's common drawables and color state lists, plus native libraries (<code>android</code>, <code>compiler_rt</code>, <code>jnigraphics</code>) and font/graphics setup.</li>
+</ul>
+<p>Pixel-class hardware pays ~3–6 s for this (Android 14; 10+ s a decade ago) — one payment. Derive why it must be paid this way:</p>
+<p><strong>The naive alternative.</strong> Launch each app as a fresh JVM: parse the dex of thousands of framework classes, verify it, execute every <code>&lt;clinit&gt;</code> — CPU-seconds per app, plus a <em>private</em> copy of the result. Call the warmed framework footprint F — order 100 MB, 64-bit Android 14 (illustrative). N running apps cost N × F of RAM plus seconds of CPU per launch.</p>
+<p><strong>The zygote world.</strong> <code>fork()</code> copies page <em>tables</em>, not pages: every writable zygote page goes read-only in both processes (the COW bit), and frames stay shared until someone writes. Framework pages are <em>read-mostly</em> in apps — they call framework code far more than they scribble on framework data — so the steady state is:</p>
+<pre><code class="language-text">             zygote after preload: the warm heap (F ~ 100 MB, illustrative)
+        +----------------------------------------------------------------+
+        | boot.oat code pages    file-backed, execute     [CLEAN]       |
+        | boot.art image space   file-backed, read-only   [CLEAN]       |
+        | preloaded heap objects dirtied during preload   [DIRTY]       |
+        +----------------------------------------------------------------+
+             | fork()      | fork()        | fork()          | fork()
+             v             v               v                 v
+           app A         app B           app C  ...         app N
+        PTE: R+COW       R+COW           R+COW              R+COW
+             |                             |
+        writes 2 pages                writes 1 page
+        COW fault: kernel copies just those frames -&gt; A's private RW copies
+
+        physical RAM  =  F  +  (pages actually written, summed over apps)
+        launch latency =  a page-table copy: single-digit milliseconds</code></pre>
+<p>With N = 20 apps each dirtying ~2 MB of copies, the tally is F + N·d ≈ 100 + 40 = <strong>140 MB</strong> versus the naive N·F = <strong>2,000 MB</strong> — an order of magnitude, widening with N. The shared pages sit at <strong>dirty-0 per app</strong>: each app's RSS reports the whole inherited framework, private-dirty stays near zero, and proportional set size (PSS) charges each app 1/sharers — the accounting the lab shows in <code>dumpsys</code>.</p>
+<p>Two consequences carry the rest of the module:</p>
+<ol>
+<li><strong>Fork, never exec.</strong> <code>exec()</code> is a bulk unmap-then-map (module 01 ch03): it would erase the warm heap. App processes are the mainstream world's only fork-without-exec processes — the app's dex loads <em>in-process</em> after the fork, mmap'd from the APK; there is no app binary to analyze cold, and code is <code>boot.oat</code> plus the APK's dex.</li>
+<li><strong>The read-mostly discipline.</strong> The savings exist only while apps write few framework pages. ART cooperates: the preloaded heap becomes a separate <strong>ZygoteSpace</strong>, so post-fork allocations go elsewhere and never trip COW on preloaded objects (chapter 02 unpacks the layout).</li>
+</ol>
+<h2 id="4-launching-an-app-the-socket-the-specialize-step-and-the-pool">4. Launching an app: the socket, the specialize step, and the pool</h2>
+<p>With zygote parked in <code>accept()</code>, who pulls the trigger? Not the user, not init — <strong>system_server</strong>, through the socket init created.</p>
+<p><strong>The socket protocol.</strong> The ActivityManagerService (AMS), in system_server, holds the other end of the socket. To start an app it writes an argv-shaped request: uid/gids, <code>seInfo</code>, niceName, APK classpath, target SDK, rlimits. Zygote's select loop (<code>ZygoteServer.runSelectLoop</code>) accepts and forks; the child immediately runs <code>Zygote.forkAndSpecialize</code> — the specialize step, before any app code runs: drop from root to the app uid, enter the app's SELinux domain, install its seccomp filter (Android 8+), set up mounts and namespaces (chapter 05's sandbox, applied at launch) — then load the app's dex in-process and call <code>ActivityThread.main()</code>, writing its pid back on the socket (fork-then- specialize is forced: exec after would erase the heap).</p>
+<p><strong>The fork is the dangerous half.</strong> <code>fork()</code> clones only the <em>calling</em> thread. Zygote is a multi-threaded JVM — a lock held by another thread at the fork instant stays locked forever in the child, whose owner does not exist there: a deadlock factory. So ART quiesces the runtime before every fork (<code>ZygoteHooks.preFork</code>: stop JIT/GC threads, run a GC) and the child re-arms its threads after (<code>postForkChild</code>) — children also fork from a tidy heap.</p>
+<p><strong>USAP: the pool.</strong> The select loop serializes — one fork per accept — and mass launches (post-OTA app restores) make the queue visible. Android 10 added the <strong>Unspecialized App Process (USAP) pool</strong>: pre-forked children, forked <em>but not specialized</em>, each parked on its own session socket. AMS's <code>UsapPoolConnector</code> writes the request into the pool; whichever USAP reads it specializes, so specializations run in parallel instead of queuing. The pool is tiny by design, capped at 3 by AOSP constants.</p>
+<p><strong>system_server, the big sibling.</strong> Zygote's <em>first</em> fork (<code>--start-system-server</code>) is not an app: it specializes to uid 1000 (<code>system</code>) in the <code>system_server</code> SELinux domain — what users mean by "Android itself." Over a hundred services start in phases (<code>SystemServer.run()</code>): ActivityManagerService (AMS — process lifecycle, the sole ordinary client of the zygote socket), PackageManagerService (PMS — the installed-app database), WindowManagerService (WMS — what is on screen), plus power, input, notification. If system_server dies, the framework "soft reboots": zygote goes down with it, init restarts the critical service, the boot animation replays, and the preload is paid again — a framework restart without a kernel reboot.</p>
+<h2 id="5-where-the-seconds-go-a-boot-time-budget">5. Where the seconds go: a boot-time budget</h2>
+<p>Boot time is a memory story twice over: the framework's heap is being paid for, and the user sees nothing until enough exists. The instrumentation ships on every device — <code>boot_progress_*</code> markers in the events log, stamped in ms of kernel uptime:</p>
+<pre><code class="language-console">$ adb logcat -b events -d | grep boot_progress
+01-01 00:00:08.234  412  412 I boot_progress_start: 8234         # zygote up
+01-01 00:00:08.511  412  412 I boot_progress_preload_start: 8511 # preload begins
+01-01 00:00:12.995  412  412 I boot_progress_preload_end: 12995  # 4.5 s of preload
+01-01 00:00:13.248  863  863 I boot_progress_system_run: 13248   # system_server
+01-01 00:00:26.806  863  863 I boot_progress_ams_ready: 26806    # 13.6 s of services
+01-01 00:00:30.112  863  863 I boot_progress_enable_screen: 30112 # animation ends</code></pre>
+<p>Read as a budget (Pixel-class, Android 14; numbers vary by build):</p>
+<div class="table-wrap"><table><thead><tr><th>window</th><th>who is on stage</th><th>typical cost</th></tr></thead><tbody><tr><td>ROM + bootloader</td><td>hash chain, radio init</td><td>1–3 s — <em>invisible to all uptime logs</em></td></tr><tr><td>kernel</td><td>drivers, demand paging</td><td>1–2 s</td></tr><tr><td>init</td><td>parse .rc, <code>class core</code> wave</td><td>~0.5 s</td></tr><tr><td>zygote preload</td><td>thousands of classes + resources</td><td>3–6 s</td></tr><tr><td>system_server</td><td>100+ services in phases</td><td>10–15 s — <strong>the biggest slice</strong></td></tr></tbody></table></div>
+<p>The insider's model: <em>post-kernel boot = one preload plus one system_server init.</em> The bootloader's seconds are a blind spot — kernel uptime starts at kernel entry, so treat the first <code>dmesg</code> timestamp as zero.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>What the preload actually is</strong>: a git-reviewed list (<code>frameworks/base/preloaded-classes</code>, ~3,000–4,000 entries, Android 14), the <code>preload_drawables</code>/<code>preload_color_state_lists</code> resource arrays, three native libraries, and the AOT boot image built from a boot-image profile (Android 10+). Classes whose <code>&lt;clinit&gt;</code> has side effects — threads, sockets, registries — are preload poison.</li>
+<li><strong>The fork trigger is a socket</strong>: <code>/dev/socket/zygote</code>, created by <em>init</em> (mode 660 root:system); the protocol is a newline-separated argv array, the reply the child's pid. A 32-bit secondary zygote (<code>getprop ro.zygote</code> → <code>zygote64_32</code> kin) adds <code>/dev/socket/zygote_secondary</code>.</li>
+<li><strong>USAP mechanics</strong>: pre-forked, unspecialized children parked on their own session sockets (Android 10+); AMS writes into the pool and whichever USAP reads it specializes — parallelism, not latency magic. Pool capped at 3 (AOSP constants), refilled as it drains.</li>
+<li><strong>The quiesce is the real fork trick</strong>: <code>fork()</code> in a multithreaded program is only safe if no other thread holds a lock — ART stops its JIT and GC threads and runs a GC before every fork, so children are born single-threaded from a compact heap. A <code>&lt;clinit&gt;</code> that starts a thread breaks the invariant: the thread doesn't survive fork, but its locks do.</li>
+<li><strong>system_server is one process with a hundred jobs</strong>: uid 1000, first zygote fork, hosts AMS/PMS/WMS plus the long tail; its crash soft-reboots the framework (section 4), and 4 crashes in 4 minutes escalates to a full reboot via the <code>critical</code> policy.</li>
+<li><strong>Apps never exec()</strong>: the only mainstream OS where app creation is pure fork — no standalone app binary to reverse-engineer; code is boot.oat (shared) plus the APK's dex, mapped after the fork.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Fragments below are a <strong>documented walkthrough</strong> (Pixel-class, Android 14 / API 34, userdebug — no live device was attached for this transcript; numbers will differ, any emulator API 30+ reproduces the shapes). On user builds <code>dmesg</code> is restricted; the events log and <code>dumpsys</code> work everywhere.</p>
+<p><strong>1. Every app's parent is a zygote</strong> — the parentage claim, checked:</p>
+<pre><code class="language-console">$ adb shell ps -A -o PID,PPID,NAME | grep -E 'PID|init$|zygote|system_server|com.android'
+   PID  PPID NAME
+     1     0 init
+   412     1 zygote64                    &lt;- child of init, from the .rc service
+   863   412 system_server               &lt;- zygote's FIRST fork
+  1204   412 com.android.chrome          &lt;- an ordinary app: PPID = 412</code></pre>
+<p><code>getprop ro.zygote</code> prints <code>zygote64</code> (or <code>zygote64_32</code> — <code>ps</code> then also shows a plain <code>zygote</code>), and <code>getprop init.svc.zygote</code> prints init's live state: <code>running</code> or <code>restarting</code> — restart policy, visible as a property.</p>
+<p><strong>2. The boot timeline.</strong> Section 5's markers are the framework half; the kernel half is <code>dmesg</code>, timestamped in seconds since kernel entry:</p>
+<pre><code class="language-console">$ adb shell dmesg | grep -E 'Linux version|Freeing unused' | head -2
+[    0.000000] Linux version 6.1.75-android14-... (kernel entry = t0)</code></pre>
+<p>Note the blind spot: anything before <code>0.000000</code>. Both clocks are kernel uptime — they line up, and the two big framework windows (preload ~4.5 s, system_server ~13.6 s) are the budget.</p>
+<p><strong>3. Zygote-shared accounting in one app:</strong></p>
+<pre><code class="language-console">$ adb shell dumpsys meminfo com.android.settings
+                   Pss  Private  Private      Rss
+                 Total    Dirty    Clean    Total
+ Native Heap     18934    18931        0    18940
+ Dalvik Heap      9412     4330        0    41230   &lt;- RSS &gt;&gt; Pss: zygote-shared
+     .art mmap    3876       68     3808    62466   &lt;- boot image: shared clean
+      TOTAL      51234    41000        0   240000</code></pre>
+<p>(Trimmed; real output adds rows and a <code>SwapPss</code> column.) The columns tell the COW story: <code>.art mmap</code>'s 62 MB RSS vs ~4 MB PSS is the boot image — file-backed, mapped into every process, charged 1/sharers per app. <code>Dalvik Heap</code>'s gap is the preloaded heap tail shared with zygote and every forked app; its Private Dirty (4 MB) is what <em>this app wrote</em> — the COW copies.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>App-launch triage.</strong> Slow cold start splits cleanly: fork/USAP serialization (mass-fork storms in the events log), system_server stalls (the AMS markers), or the app's own post-fork class loading — each lives in a different log.</li>
+<li><strong>Read meminfo like an insider.</strong> "This app uses 40 MB" is RSS-speak; the defensible number is PSS plus private dirty, and the gap between them is exactly the zygote sharing derived above.</li>
+<li><strong>The interview derivation.</strong> "Why is an Android app a fork?" — naive JVM-per-app costs N × F in CPU-seconds and RAM; fork + COW costs F once and page-table copies forever after, and exec would erase the one thing you paid for.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch03 (virtual memory/COW)</strong> — its fork/COW section promoted to an OS-launch primitive; the PTE/refcount mechanics run under every claim here.</li>
+<li><strong>Module 05 ch02 (ART)</strong> — the boot image, image space, and ZygoteSpace get their full treatment; ch03 (Binder) — how AMS's request travels to zygote's socket; ch04 (lmkd) — what happens to these forked processes under pressure; ch05 (sandbox) — the uid/SELinux/seccomp specialize step; ch06 (APK/OTA) — the AVB/dm-verity chain deferred from section 1.</li>
+<li><strong>Module 06 ch04 (dyld &amp; the shared cache)</strong> — the warm-start parallel: iOS pre-links every framework into one COW-mapped cache with precomputed launch closures; Android warms via preload + fork. Same economics, different mechanism.</li>
+<li><strong>Module 08 ch04 (CICS)</strong> — the deepest root: programs loaded once and shared across transactions, with a quasi-reentrancy rule that <em>is</em> the read-mostly discipline, on 1969 hardware.</li>
+<li><strong>Module 04 ch01 (binary formats)</strong> — why there is no app binary to analyze cold: code = boot.oat + mmap'd dex, not an exec'd image.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><em>(concept)</em> Why is <code>fork()</code> — not <code>exec()</code>, not "start a fresh JVM" — the app-launch primitive on Android? Derive it from what each operation does to the warm heap.</li>
+<li><em>(concept)</em> Why does <code>preloadClasses()</code> run once per boot rather than once per app, and what property must a class have to be eligible for the preload list?</li>
+<li><em>(predict the number)</em> A 4 KiB page in zygote's preloaded heap, dirtied during preload, is mapped by zygote plus three forked apps. Give each process's PSS contribution before any write and after app A writes it, plus the physical page count.</li>
+<li><em>(predict the timeline)</em> Given <code>boot_progress_start: 8234</code>, <code>boot_progress_preload_end: 12995</code>, <code>boot_progress_system_run: 13248</code>, <code>boot_progress_ams_ready: 26806</code> — where did the largest slice of framework boot time go, and which process was executing during it?</li>
+<li><em>(bug diagnosis)</em> A framework class is added to the preload list; its <code>&lt;clinit&gt;</code> starts a background thread that populates a static cache. Apps hang waiting for that cache; logcat shows the thread only in zygote, in no app process. Explain both.</li>
+<li><em>(bug diagnosis)</em> Right after an OTA first boot, 30 apps restore in a burst; every launch in the burst pays an extra ~50–100 ms even though zygote is healthy and a lone fork measures single-digit ms. What serializes them?</li>
+<li><em>(cross-module, module 01 ch03)</em> An app's write to a shared framework page faults a COW copy, yet zygote's RSS does not grow. In PTE terms, what did the kernel do, and why did the other 19 apps sharing the frame not notice?</li>
+<li><em>(bug diagnosis, cross-module)</em> You <code>kill</code> system_server on a userdebug device. What does the user see over the next ~20 seconds, what does init do, and why is no app data lost? What changes at 4 crashes in 4 minutes?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Fork keeps the heap; exec erases it.</strong> The warm heap — thousands of initialized classes plus the mapped boot image — is the only expensive asset. <code>exec()</code> is an unmap-then-map: it discards those pages, forcing a re-parse, re-verify, and re-run of every <code>&lt;clinit&gt;</code> — CPU-seconds plus a private ~100 MB copy per app; a fresh JVM has the same cost without even the fork. <code>fork()</code> copies only page tables, and COW leaves the framework shared read-only.</li>
+<li><strong>Amortization, then eligibility.</strong> Once per boot is the difference between paying F and N × F. A class qualifies only if its static initialization is side-effect-free — no started threads, opened files, or global registration — because every forked app inherits that state verbatim, and threads and locks do not survive <code>fork()</code> (Q5).</li>
+<li><strong>Before:</strong> the frame is read-only+COW in 4 processes; PSS charges 4 KiB/4 = <strong>1 KiB each</strong>. <strong>After A writes:</strong> the fault handler sees refcount 4 &gt; 1, copies the page to a fresh frame, maps A's PTE to the copy read-write, and drops the old frame's refcount to 3. A now pays <strong>4 KiB private</strong>; zygote, B, and C pay 4/3 ≈ <strong>1.33 KiB</strong>. Two physical frames serve 4 processes; A's copy is exactly what "Private Dirty" means.</li>
+<li><strong>system_server service init: 26,806 − 13,248 = 13,558 ms</strong>, the largest window, spent inside system_server (zygote's first fork, uid 1000) starting 100+ services. Preload (≈4.5 s) is the runner-up. Rule: post-kernel boot = one preload plus one system_server init.</li>
+<li><strong>Threads do not survive <code>fork()</code>.</strong> The <code>&lt;clinit&gt;</code> ran once, in zygote, before any fork — the thread exists only there (hence the logcat absence in apps). Apps inherit the Thread <em>object</em> and empty cache, but no live thread: the cache never populates; waiters hang. Worse, a lock the thread held at a fork instant is inherited locked forever — its owner never existed in the child. Hence ART's pre-fork quiesce, and the side-effect-free rule for preloads.</li>
+<li><strong>Zygote's accept loop is single-threaded.</strong> Fork-and-specialize serializes through one select loop, each fork paying the runtime quiesce + GC. USAP (Android 10+) exists for exactly this — a few specializations in parallel — but the pool is capped at 3, so a 30-app burst still queues, ~50–100 ms per launch.</li>
+<li><strong>Only the writer's PTE changes.</strong> The write faulted on a read-only PTE; the kernel saw the COW marking, refcount &gt; 1, allocated a fresh frame, copied the 4 KiB into it, and rewrote only <em>this</em> process's PTE — new frame, writable. The other 19 apps' PTEs still point at the original frame, read-only, refcount merely decremented — they fault on nothing. Zygote lost no frame, so its RSS is unchanged.</li>
+<li><strong>A soft reboot.</strong> The UI freezes and the boot animation replays: system_server's death takes zygote down; init sees its <code>critical</code> service gone, restarts it, and zygote re-pays the preload before re-forking system_server (~20 s class). No data is lost — the kernel never rebooted; app data lives in <code>/data</code>. But 4 crashes within 4 minutes trips the <code>critical</code> threshold, and init reboots the entire device.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 05 — Android internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

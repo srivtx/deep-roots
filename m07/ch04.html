@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linux: ELF &amp; the loader — deep-roots</title>
+<meta name="description" content="Chapter 04 of module 07: Linux: ELF &amp; the loader">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Linux: ELF &amp; the loader — deep-roots">
+<meta property="og:description" content="Chapter 04 of module 07: Linux: ELF &amp; the loader">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Linux: ELF &amp; the loader — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of module 07: Linux: ELF &amp; the loader">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 07 &middot; Windows, Linux, macOS side by side</div>
+<h1 class="post-title">Linux: ELF &amp; the loader</h1>
+<div class="post-meta">chapter 04 &middot; ~13 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> <code>execve</code> on a dynamically linked Linux binary runs two programs, not one. The kernel maps your ELF's loadable segments, reads <code>PT_INTERP</code> — a header naming a <em>second</em> ELF, <code>/lib64/ld-linux-x86-64.so.2</code> — maps that too, and jumps to <em>its</em> entry point. That loader, <code>ld.so</code>, is userspace code that finishes the job: map every library, zero BSS, apply relocations (rebase first, resolve symbols second), run initializers, then jump to <code>main</code>. The kernel also pre-maps two regions no file backs — the vDSO (kernel <em>code</em> called directly, so <code>clock_gettime</code> costs ~15 ns, not a ~100 ns syscall) and the vvar data page, read with a seqlock. <code>dlopen</code>/<code>dlmopen</code> replay the machinery at runtime; <code>LD_DEBUG=files,libs</code> traces it. Numbers: glibc 2.41 (Debian 13), kernel 5.10.134, x86-64.</blockquote>
+<h2 id="one-exec-two-programs">One exec, two programs</h2>
+<p>The kernel's ELF loader (<code>load_elf_binary</code> in <code>fs/binfmt_elf.c</code>) does less than you'd guess. It maps the main binary's <code>PT_LOAD</code> segments with <code>mmap</code>, maps the interpreter named in <code>PT_INTERP</code> the same way, maps the vDSO and vvar pages, and builds the initial stack: <code>argc</code>/<code>argv</code>/<code>envp</code> plus the auxiliary vector. Then it sets the instruction pointer to the <em>interpreter's</em> entry — the first userspace instruction executed belongs to <code>ld.so</code>, not to you. The program's entry point travels in the auxv, for <code>ld.so</code> to jump to later:</p>
+<pre><code class="language-console">$ ./demo &amp;            # demo: malloc(100); printf("hello\n"); sleep(1)
+$ cat /proc/$!/auxv | auxv_decode
+AT_BASE: 0x7f9b8e919000        &lt;- ld.so's load base
+AT_ENTRY: 0x55e5bd2b1080       &lt;- main binary's e_entry, for later
+AT_SYSINFO_EHDR: 0x7ffce31ec000  &lt;- vDSO base (matches [vdso] in maps, same run)</code></pre>
+<p>Why hand the hard half to userspace? Everything after mapping is <em>policy</em> — which <code>libc.so.6</code>, in what order, with what interposition rules. Policy changes faster than kernels; a userspace loader is traceable (<code>LD_DEBUG</code>) and preloadable (<code>LD_PRELOAD</code>) without a reboot. The cost: <code>ld.so</code> must bootstrap itself. It is a PIE mapped at an unknown address, so its first instructions are hand-written position-independent code that relocates itself before touching a single global.</p>
+<pre><code class="language-console">$ readelf -lW hi
+  INTERP  0x000394 0x394 ... [Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]
+  LOAD    0x002dd0 0x3dd0 0x250  0x258  RW   0x1000   &lt;- the RW one</code></pre>
+<p>Static linking deletes this handoff: no <code>PT_INTERP</code>, kernel jumps straight to <code>e_entry</code>. Measured here, the same <code>hi.c</code> is 16,008 bytes dynamic and 758,440 bytes static (gcc 14.2, glibc 2.41) — and that is the <em>small</em> price. The real ones: no page-cache sharing of libc code across the thousands of processes mapping it; every libc security fix means relinking every binary (the Heartbleed relink storm); and static glibc still tries to <code>dlopen</code> NSS plugins for <code>getpwnam</code>, which fails exactly in the minimal containers where people ship static binaries. Static buys hermetic startup; it rents compatibility back with interest.</p>
+<h2 id="mapping-a-segment-the-congruence-rule">Mapping a segment: the congruence rule</h2>
+<p><code>mmap</code> is the only tool, and it works in whole pages: a file page <code>[4096k, 4096k+4096)</code> maps onto a virtual page <code>[4096m, 4096m+4096)</code> so that file byte <code>4096k+j</code> appears at address <code>4096m+j</code>. Demand that segment byte <code>p_offset + i</code> land at <code>p_vaddr + i</code> for every <code>i</code>. The byte at <code>p_offset</code> sits at intra-page offset <code>p_offset mod 4096</code> in the file's page, but must appear at intra-page offset <code>p_vaddr mod 4096</code> in the virtual page. Those must be equal, or the mapping would need to start mid-page. Hence the rule every linker must obey:</p>
+<p><strong><code>p_offset ≡ p_vaddr (mod page size)</code></strong> — congruence, not equality. The difference <code>p_vaddr - p_offset</code> may be any multiple of 4096 (here <code>0x3dd0 - 0x2dd0 = 0x1000</code>, a one-page skew). It generalizes to <code>p_align</code>: congruent mod 2 MB for huge-page segments — one reason they stay rare.</p>
+<p>The last <code>PT_LOAD</code> shows the second half, BSS: <code>p_memsz (0x258) &gt; p_filesz (0x250)</code>. The 8 extra bytes must be zero — C promises zero-initialized globals — but they land in a page whose file bytes are padding, so the loader zeroes explicitly:</p>
+<pre><code class="language-text"> two mmap calls (vaddr - file skew = +0x1000, congruent mod 4096):
+
+ file page 2 [0x2000,0x3000) ──mmap──▶ vaddr page 3 [0x3000,0x4000)  r--p after RELRO
+    [0x2dd0,0x3000) seg bytes              [0x3dd0,0x4000) .data.rel.ro, .init_array
+ file page 3 [0x3000,0x4000) ──mmap──▶ vaddr page 4 [0x4000,0x5000)  rw-p
+    [0x3000,0x3020) seg bytes              [0x4000,0x4020) .data, .got tail
+    [0x3020,0x4000) file padding           [0x4020,0x4028) .bss, 8 B ← memset(0)
+
+ p_memsz - p_filesz = 8 bytes of BSS inside an already-mapped page → memset only.
+ A BSS crossing the page end would get whole MAP_ANONYMOUS zero pages —
+ anonymous mappings are zero by construction.</code></pre>
+<p>The kernel does this for the main binary; <code>ld.so</code> repeats it for every library and every later <code>dlopen</code>. The trailing <code>GNU_RELRO</code> header then tells the loader to <code>mprotect</code> <code>[0x3dd0,0x4000)</code> read-only <em>after</em> relocation — hence the <code>r--p</code> page below the <code>rw-p</code> one in <code>/proc/self/maps</code> (module 04 ch02: a read-only GOT closes the overwrite-hijack path).</p>
+<h2 id="rebasing-first-resolving-second">Rebasing first, resolving second</h2>
+<p>Once every object is mapped, <code>ld.so</code> fixes addresses in two phases. Phase one needs <em>no symbol lookup</em>. Every <code>.rela.dyn</code> entry of type <code>R_X86_64_RELATIVE</code> is just "the addend plus the load bias belongs at <code>r_offset</code>": <code>*(base + r_offset) = base + r_addend</code> — one tight loop re-points every address constant in a PIE's <code>.data</code>. The linker sorts these to the front of <code>.rela.dyn</code> and emits <code>DT_RELACOUNT</code> so the loader skips all symbol machinery for them — above, <code>RELACOUNT 3</code>. glibc 2.41's own <code>libc.so.6</code> uses the newer form, <code>DT_RELR</code> — a packed bitmap at 8 bytes per word instead of 24 per entry (280 bytes total) — and builds with <code>-z now</code> (<code>FLAGS: BIND_NOW</code>), leaving nothing lazy. Phase two is everything involving a symbol name, and it walks the <em>scope</em>, in this order:</p>
+<pre><code class="language-text"> symbol lookup for a reference from the main program (glibc's one global scope):
+
+   1. LD_PRELOAD objects, in the order listed in the variable
+   2. the main executable
+   3. DT_NEEDED entries, breadth-first: level 1 = direct deps, level 2 = their deps...
+   4. --- not found in scope? now it is a *file* problem: ---
+      /etc/ld.so.cache   (ldconfig's soname→path table, one mmap, binary search)
+   5. fallback dirs /lib, /usr/lib</code></pre>
+<p>First definition wins — that single rule <em>is</em> interposition: a preloaded object sits at position 1, so its <code>malloc</code> is found before libc's ever is. Library <em>file</em> search is a separate ladder (<code>DT_RPATH</code>, <code>LD_LIBRARY_PATH</code>, <code>DT_RUNPATH</code>, cache, defaults) — skipped in secure-execution mode (setuid), which ignores <code>LD_PRELOAD</code> and <code>LD_LIBRARY_PATH</code> entirely.</p>
+<p>The escape hatch is <code>-Bsymbolic</code> (link-time, per library): references <em>within</em> the DSO to its own definitions are resolved at static link time — internal calls skip the PLT; data references become relative relocations. Edge one: startup gets cheaper — fewer relocations, zero internal lookups. Edge two: interposition <em>into</em> that library is now impossible. glibc's <code>libc.so.6</code> is deliberately <em>not</em> built that way so <code>malloc</code> stays interposable (the lab proves it: libc-internal <code>printf</code> allocations flow through the shim). <code>-Bsymbolic-functions</code> takes only the function half, leaving data like <code>errno</code> interposable — the compromise most libraries that adopt it use; musl goes the other way.</p>
+<h2 id="the-vdso-kernel-code-in-your-address-space">The vDSO: kernel code in your address space</h2>
+<p>A syscall costs 60–150 ns on modern x86-64 (mode switch, entry checks, Spectre mitigations) against ~15 ns for a call — yet every program reads the time constantly. The kernel's answer: map its own code into your address space. Two regions appear at exec that no file backs:</p>
+<pre><code class="language-text"> (real /proc/PID/maps for ./demo, kernel 5.10.134, x86-64)
+
+ 0x5568c46b9000  [heap]        rw-p   132 KB   anon, brk (ch 05's arena)
+ 0x7ffd42313000  [stack]       rw-p   132 KB   anon, grows down
+ 0x7ffd42363000  [vvar]        r--p    16 KB   kernel DATA page — no file
+ 0x7ffd42367000  [vdso]        r-xp     8 KB   kernel CODE page — no file
+ 0xffffffffff600000 [vsyscall] r-xp    4 KB    legacy page, trap-and-emulated
+        (libc and ld-linux mappings sit in between, file-backed, shared)</code></pre>
+<p><code>AT_SYSINFO_EHDR</code> (0x7ffce31ec000 above) points at the vDSO — a tiny ELF shared object <em>in memory</em>: glibc parses its symbol table at startup and binds <code>clock_gettime</code>, <code>gettimeofday</code>, <code>time</code>, <code>getcpu</code> to the <code>__vdso_*</code> symbols if present, falling back to syscalls otherwise. The data lives one page down in <code>vvar</code>: the clocksource's <code>mult</code>/<code>shift</code>, wall-clock and monotonic bases, a seq counter. Reading it is a <strong>seqlock</strong> protocol — the insider's point: <em>a fast time read is a shared-memory algorithm, not a call</em>:</p>
+<pre><code class="language-c"> // vvar read protocol (vsyscall_gtod_data, x86-64 kernel 5.10; the vdso does this)
+ unsigned seq;
+ do {
+     seq = gtod-&gt;seq;            // 1. even = stable, odd = writer in progress
+     if (seq &amp; 1) continue;      //    retry — readers never block the writer
+     rmb();                      // 2. data reads must not move above the seq read
+     sec  = gtod-&gt;wall_time_sec + ...;  // (mult/shift arithmetic on the TSC)
+     rmb();                      // 3. and must complete before we re-check
+ } while (gtod-&gt;seq != seq);     // 4. version moved → the data was torn: retry</code></pre>
+<p>The writer is the kernel's clock-update path (each tick, or a clocksource change): bump <code>seq</code> odd, write fields, bump even. Readers retry; nobody waits — two loads of one counter replace a syscall, the same trick as a lock-free ring buffer (module 01 ch20's memory ordering, in kernel clothing). A shared read-only page cannot differ per process, so time namespaces give each namespace a private (COW) vvar with its own clock offsets — why newer kernels also map a <code>[vvar_vclock]</code> region. The <code>[vsyscall]</code> page at <code>0xffffffffff600000</code> is the 1999 ancestor; this kernel maps it and <em>emulates</em> its calls by trapping — alive only for ancient static binaries.</p>
+<h2 id="dlopen-dlmopen-and-the-dlclose-rumor">dlopen, dlmopen, and the dlclose rumor</h2>
+<p>Everything above also runs on demand. <code>dlopen("libplug.so", flags)</code> maps segments, processes relocations, runs initializers — the same code paths, recursively resolving the object's <code>DT_NEEDED</code> tree. Two flags matter for symbols: <code>RTLD_LOCAL</code> (default) keeps the library's symbols invisible to the global scope — only the handle's <code>dlsym</code> and its dependents see them; <code>RTLD_GLOBAL</code> publishes them for later <code>dlopen</code>s and <code>dlsym(RTLD_DEFAULT, ...)</code>. <code>RTLD_LAZY/NOW</code> replays the lazy-binding choice per library.</p>
+<p><code>dlclose</code> decrements a per-object reference count and unmaps at zero — on paper. The folklore: it usually doesn't unload. Dependencies hold references (a plugin linking libpng pins libpng), so the count rarely reaches zero; and even at zero, unloading is the <em>dangerous</em> path — another thread's cached function pointer or a key destructor then dereferences unmapped memory. The JVM, CPython and dotnet load native extensions and almost never <code>dlclose</code>, by policy. Treat <code>dlclose</code> as a hint, never a correctness mechanism.</p>
+<p><code>dlmopen</code> is the same call with a namespace ID. Each namespace has its own link-map list and dependency tree — 16 maximum (<code>DL_NNS</code>) — and a library <code>dlmopen</code>ed into a fresh namespace drags its <em>own</em> dependency copies along:</p>
+<pre><code class="language-console">$ ./ns        # dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW); compare mallocs
+default-ns malloc: 0x7ff4b28998d0
+newlm-ns malloc:  0x7ff4b26a28d0
+same libc? NO - two copies</code></pre>
+<p>Two libcs, two <code>errno</code>s, two mallocs — the isolation, and exactly how <code>LD_AUDIT</code> modules load without polluting the program's namespace. The trap is symmetric: a pointer allocated by namespace 2's malloc and freed by namespace 1's corrupts a heap it doesn't belong to (module 01 ch19's arena problem, one API call later). Only discipline crosses namespace boundaries.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The congruence rule has teeth</strong>: <code>p_offset ≢ p_vaddr (mod 4096)</code> is not a warning — the loader refuses the object ("cannot handle file with load bias"). Hand-crafting ELF segments (module 04 ch01) means re-deriving this rule or failing.</li>
+<li><strong>The vvar seqlock is where time comes from</strong>: <code>strace -c ./demo</code> shows <em>zero</em> <code>clock_gettime</code> syscalls — the call never traps. A tight clock loop showing ~100 ns outliers means seqlock retries against the tick, not a "slow syscall".</li>
+<li><strong>-Bsymbolic's double edge</strong>: it deletes internal lookups (faster startup) and deletes interposition <em>into</em> that library — glibc declines it precisely so your preload can replace <code>malloc</code>; a <code>-Bsymbolic</code>'d libc (musl's model) cannot be instrumented this way.</li>
+<li><strong>LD_DEBUG has sections beyond files/libs</strong>: <code>bindings</code> prints every relocation decision ("binding file ./demo to libc.so.6: normal symbol <code>malloc</code>") — the interposition debugger; <code>statistics</code> prints cycles and counts (this box: 67,869 loader cycles, 1,024 (1.5%) in relocation, 96 relocations, 3 relative).</li>
+<li><strong>dlmopen isolation cuts both ways</strong>: a new namespace gets its own libc — own malloc, own <code>errno</code> (the isolation <code>LD_AUDIT</code> relies on), and any pointer crossing the boundary is a latent heap-corruption bug (the lab's two <code>malloc</code> addresses).</li>
+<li><strong><code>ldd</code> is the loader in disguise</strong>: it runs the program's interpreter with <code>--list</code> — <code>linux-vdso.so.1</code> shows up as a "library" with no file. <code>ldd</code> on an untrusted binary is code execution, not inspection.</li>
+<li><strong><code>DT_RELR</code> is the new <code>DT_RELACOUNT</code></strong>: packed relative relocations, 8 bytes per word instead of 24 per entry — glibc ≥ 2.36 reads it, binutils <code>-z pack-relative-relocs</code> writes it, Debian 13's libc carries 280 bytes.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>All real, captured on this box (Debian 13, glibc 2.41, kernel 5.10.134).</p>
+<p><strong>1. The pre-<code>main</code> timeline, traced.</strong> Build the two-liner (<code>malloc(100); printf("hello\n"); free; sleep</code>) and let the loader narrate:</p>
+<pre><code class="language-console">$ LD_DEBUG=files,libs ./demo 2&gt;&amp;1 | grep -v '^$' | head -14
+     16118: file=libc.so.6 [0];  needed by ./demo [0]
+     16118:  search cache=/etc/ld.so.cache
+     16118: file=libc.so.6 [0];  generating link map
+     16118:   dynamic: 0x7f7531f12940  base: 0x7f7531d2e000  size: 0x1f3e50
+     16118: calling init: /lib64/ld-linux-x86-64.so.2
+     16118: calling init: /lib/x86_64-linux-gnu/libc.so.6
+     16118: initialize program: ./demo
+     16118: transferring control: ./demo</code></pre>
+<p>Read it as a timeline: cache hit, link map, <em>init in dependency order (loader, libc, program)</em>, then the handoff.</p>
+<p><strong>2. Interpose <code>malloc</code> (module 04 ch02's counter, now with the mechanism).</strong></p>
+<pre><code class="language-c">// shim.c
+#define _GNU_SOURCE
+#include &lt;dlfcn.h&gt;
+#include &lt;stddef.h&gt;
+#include &lt;stdio.h&gt;
+static long count;
+static void *(*real_malloc)(size_t);
+void *malloc(size_t n) {
+    if (!real_malloc) real_malloc = dlsym(RTLD_NEXT, "malloc");
+    count++;
+    return real_malloc(n);
+}
+__attribute__((destructor)) static void report(void) {
+    fprintf(stderr, "malloc called %ld times\n", count);
+}</code></pre>
+<pre><code class="language-console">$ gcc -shared -fPIC -o shim.so shim.c
+$ LD_PRELOAD=./shim.so ./demo
+hello
+malloc called 2 times</code></pre>
+<p>The mechanism is position 1 of the scope: the shim's <code>malloc</code> is found before libc's, and <code>dlsym(RTLD_NEXT, ...)</code> reaches <em>the next definition after us</em> — libc's. The second count is <code>printf</code>'s 4,096-byte stdout buffer, allocated lazily on first write by libc-internal code <em>through our shim</em> — proof that glibc is not <code>-Bsymbolic</code>'d.</p>
+<p><strong>3. <code>ldd</code>, and the maps with origins labeled.</strong></p>
+<pre><code class="language-console">$ ldd ./demo
+        linux-vdso.so.1 (0x00007ffe71d84000)      &lt;- "library" with no file
+        libc.so.6 =&gt; /lib/x86_64-linux-gnu/libc.so.6 (0x00007fd8b587d000)
+        /lib64/ld-linux-x86-64.so.2 (0x00007fd8b5a87000)
+$ ./demo &amp; sleep 0.3; grep -E 'demo|libc|ld-linux|\[' /proc/$!/maps
+559324970000-559324973000 r--p/r-xp/r--p  pg 0-2    /tmp/m07lab/demo  &lt;- LOADs 1-3
+559324973000-559324974000 r--p 00002000 ... /tmp/m07lab/demo   &lt;- LOAD 4 pg 1: RELRO'd
+559324974000-559324975000 rw-p 00003000 ... /tmp/m07lab/demo   &lt;- LOAD 4 pg 2: .data+.bss
+559325df2000-559325e13000 rw-p 00000000 00:00 0    [heap]      &lt;- anon, brk
+7f2054dc0000-7f2054fb4000 (r--p/r-xp/r--p/r--p/rw-p) libc.so.6 + anon .bss tail
+7ffd1b4a7000-7ffd1b4c8000 rw-p 00000000 00:00 0    [stack]
+7ffd1b55d000-7ffd1b561000 r--p 00000000 00:00 0    [vvar]      &lt;- 16 KB kernel data
+7ffd1b561000-7ffd1b563000 r-xp 00000000 00:00 0    [vdso]      &lt;- 8 KB kernel code
+ffffffffff600000-ffffffffff601000 r-xp 00000000 0  [vsyscall]  &lt;- emulated legacy</code></pre>
+<p>Check the arithmetic you derived: LOAD 4's pages are <code>r--p</code> at file offset 0x2000 and <code>rw-p</code> at 0x3000 — the +0x1000 skew and the RELRO split. Then <code>cat /proc/$!/auxv</code>: <code>AT_SYSINFO_EHDR</code> equals the <code>[vdso]</code> line, by construction.</p>
+<p><strong>4. Two libcs in one process (optional).</strong> The <code>ns.c</code> dlmopen program above (build with <code>-ldl</code>): run it and watch <code>dlsym(h, "malloc") != dlsym(RTLD_DEFAULT, "malloc")</code>.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Startup latency triage</strong>: <code>LD_DEBUG=statistics</code> separates mapping from relocation cost (67,869 cycles here — trivial; a plugin-laden app can spend milliseconds). Relocations dominating → <code>-Bsymbolic-functions</code> or fewer preloads; load cost dominating → too many <code>DT_NEEDED</code>s, or a giant library needing <code>-fvisibility=hidden</code>.</li>
+<li><strong>Debugging "wrong function called"</strong>: <code>LD_DEBUG=bindings</code> names the winner of every lookup. "My preload doesn't take effect" has three causes you can now enumerate: setuid (<code>AT_SECURE</code>), <code>-Bsymbolic</code> in the caller, or a reference resolved at static link time in the main binary.</li>
+<li><strong>Plugin architecture decisions</strong>: <code>dlopen</code> + <code>RTLD_LOCAL</code> by default, <code>RTLD_GLOBAL</code> only for a deliberate ABI surface; never free across a <code>dlmopen</code> boundary; never design correctness around <code>dlclose</code> actually unmapping.</li>
+<li><strong>Time in benchmarks</strong>: know when <code>clock_gettime</code> is a call (vDSO, ~15 ns) and when it's a syscall (sandboxes that seccomp it into <code>clock_gettime64</code>) — a 5–10× swing on the most-called function in many profiles.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch03 (virtual memory)</strong>: the vDSO/vvar pair is <code>mmap</code>'s file-caching idea inverted — kernel-owned physical pages mapped into every address space, no disk; the congruence rule is "mmap works in pages" applied twice.</li>
+<li><strong>Module 04 ch02 (linking &amp; loading)</strong>: the RE twin — PLT/GOT lazy binding and RELRO derived there from the disassembly side; this chapter is the same mechanism from the loader's side, and the malloc shim is that lab finally explained.</li>
+<li><strong>Module 07 ch02 (Windows PE &amp; the loader)</strong>: compare the division of labor — Windows' loader lives <em>in</em> the kernel (ntdll as its user-mode shadow, LoaderLock serializing DllMain), Linux delegates to userspace <code>ld.so</code>; same search-order folklore, different trust boundary.</li>
+<li><strong>Module 11 ch01 (the disk contract)</strong>: databases bypass the page cache with <code>O_DIRECT</code> to own their caching; vvar is the opposite — a page with <em>no</em> file at all. Both meet at "a mapped page is just memory until someone defines its backing."</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Derive it, don't recall it: why must <code>p_offset ≡ p_vaddr (mod 4096)</code> hold for every <code>PT_LOAD</code>, and what breaks if a crafted ELF violates it?</li>
+<li>In the <code>LD_DEBUG=files</code> trace, <code>transferring control: ./demo</code> is the last line. Whose instruction executes first in this process's lifetime, and why is it not <code>main</code>'s?</li>
+<li>A segment has <code>p_vaddr = 0x3dd0</code>, <code>p_filesz = 0x250</code>, <code>p_memsz = 0x258</code>. Predict: how many BSS bytes, at which addresses, and how many <em>extra</em> <code>mmap</code> calls for them?</li>
+<li>The shim prints <code>malloc called 2 times</code> for one <code>malloc(100)</code> plus one <code>printf</code>. Predict the count if the program first calls <code>setvbuf(stdout, NULL, _IONBF, 0)</code>, and explain the difference.</li>
+<li>A plugin is loaded with <code>dlmopen(LM_ID_NEWLM, ...)</code>, allocates a string with its own <code>strdup</code>, and returns it to the host program, which <code>free</code>s it. The host crashes in <code>free</code> hours later with heap corruption. Diagnose.</li>
+<li>You run <code>LD_PRELOAD=./shim.so ./demo</code> on a setuid-root build of <code>demo</code>; the counter never prints but the program works. Why?</li>
+<li>(Module 01 ch03) The vDSO code page is identical in every process on the machine; vvar can become private. Name the memory-management mechanism for each case, and what forces vvar to go private.</li>
+<li>A library <code>L</code> is linked with <code>-Bsymbolic-functions</code> and both defines and internally calls <code>open()</code>. You preload a wrapper to log every <code>open</code>. Which calls get logged — from <code>main</code>, from inside <code>L</code>, both, or neither — and why does the "functions only" half matter for <code>errno</code>?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><code>mmap</code> maps whole file pages to whole virtual pages with a fixed intra-page correspondence: file byte <code>4096k+j</code> appears at <code>4096m+j</code>. The segment demands <code>p_offset + i ↦ p_vaddr + i</code> for all <code>i</code>; at <code>i = 0</code> the intra-page offsets <code>p_offset mod 4096</code> and <code>p_vaddr mod 4096</code> must be equal, or the segment would start mid-page. A violating ELF places bytes at wrong intra-page offsets — the loader refuses it ("cannot handle file with load bias"). The linker enforces the rule by construction, allowing any page-multiple skew.</li>
+<li>The first userspace instruction is in <code>ld.so</code>'s hand-written self-relocation stub: <code>execve</code> sets the entry point to the interpreter's, not the program's. Only <code>ld.so</code> can finish loading; the program's entry travels as <code>AT_ENTRY</code>. <code>main</code> runs last, after mapping, relocation, and initializers.</li>
+<li><code>p_memsz - p_filesz = 8</code> bytes of BSS, at <code>[0x4020, 0x4028)</code>. <strong>Zero</strong> extra mmap calls: the BSS ends inside the page already mapped file-backed (<code>[0x4000, 0x5000)</code>), so the loader zeroes it and the file padding to page end with <code>memset</code>. Anonymous zero mappings appear only per <em>whole page</em> of BSS beyond the mapped page.</li>
+<li><strong>1</strong>. Unbuffered stdout never allocates the 4,096-byte buffer, so only the explicit <code>malloc(100)</code> flows through the shim. The original second count was <code>printf</code>'s lazy buffer allocation — by libc-internal code <em>through the preloaded malloc</em>, proving libc's internal calls are not <code>-Bsymbolic</code>-bound.</li>
+<li>The dlmopen'd plugin has its <em>own</em> libc (two distinct <code>malloc</code> addresses, proven in the lab), so the string lives in namespace 2's heap. The host's <code>free</code> — namespace 1's glibc — interprets those bytes as its own chunk/tcache metadata and writes to them; the crash surfaces when the poisoned freelist is next walked. Fix: a <code>plugin_free</code>, or one shared allocator.</li>
+<li>Setuid execution sets <code>AT_SECURE</code>; secure-execution mode ignores <code>LD_PRELOAD</code> (and <code>LD_LIBRARY_PATH</code>, <code>LD_DEBUG</code>), because honoring them would let anyone interpose code into a root process. The shim is never mapped.</li>
+<li>Code page: one set of kernel physical pages mapped into every address space — shared, read-execute, module 01 ch03's "many virtual addresses, one physical page." vvar private is copy-on-write: a process whose time namespace has shifted clocks must see different data, so the kernel COWs the page.</li>
+<li>Logged: calls from <code>main</code> and other libraries — the preload sits at position 1 of the scope. Not logged: <code>L</code>'s internal calls, resolved at static link time to <code>L</code>'s own <code>open</code> — no PLT, no lookup, no interposition. The "functions only" half matters because data references stay interposable: <code>L</code>'s <code>errno</code> still resolves dynamically to the shared per-thread <code>errno</code>; a full <code>-Bsymbolic</code> would privatize the wrong storage.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 07 — Desktop OS internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

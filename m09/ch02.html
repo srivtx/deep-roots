@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Locks — deep-roots</title>
+<meta name="description" content="Chapter 02 of module 09: Locks">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Locks — deep-roots">
+<meta property="og:description" content="Chapter 02 of module 09: Locks">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Locks — deep-roots">
+<meta name="twitter:description" content="Chapter 02 of module 09: Locks">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 09 &middot; from MESI to consensus</div>
+<h1 class="post-title">Locks</h1>
+<div class="post-meta">chapter 02 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A lock is one word in memory plus a protocol about who may proceed. The protocol's cost is a ladder with three rungs: an uncontended atomic op (~5-20 ns, a cache-coherence transaction), a contended one (the line ping-pongs between cores, ~100 ns per transfer), and blocking (syscall + context switch, 1-10 µs — the cliff). Every lock design here — spinlocks, tickets, queued locks, the Linux futex, the glibc mutex on top of it — answers one question: <em>how do I stay on the cheapest rung that is still correct, and fall off it only when I must?</em></blockquote>
+<h2 id="the-cost-ladder-derived">The cost ladder, derived</h2>
+<p>Strip a mutex to its physical minimum: mutual exclusion means one word that says who owns a critical section, and an acquisition that cannot interleave with another. On x86-64 that primitive is a locked read-modify-write such as <code>lock cmpxchg</code>. What does one cost?</p>
+<p>First rung — nobody else is interested. The <code>lock</code> prefix serializes the pipeline (~15-20 cycles on Skylake-class cores) and must run with the target cache line in Exclusive/Modified state. If the line is already yours, that is the whole cost: ~4-5 ns for a lock+unlock pair (measured below on this 2-vCPU box: 4.0 ns, glibc 2.41, Debian 13, kernel 5.10). If another core holds a shared copy, the op issues a read-for-ownership (RFO): invalidate broadcast plus transfer, tens of ns. "Just an atomic op" is never free — it is a coherence transaction, module 01 ch20's MESI made billable.</p>
+<p>Second rung — two cores want the word. Each atomic op must move the line to the issuing core: invalidate, transfer, ~40-100 ns per bounce (two-socket systems pay more). The line does not settle until one side stops issuing locked ops.</p>
+<p>Third rung — you give up the CPU. A contended thread that sleeps pays a syscall (futex entry, ~100-200 ns), the scheduler, and a context switch: 1-10 µs direct, plus the indirect tax — the L1/TLB working set evicted by whatever runs next. This is the cliff every lock design avoids falling off. Keep the ladder in mind: 5-20 ns / ~100 ns / 1-10 µs, three orders of magnitude end to end.</p>
+<h2 id="spinlocks-test-and-set-tickets-queues">Spinlocks: test-and-set, tickets, queues</h2>
+<p><strong>Test-and-set (TAS).</strong> Acquire: <code>xchg 1 -&gt; word</code> (atomic), spin while the word is 1, release: store 0. Uncontended cost: one atomic op, first rung. Now 3 threads on 2 cores — one core oversubscribed. T1 holds the lock and runs its critical section; T2, on the other core, spins issuing <code>xchg</code>, each one an RFO that invalidates core 0's copy and drags the line over. T1's release store must fight the spinners for the line:</p>
+<pre><code> core 0                              core 1
+ -----                               -----
+ T1 holds lock, in critical sec      T2 spins: xchg %eax, lock  (atomic)
+                                       each xchg = RFO: invalidate
+ T1 unlock: mov $0, lock  &lt;---------   core 0's copy, steal the line,
+   ...must first re-acquire the         ~100 ns per bounce
+    line that T2 keeps stealing</code></pre>
+<p>Two costs. The measured one: the release itself is delayed by spinner traffic — handoff latency grows with the number of spinners. The structural one: the scheduler preempts T1 mid-critical-section (oversubscription guarantees it). T1 is descheduled but still holds the lock; a full core burns atomic ops while the only thread that can make progress is not running. Hence the kernel's rule: <code>spin_lock</code> disables preemption, and you must not sleep holding one.</p>
+<p><strong>Ticket locks: fairness as a counter.</strong> Lamport's bakery — take a number, wait for the display — hardware-accelerated. Two counters: <code>next_ticket</code> and <code>now_serving</code>. Acquire: <code>fetch_and_add 1</code> on <code>next_ticket</code>; spin <em>reading</em> <code>now_serving</code> until it equals your ticket; release: <code>fetch_and_add 1</code> on <code>now_serving</code>. Two properties follow. Plain reads of <code>now_serving</code> keep the line Shared on every core — the spin generates no traffic; only the release increment invalidates once. And order is FIFO: a thread waits at most N-1 critical sections — bounded wait, no starvation, the property TAS lacks, at the same one atomic per acquisition. Linux's x86 spinlock used tickets for years for exactly this fairness.</p>
+<p><strong>Queued locks (MCS): spin on a private line.</strong> The insight that solved spinlock scalability: stop spinning on the lock word. Each waiter owns a node on its own stack — <code>{ flag: 1, next: ptr }</code>. Enqueue is an atomic swap of the queue's tail pointer; the waiter then spins reading <em>its own</em> <code>flag</code> — a line no other core ever writes, cached locally at zero coherence cost. Release: walk your <code>next</code> pointer once, store 0 into the successor's flag — that store is the <em>only</em> traffic per handoff. O(1) line transfers instead of TAS's O(waiters) storm, and the release never competes with spinners. The idea powers Linux's qspinlock (per-CPU queue nodes, since ~2014) and the optimistic-spin queue (osq).</p>
+<h2 id="the-futex-the-fast-path-is-not-a-syscall">The futex: the fast path is not a syscall</h2>
+<p>A blocking lock needs somewhere to sleep — historically a kernel call on every acquisition. The futex (fast userspace mutex, Linux 2.6, 2003) inverts that: <em>the kernel is only involved when there is actual waiting.</em> The lock is any aligned 32-bit word in your own memory. The protocol (Ulrich Drepper's "Futexes Are Tricky", 2011) has three states: <strong>0</strong> unlocked, <strong>1</strong> locked with no waiters, <strong>2</strong> locked with waiters:</p>
+<pre><code>        userspace (no syscall)                 kernel
+ ┌───────────────────────────────┐    ┌─────────────────────────────────┐
+ │  lock word (4 B, 4-aligned)   │    │  futex hash bucket (hash of     │
+ │                               │    │  uaddr, bucket lock-protected)  │
+ │   0 = unlocked                │    │                                 │
+ │   1 = locked, no waiters      │    │   wait queue:   T3 ──► T7       │
+ │   2 = locked, has waiters     │    │   (sleeping tasks, no spinners) │
+ └───────────────────────────────┘    └─────────────────────────────────┘
+  T2 lock:   CAS 0 -&gt; 1  succeeds.   DONE.  No syscall. (~4 ns measured)
+  T3 lock:   CAS 0 -&gt; 1 fails.  Write 2, then
+             FUTEX_WAIT(word, 2) ─────►  kernel re-reads the word; if it
+                                        still == 2, sleep in the queue.
+                                        If it changed: EAGAIN, retry.
+  T2 unlock: atomic exchange word -&gt; 0.
+             old value 1?  DONE, no syscall.
+             old value 2?  FUTEX_WAKE(word, 1) ─────► wake exactly one
+             waiter (T3).  T3 retries its CAS 0 -&gt; 1; since T7 still
+             waits, T3 writes 2, not 1 — the waiters hint survives.</code></pre>
+<p>Why the kernel re-checks the word: it closes the race between "I decided to sleep" and "I am asleep." If T2's unlock lands after T3's check but before T3 sleeps, the wakeup would be lost forever — a deadlock with no cycle in it. Comparing <code>*word == 2</code> inside the critical section that enqueues you makes check-and-sleep atomic; on mismatch <code>FUTEX_WAIT</code> returns <code>EAGAIN</code> and you loop. That re-check is the load-bearing seam of the protocol.</p>
+<p>glibc's <code>pthread_mutex_lock</code> (glibc 2.41, this box) <em>is</em> this protocol; the mutex struct adds type/robust flags, an owner TID for error-checking (<code>EDEADLK</code> on self-lock), a recursion count, and for robust mutexes a link in the thread's <em>robust list</em> (registered via <code>set_robust_list</code>) — when the holder dies, the kernel walks that list, marks each word <code>FUTEX_OWNER_DIED</code> (0x40000000), and waiters get <code>EOWNERDEAD</code> instead of sleeping until heat death.</p>
+<p><strong>Priority-inheritance futexes.</strong> A PI mutex encodes the word differently: bits 0-29 = owner TID, bit 31 = <code>FUTEX_WAITERS</code> (0x80000000), bit 30 = <code>FUTEX_OWNER_DIED</code>. <code>FUTEX_LOCK_PI</code> makes the kernel manage an <code>rt_mutex</code>: waiters sit in a priority-sorted list, and when you block, the kernel boosts the owner's priority to yours, walking the chain (the owner may itself wait on another lock); a closed cycle returns <code>EDEADLK</code>. This is Mars Pathfinder (module 03 ch03) at mechanism level: VxWorks 1997, a low-priority task holding a bus mutex a high-priority task needed, a medium-priority task preempting the holder, the watchdog resetting the lander. The remote fix was enabling priority inheritance on that mutex; <code>FUTEX_LOCK_PI</code> is the same surgery, per lock, in Linux userspace.</p>
+<p><strong>Adaptive spinning: the rung between.</strong> Sleeping immediately is wasteful if the holder releases in 200 ns; spinning forever is fatal if the holder is descheduled. The compromise, both places: spin <em>only while the holder is running</em>. glibc's <code>PTHREAD_MUTEX_ADAPTIVE_NP</code> spins up to ~100 iterations (<code>max_adaptive_count</code>) before <code>FUTEX_WAIT</code>. The kernel's <code>mutex_lock</code> polls the owner task's <code>on_cpu</code> flag and abandons the spin the instant it is not set — you never spin through a context switch. The spinners queue via osq, an MCS-style structure, so the spinning doesn't reproduce the TAS storm.</p>
+<h2 id="deadlock-as-an-engineering-problem">Deadlock as an engineering problem</h2>
+<p>The Coffman conditions (mutual exclusion, hold-and-wait, no preemption, circular wait) are usually taught as theory; as engineering they are a checklist of things to break <em>on purpose</em>: give up ME with lock-free designs (module 09 ch03), release and retry instead of holding, or — the break that scales — forbid circular wait with a <strong>lock ordering hierarchy</strong>: a written global order ("A before B before C", parent-before-child) that makes a cycle impossible. One page of documentation, zero runtime — the cheapest Coffman break available.</p>
+<p>The kernel enforces its own discipline with <strong>lockdep</strong> (CONFIG_PROVE_LOCKING): every acquisition of B while holding A adds the edge A-&gt;B to a directed graph over lock <em>classes</em> (each lock's class is assigned when it is initialized). An edge that would complete a cycle triggers a report with full stack traces at the <em>first</em> occurrence — before the deadlock ever schedules simultaneously. lockdep also tracks usage per context (process, softirq, hardirq), catching a sleeping lock acquired in irq context. The cost — every lock op updates the graph, double-digit % overhead — is why distros ship it only in debug kernels, and why the famous dmesg line exists: "turning off the locking correctness validator" when the graph exceeds its limits.</p>
+<p><strong>Lock granularity</strong> has a classic U-curve. One big lock: no ordering problems, but every acquisition is contended rung-two traffic. Many small locks: contention drops, but the ordering hierarchy grows roughly with the number of <em>pairs</em> of locks that ever nest — quadratic complexity in the thing you are worst at verifying. And at the fine end, adjacent lock words in one 64-byte line are <em>false sharing</em> (module 01 ch20) — logically uncontended locks bouncing a line they don't logically share; <code>alignas(64)</code> each lock.</p>
+<p>The insider's tuning heuristics, in order: <strong>measure before restructuring</strong> (<code>perf lock record ./app &amp;&amp; perf lock report</code>; or <code>/proc/lock_stat</code> with CONFIG_LOCK_STAT — per class: contention count, wait/hold times, and the call site where threads blocked). <strong>Prefer sharding to spin tuning</strong>: N per-CPU or per-bucket locks with no nesting destroy contention without adding a single ordering rule, whereas tuning spin counts moves you between rungs of a ladder the topology already chose.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li>The three-state word (0/1/2) has a sticky subtlety: a fresh acquirer that CASes 0-&gt;1 while old waiters sleep writes <em>1</em>, and its unlock (old==1) skips the <code>FUTEX_WAKE</code> — safe only because each waiter's expected-value 2 makes the kernel's re-read return <code>EAGAIN</code> and force a retry. The protocol is closed under interleavings <em>because of</em> that re-check.</li>
+<li>PI futex word encoding: owner TID in bits 0-29, <code>FUTEX_WAITERS</code> bit 31 (0x80000000), <code>FUTEX_OWNER_DIED</code> bit 30 (0x40000000); cycles in the boost chain come back as <code>EDEADLK</code> from <code>FUTEX_LOCK_PI</code> — deadlock detection before the deadlock.</li>
+<li>Cost ladder, platform-marked: uncontended lock+unlock 4.0 ns (glibc 2.41, this 2-vCPU VM, gcc -O2); contended 2-thread on 2 cores ~350-390 ns — and that ~90x is <em>with</em> futex syscalls in it, because a fair 2-core handoff degenerates into a FUTEX_WAIT/FUTEX_WAKE pair; cross-core line transfer ~40-100 ns; context switch 1-10 µs.</li>
+<li>lockdep reports the <em>potential</em> deadlock on the first violating order — the cycle need never have actually scheduled. Its overhead (every acquisition updates the class graph) is why it is debug-kernel only, and why it self-disables ("turning off the locking correctness validator") when the graph exceeds its chain limits.</li>
+<li>Adaptive spinning stops on owner-not-running, not on timeout alone: glibc caps <code>PTHREAD_MUTEX_ADAPTIVE_NP</code> at ~100 spins (<code>max_adaptive_count</code>), while the kernel's optimistic spin polls the owner's <code>on_cpu</code> flag — neither will spin through a context switch.</li>
+<li>The kernel reuses the MCS insight twice: qspinlock (per-CPU queue nodes, merged ~2014, replacing the x86 ticket lock) and osq, backing <code>mutex_lock</code>'s adaptive path. "Spin on a private line" is the most-ported idea in lock design.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Both labs ran on this box: Debian 13, glibc 2.41, kernel 5.10.134, 2 vCPU, gcc 14.2. Your numbers will differ; the <em>ratio</em> is the lesson.</p>
+<p><strong>Lab 1 — the ladder in one number:</strong></p>
+<pre><code class="language-c">// mutex_bench.c   build: gcc -O2 -pthread mutex_bench.c -o mutex_bench
+static pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
+// phase 1: 1 thread, 10M lock+unlock, time each
+// phase 2: 2 threads hammering the same lock for 2 s, count total ops</code></pre>
+<pre><code class="language-console">$ ./mutex_bench
+uncontended:    4.0 ns per lock+unlock  (10000000 iters, 1 thread)
+contended:    383.6 ns per lock+unlock  (10428576 ops in 2 s, 2 threads)
+slowdown:       95.9x</code></pre>
+<p>What to notice: 4 ns is rung one — two atomics on a locally-owned line, no syscall. ~380 ns is not pure ping-pong: glibc's default mutex does not spin, so each fair handoff on 2 cores is a <code>FUTEX_WAIT</code> + <code>FUTEX_WAKE</code> pair. Rebuild with <code>PTHREAD_MUTEX_ADAPTIVE_NP</code> (the number drops), then run 3 threads on 2 cores and watch the context-switch cliff take over.</p>
+<p><strong>Lab 2 — a deliberate AB/BA deadlock, diagnosed.</strong></p>
+<pre><code class="language-c">// deadlock.c   build: gcc -O0 -g -pthread deadlock.c -o deadlock
+// t1: lock(A); sleep 200ms; lock(B)      t2: lock(B); sleep; lock(A)</code></pre>
+<pre><code class="language-console">$ ./deadlock &amp;        # prints "t1: locked A", "t2: locked B", then silence
+$ PID=$(pgrep -x deadlock)
+$ for t in /proc/$PID/task/*; do \
+    printf 'tid %-6s wchan=%-22s ' $(basename $t) $(cat $t/wchan); \
+    grep -m1 '^State' $t/status; done
+tid 6238   wchan=futex_wait_queue_me    State:  S (sleeping)
+tid 6240   wchan=futex_wait_queue_me    State:  S (sleeping)
+tid 6241   wchan=futex_wait_queue_me    State:  S (sleeping)</code></pre>
+<p>All three threads (main is stuck in <code>pthread_join</code>'s futex) report <code>futex_wait_queue_me</code> — asleep in the kernel's futex wait queue is the signature of a lock that will never come. <code>/proc/$PID/task/*/stack</code> gives the kernel backtrace but needs root (<code>cat</code> here: Permission denied). With gdb (absent from this sandbox; frames are the canonical glibc shape):</p>
+<pre><code class="language-gdb">$ gdb -p $PID
+(gdb) thread apply all bt
+Thread 2:  #0 futex_wait  #1 __pthread_mutex_lock  #2 t1_fn  deadlock.c:14
+Thread 3:  #0 futex_wait  #1 __pthread_mutex_lock  #2 t2_fn  deadlock.c:23</code></pre>
+<p>Two frames holding opposite locks and wanting the other's — the cycle reads off the page. Test the fix: make t2 take A first; the program terminates.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>A hung service triage</strong>: every thread <code>State: S</code> with <code>wchan</code> = <code>futex_wait_queue_me</code> means lock wait or deadlock — <code>thread apply all bt</code>, look for the cycle across frames before touching anything else.</li>
+<li><strong>Performance blaming</strong>: "~90x under contention, and the fix is topology, not the lock implementation" — check <code>perf lock</code> / <code>/proc/lock_stat</code> first; shard the contended lock before rewriting anything clever.</li>
+<li><strong>Design reviews</strong>: demand the lock ordering hierarchy as a document; any nested acquisition not derivable from it is a latent deadlock — what lockdep flags at first occurrence.</li>
+<li><strong>Interview seniority</strong>: "why does an uncontended pthread mutex cost no syscall?" — the futex word dance, three states, kernel re-check — is a complete answer at a level most candidates never reach.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch20</strong> — the MESI/cache-line machinery the cost ladder is billed in: RFO, invalidate, transfer.</li>
+<li><strong>Module 03 ch03</strong> — the race-family chapter's Mars Pathfinder inversion, re-derived here at mechanism level (<code>rt_mutex</code> plist, boost chain).</li>
+<li><strong>Module 09 ch01</strong> — lock/unlock as acquire/release edges: the pair that makes SC-for-DRF hold for every locked program.</li>
+<li><strong>Module 09 ch03</strong> — when locks lose: hazard pointers, epochs, RCU — and the honest decision table for leaving this chapter behind.</li>
+<li><strong>Module 09 ch04</strong> — the alternative architecture: transfer ownership over a channel instead of sharing memory behind a lock.</li>
+<li><strong>Module 05 ch03</strong> — the binder 16th-thread deadlock: circular wait over <em>thread-pool slots</em>, no lock in sight.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>An uncontended <code>pthread_mutex_lock</code>+<code>unlock</code> pair measured 4.0 ns; a plain local increment takes under 1 ns. Where do the extra nanoseconds go — no other core touches the mutex?</li>
+</ol>
+<ol>
+<li>Two waiters queue on an MCS lock. Count the cross-core cache-line transfers for one lock handoff, and compare with a TAS lock where 5 threads spin. Why does the TAS release store get <em>slower</em> as threads are added?</li>
+</ol>
+<ol>
+<li>Thread A holds the lock (word == 1). Threads B and C call <code>lock()</code>, both end up sleeping in <code>FUTEX_WAIT</code> with the word == 2. A calls <code>unlock()</code>. Trace the word's values and syscalls through B acquiring, and state where C is while B holds it.</li>
+</ol>
+<ol>
+<li>The lab box (2 cores) shows ~380 ns per contended op with 2 threads. You rerun with 3 threads on the same 2 cores. Predict what happens to the number and name the ladder rung responsible.</li>
+</ol>
+<ol>
+<li>A production process is hung; <code>/proc/PID/task/*/wchan</code> shows all threads in <code>futex_wait_queue_me</code>. Backtraces: T1 holds mutex M1 and is blocked on M2; T2 holds M2 and is blocked on M1. Which Coffman conditions are satisfied, what is the standard fix, and <em>when</em> would lockdep have caught it?</li>
+</ol>
+<ol>
+<li>Two processes share a mutex in <code>shm</code> (process-shared, but a <em>normal</em>, non-robust type). The process holding it is killed with <code>SIGKILL</code>. What happens to the other process's waiters, and which mutex feature exists precisely for this failure?</li>
+</ol>
+<ol>
+<li>If <code>pthread_mutex_unlock</code> were compiled as a <em>relaxed</em> store instead of a release-store, give an interleaving where a critical section's data writes are lost to the next acquirer. Which edge from chapter 01 is destroyed?</li>
+</ol>
+<ol>
+<li>A struct declares <code>pthread_mutex_t a, b;</code> back to back, 40 bytes each on a 64-byte-line machine. Two threads on two cores lock <code>a</code> and <code>b</code> respectively — different mutexes, zero logical contention — yet the benchmark shows a large slowdown. Diagnose and prescribe the fix.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The atomic op is a coherence transaction, not just an instruction.</strong> <code>lock cmpxchg</code> serializes the pipeline (~15-20 cycles) and needs the line in E/M state; if another core holds a copy, it upgrades via RFO (~40-100 ns) even with no contention <em>right now</em>. A plain increment needs no exclusive ownership.</li>
+</ol>
+<ol>
+<li><strong>MCS: two transfers</strong> — the enqueue atomic on the tail pointer, plus the releaser's single write to the successor's flag; the spinning itself is free (each waiter polls a line only its eventual releaser writes). <strong>TAS: O(waiters) and worsening</strong> — every spinner's atomic is an RFO that invalidates all copies, so with 5 spinners the line bounces continuously at ~100 ns per transfer, and the release store, also to that line, repeatedly loses arbitration to locked ops.</li>
+</ol>
+<ol>
+<li>A's <code>unlock()</code> atomically exchanges 2 -&gt; 0, sees old value 2, and issues <code>FUTEX_WAKE(word, 1)</code> — one syscall, waking exactly <em>one</em> waiter, B; C stays asleep. B retries, its CAS 0 -&gt; 1 succeeds, but since C is still queued, B writes 2 — so the "has waiters" hint survives. When B unlocks with old value 2, it wakes C. Key point: one wake per unlock; the word returns to 0 only at release.</li>
+</ol>
+<ol>
+<li>It gets <em>worse</em> — toward microseconds per op. With 3 threads on 2 cores one thread is always descheduled; sooner or later it is a <em>lock holder</em> preempted mid-critical-section, and the waiters then block in <code>FUTEX_WAIT</code> until the holder is rescheduled: the context-switch rung (1-10 µs) enters the critical path, and throughput per op can drop below the 2-thread case — why oversubscription is poison for spin-based designs.</li>
+</ol>
+<ol>
+<li>All four: mutual exclusion (each mutex is exclusive), hold-and-wait (each holds one while requesting the other), no preemption (a mutex cannot be forcibly taken), circular wait (T1-&gt;M2-&gt;T2-&gt;M1-&gt;T1). The fix breaks circular wait: a global ordering hierarchy — both threads take M1 before M2 — makes a cycle impossible. lockdep would have flagged it at the <em>first</em> M2-&gt;M1 acquisition in the system's history, long before both orders ever ran concurrently: it reports <em>potential</em> deadlocks, not actual ones.</li>
+</ol>
+<ol>
+<li>The waiters sleep forever: <code>SIGKILL</code> runs no cleanup, so nobody issues the <code>FUTEX_WAKE</code>, and a normal mutex's word still reads "locked." The feature built for this is the <strong>robust mutex</strong> (<code>PTHREAD_MUTEX_ROBUST</code>): the holder registers locks in a robust list (<code>set_robust_list</code>); on death the kernel marks each word <code>FUTEX_OWNER_DIED</code> and wakes waiters, who get <code>EOWNERDEAD</code> and can repair or abandon the state.</li>
+</ol>
+<ol>
+<li>T1 runs <code>data = 42;</code> then unlock as a relaxed store; the CPU may make the unlocked word globally visible <em>before</em> <code>data = 42</code> (module 01 ch20's store buffer). T2's acquire-load of the word then succeeds and reads <code>data == 0</code> — the mutex excludes T2 but no longer <em>publishes</em> T1's writes from the critical section. The destroyed edge is the release-store -&gt; acquire-load synchronizes-with edge that makes SC-for-DRF (ch01) hold.</li>
+</ol>
+<ol>
+<li>False sharing: <code>a</code> and <code>b</code> sit in the same 64-byte cache line, so atomic ops on <em>different</em> mutexes RFO the <em>same</em> line — every acquisition bounces it cross-core (~40-100 ns per transfer, the ~90x-class slowdown of true contention), and no locking bug exists. Fix: <code>alignas(64)</code> each mutex (or 56 bytes of padding) — module 01 ch20's remedy applied to lock words.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch01.html"><span class="cn-label">previous</span><span class="cn-title">Ch 01</span></a>
+<a class="next" href="ch03.html"><span class="cn-label">next</span><span class="cn-title">Ch 03</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 09 — Concurrency &amp; distributed memory</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

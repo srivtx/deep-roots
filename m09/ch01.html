@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Happens-before — deep-roots</title>
+<meta name="description" content="Chapter 01 of module 09: Happens-before">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Happens-before — deep-roots">
+<meta property="og:description" content="Chapter 01 of module 09: Happens-before">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Happens-before — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of module 09: Happens-before">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 09 &middot; from MESI to consensus</div>
+<h1 class="post-title">Happens-before</h1>
+<div class="post-meta">chapter 01 &middot; ~13 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Module 01 chapter 20 showed cores disagreeing about the order of two writes. But you program a language, and between you and the CPU sits a second reorderer: the compiler. The <strong>language memory model</strong> is the combined promise of both, and its currency is <strong>happens-before</strong>: program order within each thread, plus manufactured <strong>synchronizes-with</strong> edges across threads (release→acquire, unlock→lock, thread create/join, message send→receive). Race-free programs get sequential consistency back as a theorem (SC-for-DRF); racy ones get torn values, hoisted loads, invented stores, and values out of thin air. The rest of this module is edge manufacturing.</blockquote>
+<h2 id="1-two-models-stacked-the-machine-s-and-the-language-s">1. Two models, stacked: the machine's and the language's</h2>
+<p>Chapter 20 (module 01) gave you the <strong>hardware memory model</strong>: MESI guarantees one agreed truth per <em>location</em>, but store buffers let each core's loads run ahead of its own parked stores, and ARM/POWER reorder far more — a contract between an instruction stream and the silicon. Your C++ source is not an instruction stream: the compiler hoists loads, sinks stores, rematerializes values (module 10 chapter 02), all legal by <em>single-threaded</em> semantics. <strong>Two reorderers, stacked</strong> — compiler, then CPU — and what you observe is the composition. The <strong>language memory model</strong> (C++11, Rust, Java's JSR-133, Go) is one contract covering both, in three parts:</p>
+<ol>
+<li>A definition of <strong>happens-before</strong> — which cross-thread orderings are real.</li>
+<li>A definition of <strong>data race</strong> — two conflicting accesses (same location, at least one a write, at least one <em>ordinary</em> non-atomic) with no happens-before ordering between them.</li>
+<li>A verdict on races: <strong>undefined behavior</strong> in C++/Rust; <em>defined but weak</em> in Java (races get relaxed ordering).</li>
+</ol>
+<p>The payoff is the <strong>SC-for-DRF theorem</strong>: <em>if all your ordinary accesses are happens-before ordered — no races — every execution is indistinguishable from some sequential interleaving.</em> Race-free code gets the interleaving fiction back as a theorem (Adve–Hill 1990; JSR-133, 2004; C++11 followed). Racy code gets section 4.</p>
+<h2 id="2-deriving-happens-before-program-order-plus-manufactured-edges">2. Deriving happens-before: program order plus manufactured edges</h2>
+<p>You want to promise a reader: "the data is ready before the flag says so." Within one thread, order is free — <strong>program order</strong> is real. Across threads, nothing is ordered by default, so the model needs a way to import one thread's past into another's future: the <strong>synchronizes-with edge</strong>:</p>
+<ul>
+<li><strong>release-store → acquire-load</strong>: a <code>memory_order_release</code> store pairs with a <code>memory_order_acquire</code> load on the same variable <em>that reads the value written</em> — this read-from condition matters (section 3).</li>
+<li><strong>unlock(M) → lock(M)</strong>: a mutex is a pre-packaged release/acquire pair.</li>
+<li><strong>thread create / join</strong>: writes before create are visible to the newborn thread; its writes are visible after <code>join()</code> returns.</li>
+<li><strong>channel send → receive</strong> (Go, Rust <code>mpsc</code>, Erlang mailboxes): the payload and everything the sender did before sending.</li>
+</ul>
+<p><strong>Happens-before</strong> is the transitive closure of program order ∪ synchronizes-with: a partial order over all memory operations. Partial — some events remain unordered, and races can only live between those. The <strong>message-passing (MP) litmus test</strong> is the smallest program that needs this:</p>
+<pre><code>MESSAGE PASSING (MP):  T1: data=42; flag=1        T2: r1=flag; r2=data
+                       Q: can a reader end with r1==1 AND r2==0?
+
+  under relaxed ordering (NO edge manufactured):
+
+  T1   st data=42 --PO--&gt; st flag=1     stores may swap (store-store reorder)
+  T2   ld flag=1  --PO--&gt; ld data       loads may swap (load-load reorder)
+
+  time --&gt;   T1: [flag=1] [data=42]     either reorder alone yields
+             T2: [r1=1]   [r2=0]        (r1, r2) = (1, 0). ALLOWED.
+
+  under release/acquire (edge exists BECAUSE r1 read the released value):
+
+  T1   st data=42 --PO--&gt; st flag=1 (release)
+                              |
+                              |  synchronizes-with   (r1 read 1, the released value)
+                              v
+  T2   ld flag=1 (r1, acquire) --PO--&gt; ld data == 42, GUARANTEED
+       (write-read coherence: data=42 happens-before this load, so it
+        must observe 42)</code></pre>
+<p>The last line is the theorem working: a write that happens-before a read of the same variable is <em>the</em> write the read observes — the guarantee under every producer/consumer queue ever shipped.</p>
+<h2 id="3-the-ordering-menu-five-ways-to-manufacture-an-edge">3. The ordering menu: five ways to manufacture an edge</h2>
+<p>Every atomic operation does two jobs: the access, and optionally edge manufacturing. C++11 and Rust expose five flavors (Rust copied C++ verbatim: <code>Ordering::Relaxed/Acquire/Release/AcqRel/SeqCst</code>); Java's <code>volatile</code> is a <em>total-order</em> flavor, with <code>VarHandle</code> (JDK 9) adding the finer ones.</p>
+<div class="table-wrap"><table><thead><tr><th>ordering</th><th>on a store</th><th>on a load</th><th>edge manufactured</th></tr></thead><tbody><tr><td><code>relaxed</code></td><td>atomic only</td><td>atomic only</td><td>none</td></tr><tr><td><code>release</code></td><td>earlier ops can't sink below</td><td>—</td><td>paired with an acquire <strong>that reads it</strong></td></tr><tr><td><code>acquire</code></td><td>—</td><td>later ops can't hoist above</td><td>paired with the release it reads</td></tr><tr><td><code>acq_rel</code></td><td>both (RMW only, e.g. CAS)</td><td>both</td><td>whichever side reads</td></tr><tr><td><code>seq_cst</code></td><td>+ one global order</td><td>+ one global order</td><td>edges <strong>plus</strong> totality</td></tr></tbody></table></div>
+<p>Read it as a price list, priced against chapter 20's holes. On x86-64 (TSO), stores drain in order and loads respect loads, so release stores and acquire loads are a plain <code>mov</code> — free. TSO's one hole, <em>a load passing its own parked store</em>, is what <strong>store buffering (SB)</strong> exploits:</p>
+<pre><code>STORE BUFFERING (SB):  T1: x=1; r1=y        T2: y=1; r2=x
+                       Q: can (r1, r2) = (0, 0)?
+
+  each core's store parks in ITS store buffer; its own next load
+  passes it (different address -- the TSO hole, module 01 ch20):
+
+     core 0                          core 1
+     ------                          ------
+     [store buffer: x=1 ]            [store buffer: y=1 ]
+     r1 = load y == 0                r2 = load x == 0
+        ^-- y's only writer is          ^-- x's only writer is
+            parked in core 1's buffer      parked in core 0's buffer
+
+  time --&gt;   T1: st x=1 ....... ld y=0
+             T2: st y=1 ....... ld x=0
+
+  NO load reads the other thread's store =&gt; no synchronizes-with edge
+  in EITHER direction =&gt; no happens-before =&gt; both stale reads legal,
+  EVEN under release/acquire (each load reads the initial 0, not a
+  released value -- the read-from condition fails).</code></pre>
+<p>That is the trap in the menu: acquire/release edges are <em>conditional</em> — they materialize only when the acquire reads the released value. SB is the litmus where nobody reads anybody's store, so acq/rel buys nothing. Only <code>seq_cst</code> forbids (0,0): seq_cst operations also enter one <strong>total order S</strong> consistent with program order, and a two-line proof kills the outcome — whichever store is first in S, the other thread's load follows its own store, hence the first store, in S, and must read 1. On x86-64 that costs the locked op: a <code>seq_cst</code> store is <code>xchg</code> (or <code>mov + mfence</code>), draining the store buffer — ~10–20 ns uncontended (Intel Xeon, x86-64) versus release's free <code>mov</code>.</p>
+<p>When the menu item you want exceeds what the CPU gives free, the compiler drops in a <strong>fence</strong> — a standalone edge: <code>atomic_thread_fence(memory_order_seq_cst)</code> is <code>mfence</code> on x86-64, <code>dmb ish</code> on ARM64. At the MESI level (chapter 20's payoff): <code>mfence</code> stalls the core until its store buffer drains — every parked write becomes globally visible <em>before</em> any later load issues. One <code>mfence</code> between store and load in each SB thread fixes (0,0) with no total order at all — fences are the primitive the menu is built from.</p>
+<h2 id="4-what-a-data-race-actually-buys-you-sc-for-drf-negated">4. What a data race actually buys you: SC-for-DRF, negated</h2>
+<p>SC-for-DRF says race-free programs see interleavings. The contrapositive is where folklore dies: a race is not "maybe a stale value" — it exits the contract, and the two reorderers may do things no interleaving of your source ever does:</p>
+<ul>
+<li><strong>Torn reads.</strong> A 64-bit <code>long</code>/<code>double</code> written by one thread and read without an edge can appear as two 32-bit halves from <em>different</em> writes — Java spells this out (JLS 17.7); C++ is worse by decree (UB): the compiler may split a 64-bit store even on 64-bit hardware.</li>
+<li><strong>Hoisted loads.</strong> <code>while (!stop) {}</code> with a plain <code>bool stop</code> written by another thread: single-threaded analysis sees no write to <code>stop</code>, so the compiler hoists the load out and you spin forever at <code>-O2</code> — the write happens, your core snoops it, but your <em>register</em> never asks.</li>
+<li><strong>Invented stores.</strong> Take <code>if (flag) x = 2; else x = 1;</code> with a racy <code>flag</code>. The optimizer may rewrite it as <code>x = 2; if (!flag) x = 1;</code> — legal single-threaded (same final value either way) — and a racy reader can now observe <code>x == 2</code> while <code>flag == 0</code>: a state your source never produced.</li>
+<li><strong>Out-of-thin-air values.</strong> The load-buffering litmus — <code>r1 = x; y = r1</code> on one thread, <code>r2 = y; x = r2</code> on the other, <code>x = y = 1</code> initially — could in principle yield <code>r1 = r2 = 0</code>: no write of 0 ever exists, yet a speculative machine could let each read "predict" the other's write and fulfill itself. Java's JSR-133 added causality rules to forbid it; they proved either too strong (outlawing real optimizations) or vacuous (the 2018 "out-of-thin-air execution is vacuous" result), and C++11 declined to try — <strong>unfixable in full generality to this day</strong>. Which is why "the benign data race" is a lie: a read you call benign (a stale log value!) is, to the compiler, a read it may hoist, cache, or feed to a transform like the invented store above.</li>
+</ul>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>SB is the litmus acq/rel cannot touch</strong>, hence the shibboleth for "when is seq_cst actually needed": two-sided handshakes (Dekker, Peterson, anything "both sides flag then check") and multi-variable invariants needing one global order. Reference counting, SPSC queues, RCU — acq/rel or weaker. When someone proposes seq_cst "for safety," ask which total order correctness depends on; no answer means acq/rel plus maybe one fence.</li>
+<li><strong>Java's <code>volatile</code> is stronger than acquire/release</strong> — it's SC: one total order over all volatile accesses, so Java forbids SB's (0,0) where C++ needs <code>seq_cst</code>. The fine-grained modes arrived only in JDK 9's <code>VarHandle</code> (<code>plain/opaque/acquire/release/volatile</code>) — why pre-9 Java concurrency code reads as barrier-paranoid.</li>
+<li><strong>Out-of-thin-air is the bug that never dies.</strong> Java's JMM forbids it, C++11 waved it through, and the 2018 vacuity result says the prohibition is unenforceable in general — implementations just don't do value prediction <em>yet</em>.</li>
+<li><strong>TSan is a happens-before checker, not a scheduler.</strong> Per-thread vector clocks (one epoch per thread) shadow every access; mutex and atomic operations propagate epochs; a race is two conflicting accesses with no HB path — neither clock dominates the other. Cost ~5–15x (module 03 ch05), and it only sees interleavings that actually execute.</li>
+<li><strong>The litmus culture has tooling: <code>herd7</code>/<code>litmus7</code>.</strong> The test is a ~15-line <code>.litmus</code> file, the model a <code>.cat</code> file (Alglave/Maranget herdtools7), and the checker enumerates allowed outcomes — how LKMM and ARMv8-A's model were validated. <code>litmus7</code> on hardware generates exactly the harness the lab below builds: pinned threads, a start flag, one body per round.</li>
+<li><strong>A (0,0) you can't reproduce is a harness problem, not a model problem.</strong> The window is the store-buffer drain — tens of nanoseconds. Thread creation per round, barrier wakeups (µs apart), or vCPUs as SMT siblings can all serialize the bodies so (0,0) never fires. Real harnesses pin threads, spin on a start flag, and run 10^6+ rounds; expect 1-in-10^4 to 1-in-10^6 hit rates on x86-64.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>The store-buffering litmus test, both orderings, on Linux (g++ 14.2.0-19, x86-64, 2-vCPU Intel Xeon VM; any C++11 compiler and 2 CPUs work). The ordering is a template parameter, not a runtime argument — a runtime-selected <code>memory_order</code> makes GCC emit the locked <code>xchg</code> for <em>every</em> store (verified on GCC 14.2.0, x86-64):</p>
+<pre><code class="language-cpp">// sb.cpp -- store-buffering litmus test (M09 ch01 lab)
+// usage: ./sb &lt;relaxed|acqrel|seqcst&gt; [iterations]
+#include &lt;atomic&gt;
+#include &lt;thread&gt;
+#include &lt;cstdio&gt;
+#include &lt;cstdlib&gt;
+#include &lt;cstring&gt;
+#include &lt;sched.h&gt;
+
+std::atomic&lt;long&gt; x{0}, y{0};       // the two litmus locations
+long r1, r2;                        // one private result slot per thread
+std::atomic&lt;long&gt; start{0}, done{0};// round plumbing (release/acquire pairs)
+
+void pin(int cpu) {
+    cpu_set_t s; CPU_ZERO(&amp;s); CPU_SET(cpu, &amp;s);
+    sched_setaffinity(0, sizeof s, &amp;s);
+}
+
+template &lt;int M&gt; struct Mo {        // ordering resolved at COMPILE time
+    static const std::memory_order st = M==1 ? std::memory_order_release
+                                 : M==2 ? std::memory_order_seq_cst
+                                        : std::memory_order_relaxed;
+    static const std::memory_order ld = M==1 ? std::memory_order_acquire
+                                 : M==2 ? std::memory_order_seq_cst
+                                        : std::memory_order_relaxed;
+};
+
+template &lt;int M&gt; void worker() {    // pinned to CPU 1
+    pin(1);
+    for (long r = 1;; r++) {
+        while (start.load(std::memory_order_acquire) != r) ; // parked
+        y.store(1, Mo&lt;M&gt;::st);                     // THE store
+        r2 = x.load(Mo&lt;M&gt;::ld);                    // THE load
+        done.store(r, std::memory_order_release);  // hand result to main
+    }
+}
+
+template &lt;int M&gt; void run(long iters) {
+    std::thread w(worker&lt;M&gt;);
+    pin(0);                         // main owns CPU 0, worker owns CPU 1
+    long c00 = 0, c10 = 0, c01 = 0, c11 = 0;
+    for (long r = 1; r &lt;= iters; r++) {
+        x = 0; y = 0; r1 = -1; r2 = -1;            // reset; visibility via
+        start.store(r, std::memory_order_release); // start's release (plumbing)
+        x.store(1, Mo&lt;M&gt;::st);                     // THE store (main's body)
+        r1 = y.load(Mo&lt;M&gt;::ld);                    // THE load
+        while (done.load(std::memory_order_acquire) != r) ;
+        if      (r1 == 0 &amp;&amp; r2 == 0) c00++;        // both stale: reorder won
+        else if (r1 == 0 &amp;&amp; r2 == 1) c01++;
+        else if (r1 == 1 &amp;&amp; r2 == 0) c10++;
+        else                         c11++;
+    }
+    w.detach();
+    std::printf("%-7s (r1,r2) = (0,0): %7ld  (1,0): %7ld  (0,1): %7ld  (1,1): %7ld  / %ld\n",
+                M==0 ? "relaxed" : M==1 ? "acqrel" : "seqcst", c00, c10, c01, c11, iters);
+}
+
+int main(int argc, char **argv) {
+    const char *mode = (argc &gt; 1) ? argv[1] : "relaxed";
+    long iters = (argc &gt; 2) ? atol(argv[2]) : 1000000;
+    if      (!strcmp(mode, "acqrel")) run&lt;1&gt;(iters);
+    else if (!strcmp(mode, "seqcst")) run&lt;2&gt;(iters);
+    else                              run&lt;0&gt;(iters);
+    return 0;
+}</code></pre>
+<pre><code class="language-console">$ g++ -O2 -std=c++11 -pthread -o sb sb.cpp
+$ ./sb relaxed 3000000
+relaxed (r1,r2) = (0,0):      41  (1,0):       2  (0,1): 2997204  (1,1):    2753  / 3000000
+$ ./sb acqrel 3000000
+acqrel  (r1,r2) = (0,0):      40  (1,0):       0  (0,1): 2999627  (1,1):     333  / 3000000
+$ ./sb seqcst 3000000
+seqcst  (r1,r2) = (0,0):       0  (1,0):  903815  (0,1): 2090571  (1,1):    5614  / 3000000</code></pre>
+<p>Predict before running — the module's discipline. <code>relaxed</code>: all four outcomes allowed. <code>acqrel</code>: still all four (the edge needs a load that <em>reads</em> the released value). <code>seqcst</code>: three — the total order forbids (0,0). The numbers agree: <code>relaxed</code> and <code>acqrel</code> both hit (0,0), once per ~75,000 rounds here (your rate will differ: the window is tens of ns); <code>seqcst</code> hits it zero times in 3,000,000. The lopsided (0,1) majority is the harness — main flips the start flag, so it runs ~100 ns ahead of the worker. And <code>objdump -d sb</code> closes the loop with chapter 20: <code>worker&lt;0&gt;</code> and <code>worker&lt;1&gt;</code> show <code>movq $0x1, y</code> (plain stores), <code>worker&lt;2&gt;</code> shows <code>xchg %rax, y</code> (locked) — free, free, and a store-buffer drain, section 3's price list in instructions.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Diagnosing "impossible" bug reports.</strong> A log line shows a value your source never stores, or a worker ignores shutdown: ask which two accesses raced, and whether UB licensed the compiler to hoist, cache, or invent — the transforms in section 4 are the first suspects.</li>
+<li><strong>Choosing orderings by cost.</strong> Counter increments: <code>relaxed</code> RMW. Publishing a pointer plus payload: <code>release</code> store / <code>acquire</code> load. Anything shaped like Dekker: <code>seq_cst</code> or a fence. On x86-64: free, free, or ~10–20 ns.</li>
+<li><strong>Reading lock-free code (chapter 03's prerequisite).</strong> "Release on push, acquire on pop" stops being folklore: you can point at the exact edge each side manufactures and the read-from condition that makes it real.</li>
+<li><strong>Interview-grade answers.</strong> "Why does double-checked locking need acquire semantics?" and "why is my queue correct but my flag handshake not?" both reduce to: which edges exist, and did the load actually read the store.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 chapter 20</strong> — the layer underneath: TSO's load-passes-store hole is SB's (0,0); <code>mfence</code>/<code>xchg</code> are store-buffer drains; ARM's wider reordering is why the menu is priced per platform.</li>
+<li><strong>Module 03 chapter 03</strong> — the race family as a bug class; this chapter is the formal definition those bugs violate.</li>
+<li><strong>Module 03 chapter 05</strong> — TSan's vector-clock machinery: the HB checker described above, its ~5–15x cost and schedule-dependence.</li>
+<li><strong>Module 09 chapter 02</strong> — locks as pre-packaged release/acquire edges.</li>
+<li><strong>Module 09 chapter 03</strong> — lock-free lives on this menu: release-on-push/acquire-on-pop, and reclamation as an edge-manufacturing problem (hazard pointers, epochs, RCU).</li>
+<li><strong>Module 09 chapter 04</strong> — channels as the architect's edge: send→receive is synchronizes-with with ownership transfer bolted on.</li>
+<li><strong>Module 09 chapter 05</strong> — Lamport clocks: happens-before exported to a world with no shared bus.</li>
+<li><strong>Module 10 chapter 02</strong> — the compiler's reorderings (SROA, DSE, hoisting) that make a language model necessary: the second reorderer.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Name the two reorderers a language memory model must constrain, and why "the CPU is weak" never sufficed as an explanation of reordering bugs in single-source programs.</li>
+</ol>
+<ol>
+<li><strong>Predict the output.</strong> T1: <code>data.store(42, relaxed); flag.store(1, release);</code>  T2: <code>while (flag.load(relaxed) == 0); r2 = data.load(relaxed);</code> (both atomics). Which values can <code>r2</code> take, and why does the release store not save it?</li>
+</ol>
+<ol>
+<li><strong>Predict the codegen (chapter 20 connection).</strong> On x86-64 with <code>g++ -O2</code>, what implements (a) a <code>release</code> store, (b) an <code>acquire</code> load, (c) a <code>seq_cst</code> store? Which one pays, and for what, at the microarchitectural level?</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis.</strong> <code>while (!stop) {}</code> with plain <code>bool stop</code>, written by another thread, hangs forever at <code>g++ -O2</code>. Which reorderer, what transform, why is it legal, and the minimal fix?</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis.</strong> Thread 1 racy-writes plain <code>int flag</code>; thread 2 runs <code>if (flag) x = 2; else x = 1;</code>, and the optimizer rewrites it as <code>x = 2; if (!flag) x = 1;</code>. What observation becomes possible that was impossible in the source, and what licenses the transform?</li>
+</ol>
+<ol>
+<li><strong>Bug diagnosis (the lab).</strong> A colleague runs the chapter's lab, sees <code>(0,0)</code> under <code>acqrel</code>, and concludes the release store is "broken" or the compiler miscompiled. Refute both with one rule about when synchronizes-with edges materialize.</li>
+</ol>
+<ol>
+<li><strong>Concept, the catalog.</strong> Which create a synchronizes-with edge? (a) unlock(M) then a later lock(M); (b) writes before pthread_create, reads in the new thread; (c) a relaxed load that reads a relaxed store; (d) writes of a joined thread, reads after join; (e) a release-store read by an acquire-load; (f) thread A writes two <em>different</em> variables, thread B reads them in the opposite order.</li>
+</ol>
+<ol>
+<li><strong>Cross-module (module 03 ch05).</strong> TSan reports a race between two accesses you believe are separated by a fence. In vector-clock terms, what did it compute to decide "no happens-before" — and why can it miss races another schedule would expose?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The compiler and the CPU.</strong> The compiler reorders source under single-threaded legality; the CPU reorders instructions under its own contract. The language model is one promise covering the composition — which is why a bug can reproduce at <code>-O2</code> but not <code>-O0</code> (compiler layer) or on ARM but not x86-64 (hardware layer); "the machine is weak" explains at most half.</li>
+</ol>
+<ol>
+<li><strong>0 or 42 — both possible.</strong> The release store's edge needs an <em>acquire</em> (or seq_cst) load that reads the released value. The flag load is <code>relaxed</code>, so no edge exists and write-read coherence never applies — the data load may run before 42 is visible to it. <code>flag.load(acquire)</code> guarantees 42.</li>
+</ol>
+<ol>
+<li><strong>(a) plain <code>mov</code>; (b) plain <code>mov</code>; (c) <code>xchg</code> (or <code>mov + mfence</code>).</strong> TSO already forbids the reorderings release/acquire constrain, so they are free. The seq_cst store pays for the <em>total order</em>: TSO still lets a load pass a parked store (SB), so the locked <code>xchg</code> drains the store buffer — 10–20 ns uncontended on this Xeon part.</li>
+</ol>
+<ol>
+<li><strong>The compiler; the load was hoisted out of the loop.</strong> Single-threaded analysis sees no write to <code>stop</code> between iterations, so reading it once is equivalent — legal <em>unless</em> another thread writes it, which plain <code>bool</code> lets the compiler assume (the race is UB). The core would snoop the write; the hoisted register never asks. Fix: <code>std::atomic&lt;bool&gt; stop</code> with <code>load(acquire)</code> (or <code>relaxed</code>, if only the exit flag travels).</li>
+</ol>
+<ol>
+<li><strong>A racy reader can observe <code>x == 2</code> while <code>flag == 0</code>.</strong> In the source, <code>x == 2</code> occurs only when the flag is set; after the transform, the store of 2 happens unconditionally and is repaired only if the flag is clear. Licensed because single-threaded semantics are identical (same final <code>x</code> either way), and the race is UB — no concurrent observer may be assumed.</li>
+</ol>
+<ol>
+<li><strong>The read-from rule: the edge materializes only when the acquire load reads the value written by the release store.</strong> In SB, each thread's load reads the <em>initial</em> 0, not the other thread's released 1, so no edge exists — (0,0) is a legal execution of correct code. Only seq_cst's total order (or a fence between store and load per thread) forbids it.</li>
+</ol>
+<ol>
+<li><strong>(a), (b), (d), (e) — yes.</strong> (c) no: relaxed-reads-relaxed creates no edge (atomicity is not ordering — the quiz-2 trap in reverse). (f) is not an edge question: two writes to different variables read in reverse is a coherence/total-order question — forbidden under SC/seq_cst, allowed under relaxed, and no single edge forbids it.</li>
+</ol>
+<ol>
+<li><strong>TSan keeps a vector clock per thread; every intercepted sync op — mutex release, release-store, acquire-load — advances the actor's clock and merges the partner's.</strong> Accesses race iff neither clock dominates: no happens-before path was built. It misses races because clocks record only edges the <em>executed schedule</em> created — a schedule that never ran builds no history (why module 03 ch05 pairs TSan with load generators).</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 09 — Concurrency &amp; distributed memory</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

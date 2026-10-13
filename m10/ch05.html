@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ABI &amp; layout decisions — deep-roots</title>
+<meta name="description" content="Chapter 05 of module 10: ABI &amp; layout decisions">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="ABI &amp; layout decisions — deep-roots">
+<meta property="og:description" content="Chapter 05 of module 10: ABI &amp; layout decisions">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="ABI &amp; layout decisions — deep-roots">
+<meta name="twitter:description" content="Chapter 05 of module 10: ABI &amp; layout decisions">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 10 &middot; where memory models are manufactured</div>
+<h1 class="post-title">ABI &amp; layout decisions</h1>
+<div class="post-meta">chapter 05 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A compiler can invent anything <em>inside</em> one translation unit — but the moment two of its outputs must link, or C++ must call Rust, the contract begins. That contract is the ABI: how names are spelled for the linker (mangling), where arguments go (calling conventions — System V AMD64's 6 integer + 8 SSE registers), and where bytes sit in an object (struct and vtable layout). It explains why <code>extern "C"</code> exists (the C ABI is the one contract everyone implements), why C++ compilers never reorder struct fields while Rust does it by default (a promise, versus no promise), and why every cross-language call costs 10–100× a native one.</blockquote>
+<h2 id="the-boundary-problem-what-two-compilers-must-agree-on">The boundary problem: what two compilers must agree on</h2>
+<p>Link two object files — or two languages — and the compiler's four private decisions (symbol spelling, argument placement, struct field offsets, return path) become contracts. C++ needs more identity than the linker's flat namespace: overloads (<code>abs(int)</code> vs <code>abs(long)</code>), namespaces, templates (<code>Conn&lt;int&gt;</code> vs <code>Conn&lt;double&gt;</code>), CV-qualification (<code>f() const</code> vs <code>f()</code>). Distinct declarations must become distinct strings — <strong>name mangling</strong> is that reversible encoding, and the Itanium C++ ABI is the grammar Linux and macOS compilers use. From the <em>emitter's</em> side: encode just enough declarative identity that no two declarations collide.</p>
+<pre><code class="language-text">_Z                     start
+N  3net  4Conn  I i E  4send  E     nested name: "net"(3), "Conn"(4),
+                                     template args &lt;int&gt;, "send"(4)
+l                      parameter: long
+                       =&gt; _ZN3net4ConnIiE4sendEl   (nm, g++ 14.2.0)</code></pre>
+<p>Identifiers are length-prefixed (<code>7Derived</code>); template args sit in <code>I...E</code>; types are letters (<code>i</code> int, <code>l</code> long, <code>m</code> unsigned long, <code>d</code> double) with prefixes <code>P</code> pointer, <code>R</code> reference, <code>K</code> const, <code>V</code> volatile; a const member function inserts <code>K</code> after the <code>N</code> (<code>_ZNK...</code>). CV-qualifiers must appear too — <code>cache::sendLH(const volatile unsigned long*, char*)</code> mangles to <code>_ZN5cache6sendLHEPVKmPc</code> so it cannot collide with its unqualified twin. Special names extend the scheme: <code>_ZTV</code> vtable for, <code>_ZTI</code> typeinfo for, <code>_ZTS</code> typeinfo name for, <code>_ZTT</code> VTT. MSVC encodes the same identity differently: leading <code>?</code>, <code>@</code>-terminated scope components read inside-out (<code>?draw@Shape@@...</code>), letter codes for access, convention and types (<code>H</code> int, <code>N</code> double), trailing <code>@Z</code> — undecodable by <code>c++filt</code> (undecoding is <code>undname.exe</code>'s job). Either way: <strong>mangling is a load-bearing promise.</strong> GCC, Clang and ICC all speak Itanium on Linux, which is the only reason clang-built objects link against libstdc++.</p>
+<p><strong><code>extern "C"</code> is the escape hatch</strong> because the C contract is small enough to implement in a weekend and frozen by each platform's psABI forever: symbols are names, arguments follow the register table, structs are flat memory, results return in <code>rax</code>/<code>rdx</code>. Every FFI — cgo, JNI, ctypes, C#, Zig — targets it. The C ABI is the lingua franca of language boundaries: nobody's favorite, everybody's second.</p>
+<h2 id="calling-conventions-the-argument-placement-contract">Calling conventions: the argument placement contract</h2>
+<p>Registers are free; stack slots are a store plus a load; somebody must pick which registers survive calls (chapter 03's callee-vs-caller-saved decision). The ABI decides, once, for every compiler.</p>
+<p><strong>System V AMD64</strong> (Linux, macOS, psABI §3.2):</p>
+<pre><code class="language-text">  classify each argument in 8-byte chunks: INTEGER (int/pointer bits)
+  or SSE (float/double bits):
+
+  f(int, double, long)          -&gt;   edi, xmm0, rsi
+  f(struct {double d; long n;}) -&gt;   xmm0, rdi      &lt;- one arg, two banks</code></pre>
+<ul>
+<li>First 6 INTEGER chunks → <code>rdi, rsi, rdx, rcx, r8, r9</code>; first 8 SSE chunks → <code>xmm0</code>–<code>xmm7</code>; the banks fill independently. This is the <strong>first-8-bytes-in-register classification</strong>: a ≤16-byte struct is not a blob — each 8-byte half is classified and placed separately, so <code>{double d; long n;}</code> arrives <em>split across two register banks</em> (lab A). Over 16 bytes, or a mixed chunk, drops the whole argument to the stack.</li>
+<li>The 7th integer argument is the first to pay stack traffic — the lab shows <code>1..4</code> in <code>edi/esi/edx/ecx</code>, <code>5,6</code> in <code>r8/r9</code>, and <code>7</code> as a <code>push</code> (stack args start at <code>[rsp+8]</code> on entry).</li>
+<li>Returns ≤16 bytes: same classification, <code>rax</code> (plus <code>rdx</code> or <code>xmm0</code>/<code>xmm1</code>); &gt;16 bytes: the caller passes a hidden pointer as the <em>first</em> argument in <code>rdi</code>, the callee writes there and returns the address in <code>rax</code>.</li>
+<li>The caller keeps <code>rsp</code> 16-byte aligned at each <code>call</code> (entry then sees <code>rsp % 16 == 8</code>), so callees can spill XMM registers with aligned <code>movaps</code> (32-byte if <code>__m256</code> is on the stack).</li>
+</ul>
+<p><strong>ARM64 (AAPCS64)</strong> turns the dial toward uniformity: first 8 integer/pointer arguments in <code>x0</code>–<code>x7</code>, floats in <code>v0</code>–<code>v7</code>, pure-float aggregates (HFAs) in the <code>v</code> bank, and no SysV-style re-banking of mixed small structs — composites ≤16 bytes ride <code>x</code>-register pairs. One table, fewer surprises, less cleverness.</p>
+<p><strong>Go turned the dial twice.</strong> ABI0 passed everything on the stack — stable, hand-assemblable, GC-friendly (stack maps of slots, not registers) — at the price of memory writes per call even for two arguments. Go 1.17 (August 2021) switched to <strong>ABIInternal</strong> with register passing (9 integer + 15 floating registers on amd64), reported ~5% whole-program improvement, more in call-heavy code. Go now carries <em>two named ABIs</em> with compiler-generated wrappers between them: an ABI switch is a compat project, not a patch.</p>
+<h2 id="the-c-abi-vtables-from-the-emitter-s-side">The C++ ABI: vtables from the emitter's side</h2>
+<p>Module 01 ch06 showed the vtable as a memory fact; emitting one, the Itanium ABI §5.2.2 fixes it exactly — offset-to-top, typeinfo, one slot per virtual in declaration order — and the vptr points 16 bytes in, at the first virtual slot (the <strong>address point</strong>):</p>
+<pre><code class="language-text">  _ZTV7Derived  @ 0x403d90  in .data.rel.ro, 32 bytes   (g++ 14.2.0, Linux x86-64)
+
+  symbol 0x403d90   +0x00  00 00 00 00 00 00 00 00   offset-to-top = 0
+                    +0x08  d0 3d 40 00 00 00 00 00   typeinfo = 0x403dd0 = _ZTI7Derived
+  address point --&gt; +0x10  4c 11 40 00 00 00 00 00   slot 0   = 0x40114c = _ZN7Derived1fEi
+                    +0x18  60 11 40 00 00 00 00 00   slot 1   = 0x401160 = _ZN7Derived1gEv
+                             ^-- every Derived object's vptr = 0x403da0 = symbol + 0x10</code></pre>
+<p><strong>Construction vtables and the VTT.</strong> While <code>B::B()</code> runs on a <code>D</code>-most object, the dynamic type <em>is</em> <code>B</code> — virtual calls inside the constructor must hit <code>B</code>'s versions, not <code>D</code>'s overrides. So before each base constructor body runs, the compiler installs a <strong>construction vtable</strong> — a B-view table pointing at <code>B</code>'s functions — and swaps in <code>D</code>'s vtable when the most-derived body starts. Virtual inheritance makes it hard: the shared <code>A</code> subobject's offset varies by most-derived type, so <code>this</code>-adjustments cannot be baked in. The <strong>VTT</strong> — a table of construction vtables plus secondary pointers, 56 bytes = 7 slots for the lab's diamond <code>D</code>, symbol <code>_ZTT1D</code> — is passed as a <em>hidden extra constructor argument</em> so each base finds the right table for this most-derived type.</p>
+<p><strong>Thunks.</strong> Covariant returns break the slot's promise: <code>D* D::clone()</code> overrides <code>A* A::clone()</code>, but a caller through <code>A</code>'s vtable expects an <code>A*</code> to the <code>A</code> subobject. The slot holds a <strong>thunk</strong> — instructions adjusting <code>this</code> on entry and the returned pointer on exit. Real symbol: <code>_ZTch0_h16_N1D5cloneEv</code>, "covariant return thunk to <code>D::clone()</code>" — <code>h0</code> = no this adjustment, <code>h16</code> = add 16 to the result: exactly the <code>C</code>-in-<code>D</code> offset (measured: C at +16). Virtual inheritance: the adjustment is not constant — <code>v0_n24</code> encodes "fetch it from the vtable," because the shared base moves.</p>
+<p><strong>The freeze.</strong> Mangling, vtable shape, construction vtables, thunks — all of it is why a g++-built <code>.so</code> links with clang++-built code, and that interop is purchased with permanence: <strong>the ABI is the layout, the layout is the promise.</strong> <code>std::string</code>'s 32-byte libstdc++ layout and every exported struct's field order can never change, because someone compiled against today's offsets. Field reordering is off the table in C++ — the compiler <em>knows</em> <code>{char, long, char}</code> would be 12 bytes rearranged, and may not do it. <strong>Rust chose the other side</strong>: no compiler links against another rustc's field layout, so <code>repr(Rust)</code> promises nothing — rustc reorders fields to minimize padding (<code>{u8, u16, u8}</code> → 4 bytes vs 6). <code>repr(C)</code> exists for exactly one reason: to opt into C layout when a struct must cross a boundary.</p>
+<h2 id="layout-flags-pragma-pack-and-bitfields">Layout flags: <code>#pragma pack</code> and bitfields</h2>
+<p><code>#pragma pack(1)</code> / <code>__attribute__((packed))</code> strips padding — a 24-byte <code>{char; long; char}</code> becomes 16, a wire header 24 → 14. On x86-64 it is <em>legal</em> (unaligned loads are allowed) and the cost is where bytes fall relative to a cache line:</p>
+<pre><code class="language-text">  packed struct, 8-byte field `x` at an odd offset:
+
+  |&lt;----------------- 64-byte cache line ------------&gt;|&lt;-- next line --|
+  ... [tag] [x0 x1 x2 x3 x4] | x5 x6 x7] ...
+                           ^
+    the load of `x` touches TWO lines: 2 L1 accesses. Measured on this
+    Xeon: 1.4x per load when every access splits (lab B). A 4 KiB page
+    split is ~100+ cycles; a `lock`ed access on a split address is a bus
+    lock (~1000 cycles, or a #AC split-lock fault on Ice Lake+); several
+    non-x86 ISAs trap outright.</code></pre>
+<p>The nastier property is social: <strong>packing is not part of the type system.</strong> Two TUs including the same header, one built with <code>-fpack-struct</code> — link cleanly and disagree about every offset past the first padding site: silent corruption, no diagnostic (quiz 6). Bitfields are the sibling: allocation is <em>implementation-defined</em>; the SysV psABI pins C bitfields on Linux (LSB-first, no crossing the storage unit), MSVC differs — why portable wire formats and Linux UAPI headers avoid bitfields.</p>
+<h2 id="the-cross-language-ffi-tax">The cross-language FFI tax</h2>
+<p>An FFI call looks like one call and is a small expedition: ctypes converts Python <code>int</code> objects into C <code>int</code>s and back; cgo switches the goroutine from its small <em>movable</em> stack to the fixed system stack <code>g0</code> and pins it in a system call so the GC will not move the stack mid-call; JNI pins or copies reference arguments against a moving GC. Cluster the costs: <strong>stack switches, pinning, marshalling copies</strong> — the call itself is the cheap part. Lab C measures the tax: 342 ns per trivial ctypes call vs 0.6–0.8 ns pipelined native and 53 ns for a pure-Python call — the boundary costs more than the interpreter that made it. Hence FFI rule #1: <em>batch across the boundary</em> — one call doing 1,000 units of work beats 1,000 calls doing one unit.</p>
+<p><strong>COM is the historical coda.</strong> It ran on one ABI fact: an interface is a pointer to a pointer to an array of function pointers — <code>IUnknown</code> = <code>QueryInterface</code>, <code>AddRef</code>, <code>Release</code> in slots 0–2, fixed convention; no mangling (interfaces are GUIDs), no layout beyond "first 4 bytes are the vtable pointer." That minimal contract let C, C++, VB, Delphi and script interoperate in the 1990s — a vtable-only ABI, the same object module 04 recovers from stripped binaries, seen from the emitter's side. The smaller the ABI, the more languages meet under it.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The 6+8 rule is the whole SysV argument story:</strong> 6 integer registers (<code>rdi, rsi, rdx, rcx, r8, r9</code>) and 8 SSE (<code>xmm0</code>–<code>xmm7</code>), filled independently per 8-byte chunk. The 7th integer argument is the first to pay stack traffic — 7 args is the threshold, not 9.</li>
+<li><strong>First-8-bytes classification means small structs split and big ones fall:</strong> <code>{double; long}</code> arrives half in <code>xmm0</code>, half in <code>rdi</code>; past 16 bytes the whole argument drops to the stack. Returns ≤16 bytes in <code>rax:rdx</code>/<code>xmm0:xmm1</code>; larger via a hidden <code>rdi</code> pointer returned in <code>rax</code>.</li>
+<li><strong>Why <code>repr(C)</code> exists:</strong> <code>repr(Rust)</code> makes no layout promise — rustc reorders fields to kill padding, possibly differently between releases; <code>repr(C)</code> is the opt-in to C layout for FFI and wire formats. C++ has no such switch: Itanium interop makes field order a permanent public promise — C++ structs carry their padding forever, Rust's shrink.</li>
+<li><strong>The ctypes number to quote is ~100× a native call, and worse for trivial functions:</strong> measured 342–441 ns per call (CPython 3.12.15, this Xeon) vs 0.6–0.8 ns pipelined C→PLT and 53 ns pure-Python — the boundary costs more than staying in the interpreter. cgo and JNI charge the same order (tens to ~200 ns, version-dependent), for the same three reasons.</li>
+<li><strong>Construction vtables exist because the dynamic type changes during construction:</strong> while <code>B::B()</code> runs, virtual calls must hit <code>B</code>'s slots, so the vptr temporarily points at a B-view construction vtable fetched via the VTT (hidden constructor argument) — virtual calls inside constructors "ignoring" overrides is the rule, not a bug.</li>
+<li><strong>The address point and <code>offset-to-top</code> are forensic fingerprints:</strong> the vptr points 16 bytes <em>into</em> <code>_ZTV...</code>, the typeinfo's first slot is itself a vptr into libstdc++'s typeinfo class (relocated at load, then RELRO), and <code>_ZTS</code> strings ("7Derived") outlive stripping — module 04 ch04's raw material.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>All labs ran on Linux x86-64 (Intel Xeon, family 6), g++ 14.2.0 (Debian), binutils 2.44, CPython 3.12.15.</p>
+<p><strong>Lab A — emit a vtable and verify the Itanium layout by hand.</strong> (No gdb on this box; <code>objdump</code>+<code>nm</code> do the job — the gdb equivalent is <code>x/4gx &amp;_ZTV7Derived</code>.)</p>
+<pre><code class="language-cpp">// vcheck.cc
+#include &lt;cstdio&gt;
+struct Base    { virtual int f(int); virtual double g(); };
+struct Derived : Base { int f(int) override; double g() override; };
+int    Base::f(int x)    { return x + 1; }  double Base::g()    { return 1.5; }
+int    Derived::f(int x) { return x + 2; }  double Derived::g() { return 2.5; }
+int main() {
+    Derived d;
+    unsigned long* vptr = *(unsigned long**)&amp;d;   // first 8 bytes of the object
+    printf("sizeof(Derived) = %zu\n", sizeof d);
+    printf("vptr = %p  [-2]=%ld  [-1]=%p  [0]=%p  [1]=%p\n",
+           (void*)vptr, (long)vptr[-2], (void*)vptr[-1],
+           (void*)vptr[0], (void*)vptr[1]);
+}</code></pre>
+<pre><code class="language-text">$ g++ -O0 -no-pie -std=c++17 vcheck.cc -o vcheck &amp;&amp; ./vcheck
+sizeof(Derived) = 8
+vptr = 0x403da0  [-2]=0  [-1]=0x403dd0  [0]=0x40114c  [1]=0x401160
+$ nm vcheck | rg "_ZTV7Derived|_ZTI7Derived|_ZN7Derived"
+000000000040114c T _ZN7Derived1fEi
+0000000000401160 T _ZN7Derived1gEv
+0000000000403dd0 V _ZTI7Derived
+0000000000403d90 V _ZTV7Derived
+$ objdump -s -j .data.rel.ro vcheck
+ 403d90 00000000 00000000 d03d4000 00000000  .........&gt;@.....
+ 403da0 4c114000 00000000 60114000 00000000  L.@.....`.@.....</code></pre>
+<p>Verify against the spec's rules, by hand: (1) vptr 0x403da0 − symbol 0x403d90 = 0x10 — the address point skips offset-to-top and typeinfo. (2) <code>vptr[-2]</code> = 0 = offset-to-top, correct for a primary base at offset 0. (3) <code>vptr[-1]</code> = <code>_ZTI7Derived</code> from <code>nm</code> ✓. (4) Slots hold <code>_ZN7Derived1fEi</code> (0x40114c) then <code>_ZN7Derived1gEv</code> (0x401160) — <em>declaration order</em>. (5) <code>sizeof(Derived)</code> = 8: two virtuals, zero per-object cost. Bonus: <code>fm(Mix{double d; long n;}, int)</code> compiles to <code>movq %rdx,%xmm0; mov %rax,%rdi</code> — one struct, two register banks.</p>
+<p><strong>Lab B — pay the misalignment tax, measured.</strong> Same 64-byte stride, one 8-byte load per iteration; the only variable is whether the load splits a cache line:</p>
+<pre><code class="language-c">/* pack3.c (abridged: two timed loops over data[64*i + 8] vs data[64*i + 60]) */
+$ gcc -O2 pack3.c -o pack3 &amp;&amp; ./pack3
+aligned (+8 , no line split) : 0.059 s  (2.96 ns/load)  sink=0
+packed  (+60, splits line)   : 0.084 s  (4.21 ns/load)  sink=0
+slowdown: 1.42x</code></pre>
+<p>Every "packed" load touches two cache lines: +1.25 ns each, 1.42× — on hardware famous for tolerating misalignment. The tax is real exactly when access is latency- or line-bound, which is why "packed is free on x86" folklore is simultaneously true and wrong.</p>
+<p><strong>Lab C — the ctypes boundary vs its C twin.</strong></p>
+<pre><code class="language-text">$ gcc -O2 -fPIC -shared nativelib.c -o libnativelib.so    # int add2(int,int)
+$ gcc -O2 native.c -L. -lnativelib -Wl,-rpath,. -o native &amp;&amp; ./native
+C loop -&gt; add2: 0.57 ns/call  (sink 0)        # real `call add2@plt`, pipelined
+$ python3 ffibench.py
+ctypes CDLL add2                      342.3 ns/call
+pure-Python def add(a,b)               52.9 ns/call</code></pre>
+<p>The Python side (10M calls of <code>lib.add2(1, 2)</code>, <code>argtypes</code> declared, <code>time.perf_counter_ns</code>; two runs: 342.3 and 440.6 ns/call). The ctypes call costs ~6.5 pure-Python calls — conversion and result boxing dwarf the 0.57 ns the CPU spends on the call itself. Move the loop into C (one crossing, a million iterations inside) and the tax amortizes to noise — that asymmetry is the whole FFI playbook.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Linker error triage:</strong> "undefined reference to <code>_ZN3net...</code>" is readable without a demangler — namespace, class, template args, parameters — and the usual causes (missing <code>extern "C"</code> on one side, a header compiled as C vs C++) are mangling bugs, not voodoo.</li>
+<li><strong>FFI architecture:</strong> batch across the boundary, pass pointers over per-call conversions, and budget ~50–400 ns per trivial transition when deciding which side a hot loop lives on.</li>
+<li><strong>Struct design:</strong> order fields large-to-small; <code>repr(C)</code> only at boundaries; <code>#pragma pack</code> is a wire-format tool with a measured latency cost, not a size optimization; bitfields stay out of cross-compiler structs.</li>
+<li><strong>Constructor mysteries:</strong> a virtual call inside a base constructor hitting the base version is the construction vtable doing its mandated job — move the work out or document the two phases.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch06 (object layout):</strong> the vptr-in-object memory-model claim is emitted here — address point, slots, 16-byte prologue.</li>
+<li><strong>Module 01 ch07 (assembly reference model):</strong> the SysV register table and 16-byte alignment are the ground truth that chapter reads off every disassembly.</li>
+<li><strong>Module 01 ch09 (C++) / ch10 (Rust):</strong> the two halves of the layout promise — C++ freezes field order for interop; Rust's <code>repr(Rust)</code>/<code>repr(C)</code> split is the same decision made the other way.</li>
+<li><strong>Module 04 ch04 (recovering C++, queued):</strong> the same vtable object this chapter emits, seen from the recovery side.</li>
+<li><strong>Module 05 (Android) / 06 (iOS):</strong> platform ABIs in the wild — ART's JNI over ARM64 AAPCS64; Swift's 2019 ABI freeze repeating the C++ freeze story.</li>
+<li><strong>Module 12 ch01 (GPU, queued):</strong> ABI divergence — CUDA/PTX has no SysV register table and no stack; the rules change when the machine does.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Why is <code>extern "C"</code> the escape hatch for <em>every</em> FFI — cgo, JNI, ctypes — not merely a C++/C convenience? What property of the C ABI makes it the universal meeting point?</li>
+<li><strong>Concept.</strong> GCC could shrink <code>struct {char a; long b; char c;}</code> from 24 bytes to 16 by reordering fields, and never does. Explain why, in terms of what the Itanium ABI purchased — and why Rust defaults to the opposite.</li>
+<li><strong>Predict.</strong> Decode by hand: <code>_ZN3net4ConnIdE4sendEv</code>. Then write the mangled names of <code>net::Conn&lt;long&gt;::send()</code> and <code>net::Conn&lt;double&gt;::send()</code> and say exactly where they differ.</li>
+<li><strong>Predict.</strong> Under System V AMD64, state the arrival registers for: (a) <code>f(int, double, long)</code>; (b) <code>g(struct {double d; long n;}, int)</code>; (c) <code>h(long, long, long, long, long, long, long)</code> — including where the last argument of (c) lives.</li>
+<li><strong>Predict.</strong> <code>sizeof</code> of <code>struct {char a; u16 b; char c;}</code> as <code>repr(C)</code> and as <code>repr(Rust)</code> (rustc as of 2024), and why.</li>
+<li><strong>Bug diagnosis.</strong> A C library and its test harness include the same header, but the library is built with <code>-fpack-struct=1</code> and the harness without. Both compile cleanly and link. Describe the symptom, and why no tool warns.</li>
+<li><strong>Bug diagnosis.</strong> <code>Base</code>'s constructor calls <code>virtual void init();</code>, which <code>Derived</code> overrides. A developer reports "the override is ignored during construction" and files a compiler bug. What is actually happening inside the object, byte-wise?</li>
+<li><strong>Cross-chapter (module 04 ch04).</strong> In a stripped binary you find a read-only 32-byte region <code>0, ptr, ptr, ptr</code>; the first <code>ptr</code> leads to a structure containing the string <code>"7Derived"</code>, the third to a function. Objects of some class carry a first member equal to <em>region address + 16</em>. Identify the region and explain how the string survives stripping.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The smallest frozen contract per platform.</strong> <code>extern "C"</code> strips C++ identity from the symbol (bare name, no mangling) and pins the call to the platform's C convention: psABI register table, flat struct memory, results in <code>rax</code>/<code>rdx</code>. Small enough that every runtime implements it; frozen forever. The C++ ABI encodes mangling, vtables, typeinfo — nobody else wants to reimplement that.</li>
+<li><strong>C++ sold field order to buy link-level interop.</strong> Itanium-ABI compliance lets GCC/Clang/ICC libraries interoperate — turning every struct layout into a public promise: the ABI is the layout, the layout is the promise. Rust has one compiler and no field-level interop: <code>repr(Rust)</code> promises nothing, rustc reorders freely, <code>repr(C)</code> opts in only at boundaries.</li>
+<li><strong><code>int net::Conn&lt;double&gt;::send()</code>.</strong> <code>_Z</code> start; <code>N ... E</code> = <code>3net</code> + <code>4Conn</code> + template args <code>I d E</code> (double) + <code>4send</code>; trailing <code>v</code> = no parameters. <code>Conn&lt;long&gt;</code> swaps one letter: <code>_ZN3net4ConnIlE4sendEv</code> vs <code>_ZN3net4ConnIdE4sendEv</code> — one character distinguishes two instantiations, which is why mangling encodes template arguments.</li>
+<li>(a) <code>edi</code>, <code>xmm0</code>, <code>rsi</code> — the banks fill independently. (b) One argument, two chunks: the double → <code>xmm0</code>, the long → <code>rdi</code>; then <code>i</code> → <code>rsi</code>. (c) Six longs fill <code>rdi, rsi, rdx, rcx, r8, r9</code>; the 7th goes to the stack at <code>[rsp+8]</code>, with <code>rsp</code> 16-byte aligned at the <code>call</code>.</li>
+<li><strong><code>repr(C)</code>: 6 bytes</strong> — <code>a</code> 1, pad 1, <code>b</code> 2, <code>c</code> 1, pad 1 (alignment 2). <strong><code>repr(Rust)</code>: 4 bytes</strong> — rustc reorders to <code>b(2), a(1), c(1)</code>, killing both pad bytes; the order is unspecified, the size class is not. The freedom C++ renounced in answer 2 is Rust's default.</li>
+<li><strong>Silent field corruption, no diagnostic.</strong> Packing is a compile-time directive, not part of the linker-visible type: both objects agree on symbols, the struct "type" is gone at link time. The library writes <code>b</code> at offset 1; the harness reads offset 8 — values scrambled, crashes rare until a pointer lands badly. Each TU is internally consistent; the mismatch is only <em>between</em> them. Fix: pack in the header, never in per-TU flags.</li>
+<li><strong>The construction vtable, working as mandated.</strong> While <code>Base::Base()</code> runs, the dynamic type is <code>Base</code>: a Base-view construction vtable (fetched via the VTT for this most-derived type) is installed, so the vptr's <code>init</code> slot points at <code>Base::init</code>. When the most-derived body begins, <code>D</code>'s real vtable replaces it. Rule, not bug.</li>
+<li><strong>A vtable — <code>_ZTV7Derived</code>.</strong> 32 bytes = offset-to-top (0 for a primary base), typeinfo pointer, virtual slots; first member = region+16 is the address point. The typeinfo holds the length-prefixed name string <code>"7Derived"</code> (an <code>_ZTS</code> typeinfo-name in <code>.rodata</code>), which survives stripping because string bytes are not symbols: stripping removes symbol names, not referenced data. Module 04 ch04's fingerprint.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch04.html"><span class="cn-label">previous</span><span class="cn-title">Ch 04</span></a>
+<a class="next" href="index.html"><span class="cn-label">next</span><span class="cn-title">Module index</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 10 — Compilers &amp; runtime internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

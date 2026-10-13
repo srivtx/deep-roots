@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Register allocation — deep-roots</title>
+<meta name="description" content="Chapter 03 of module 10: Register allocation">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Register allocation — deep-roots">
+<meta property="og:description" content="Chapter 03 of module 10: Register allocation">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Register allocation — deep-roots">
+<meta name="twitter:description" content="Chapter 03 of module 10: Register allocation">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 10 &middot; where memory models are manufactured</div>
+<h1 class="post-title">Register allocation</h1>
+<div class="post-meta">chapter 03 &middot; ~13 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> After optimization your program names as many variables as it likes, but the CPU offers only ~16 general registers. Register allocation resolves that scarcity: compute when each value is needed (its <em>live range</em>), build a graph of which ranges overlap (<em>interference</em>), and assign registers by coloring that graph. Ranges that lose the coloring get a <em>spill slot</em> — a stack address — and that is the moment the stack frame's contents are decided.</blockquote>
+<h2 id="the-arithmetic-that-forces-the-problem">The arithmetic that forces the problem</h2>
+<p>At the end of the pipeline (Chapter 01), SSA has given every value its own name — a <em>virtual register</em> — and the optimizer was encouraged to invent as many as it liked; a function easily holds 50–500. Now count homes: x86-64 (System V AMD64, the platform marked throughout) has 16 general registers, <code>rsp</code> is spoken for, so <strong>15 are allocatable</strong> — 14 with a frame pointer. ARM64: 31, several ABI-reserved. Two values can share a register only if never needed <em>simultaneously</em>; everything below is the machinery for finding that sharing and pricing the failures.</p>
+<h2 id="live-ranges-deriving-when-a-value-must-exist">Live ranges: deriving when a value must exist</h2>
+<p>A value needs a register only while <em>live</em>: from its definition to its <strong>last use</strong>. The subtlety: "last use" is not knowable reading forward from the def — liveness is a <strong>backward</strong> dataflow, from each use back to the defs that feed it.</p>
+<pre><code class="language-c">long f(long x) {
+    long a = x + 1;          // a born
+    long b = x * 2;          // b born; a still live (used on both paths)
+    if (x &gt; 0) return a + b; // a, b die on this path
+    a = a + 3;               // a redefined — a fresh live range
+    return a - b;            // a, b die on this path
+}</code></pre>
+<pre><code class="language-text">        ┌───────────────────────────────┐
+        │ B1:  a = x+1 ;  b = x*2       │   live-in(B1)  = {x}
+        │      if (x &gt; 0)               │   live-out(B1) = {a, b}
+        └──────────┬──────────┬─────────┘
+                true        false
+        ┌─────────┴────┐ ┌───┴───────────┐
+        │ B2:          │ │ B3: a = a+3   │   a's live range spans the whole
+        │ return a+b   │ │ return a-b    │   diamond: born in B1, dying in
+        └──────────────┘ └───────────────┘   B2 and B3. So does b's.</code></pre>
+<p>Running liveness backward: <code>b</code> is live-in to B3, hence live-out of B1; <code>a</code> likewise on both arms. Between <code>b = x*2</code> and the branch, <strong>a and b are live at the same point</strong> — they <em>interfere</em>: no single register serves both. <code>x</code> dies at <code>x &gt; 0</code>; its register is immediately recyclable. The payoff: interference is a property of <em>overlapping lifetimes</em>, not textual proximity — a loop accumulator interferes with everything born inside the loop, however briefly.</p>
+<h2 id="graph-coloring-the-map-coloring-solution-and-its-price">Graph coloring: the map-coloring solution and its price</h2>
+<p>One straight-line example serves the rest of the chapter:</p>
+<pre><code class="language-c">long t1 = a + b;
+long t2 = c + d;
+long t3 = t1 * t2;    // t1, t2 die HERE — their registers free at this line
+long t4 = e + f;
+long t5 = t3 - t4;
+return t3 + t4 + t5;</code></pre>
+<pre><code class="language-text">line:     1    2    3    4    5    6
+t1       [══════]                       def 1, last use 3
+t2            [══════]                  def 2, last use 4
+t3                 [════════════════]   def 3, last use 6
+t4                      [═══════════]   def 4, last use 6
+t5                            [════]   def 5, last use 6</code></pre>
+<p>Two ranges interfere when their intervals overlap (one courtesy rule: a value defined on the line another dies may reuse its register — no edge). The interference graph — nodes are live ranges, edges are overlaps — is colored with k colors, k = allocatable registers:</p>
+<pre><code class="language-text">   t1 ────────── t2
+   (R1)         (R2)
+                  │  t2–t3
+            ┌──── t3 ─────┐
+           (R1)           │  t3–t4
+            │  t3–t5      │
+           t5 ────────── t4
+           (R3)  t5–t4   (R2)</code></pre>
+<p>k = 3 suffices — <code>t3</code> reuses R1 because <code>t1</code> is dead and no t1–t3 edge exists. With k = 2, <code>t5</code>'s neighbors take R1 and R2: something must spill. But k-coloring is <strong>NP-complete</strong> for k ≥ 3, and a compiler runs it millions of times per build, so production allocators (Chaitin 1981; Briggs' <em>optimistic coloring</em> 1994; LLVM's <code>greedy</code>, default since ~2014) use heuristics: simplify low-degree nodes, color greedily on the way back, and when stuck pick a <strong>spill victim by cost</strong> — a spilled range pays store+load at each use:</p>
+<pre><code class="language-text">spill cost(r) ≈ Σ (uses and defs of r) × frequency-of-that-point</code></pre>
+<p>Frequency comes from block counts and <strong>loop depth</strong>: classically a use in a depth-n loop counts as ~10ⁿ top-level uses — a range used twice in a triply-nested loop (~2,000) beats one used fifty times at top level (50) for the right to a register. This one line of arithmetic explains most real spill decisions.</p>
+<p>A refinement: <strong>coalescing</strong>. Copies (<code>mov rax, rbx</code>) and SSA renames create values that are one number under two names; if source and target share a register, the move vanishes. The conflict: merging two nodes gives the merged node the <em>union</em> of both neighborhoods — coalescing can create interference that forces a spill where the <code>mov</code> was cheap. Chaitin coalesced aggressively and paid; Briggs' <em>conservative</em> rule merges only when the merged node provably keeps a free color. (Modern x86 cores even eliminate register-to-register <code>mov</code>s in the rename stage — but only those.)</p>
+<h2 id="spilling-the-counterexample-to-locals-are-free">Spilling: the counterexample to "locals are free"</h2>
+<p>Module 01 ch04 derived the frame and asserted "locals are free" — allocation was one <code>sub rsp, N</code>, deallocation one <code>leave</code>. Register allocation supplies the asterisk. A <strong>spilled</strong> live range's home is a spill slot in the frame, and every use becomes a memory access. The frame's bytes are mostly <em>not</em> the programmer's named locals — at <code>-O2</code> those live in registers until they die. The frame is dominated by <strong>allocator decisions</strong>: spill slots, saved registers, alignment padding. Module 01 drew the frame's shape; this chapter shows who fills it.</p>
+<p>Spilling is not all-or-nothing: modern allocators <strong>split live ranges</strong>, keeping a value in a register through the hot loop and storing it to its slot only across the cold edge where pressure peaks. LLVM's <code>greedy</code> allocator is built around splitting; Chaitin-era allocators spilled whole ranges and re-ran coloring, which is why they scaled badly.</p>
+<p>Two regimes, now explained: <strong><code>-O0</code> uses a trivial allocator</strong> (LLVM's <code>regalloc=fast</code>) — every variable gets its own frame slot, always; that is <em>why</em> <code>-O0</code> frames show every local in gdb and why uninitialized-read bugs differ across optimization levels (module 03 ch02). <strong><code>-O2</code>/<code>-O3</code> spill only under pressure</strong> — and the threshold is tiny: 15 registers minus the 6–8 a loop needs for pointers, counters, strides leaves ~7–9 free homes. The lab shows 10 simultaneously-live scalars already spilling; 20 spills hard.</p>
+<h2 id="linear-scan-the-jit-s-bargain">Linear scan: the JIT's bargain</h2>
+<p>Graph coloring inspects the whole function's interference — right for ahead-of-time compilers, where compile time amortizes over every future run. A JIT cannot say that: compilation happens <em>while the user waits</em>, often for methods that run a handful of times. HotSpot's C1 and V8's TurboFan (as of 2024) run <strong>linear scan</strong> (Poletto &amp; Sarkar, 1999) instead. Return to the interval diagram: sort ranges by start, walk once, keep an <em>active</em> list of ranges holding registers, and when none is free, evict the active range with the <strong>latest end</strong> — it blocks a register longest. One pass, no graph, no re-runs.</p>
+<p>The price: intervals only <em>approximate</em> interference. In straight-line code overlap is interference, but control flow breaks the equivalence — a range that looks short on the number line can be live <em>around a loop backedge</em>, and the scan cannot see the cold paths a graph allocator exploits for splitting. The measured cost, and this module's number: <strong>~10% worse code</strong> — a few percent more spilled values in typical functions, worse in register-bound kernels — for allocation an order of magnitude faster. That is the tradeoff, and why HotSpot tiers: C1 for warmup latency, C2's graph coloring for peak throughput.</p>
+<h2 id="from-colors-to-bytes-the-frame-is-emitted">From colors to bytes: the frame is emitted</h2>
+<p>The ABI pre-answers one interference question: what does a <code>call</code> destroy? System V AMD64: every caller-saved register (<code>rax, rcx, rdx, rsi, rdi, r8-r11</code>); the callee-saved set (<code>rbx, rbp, r12-r15</code>) survives. To the allocator, <strong>a call is a clobber of the caller-saved class</strong> — ABI-forced interference between your value and the call. Three escape routes, all real costs: (1) home the value in a callee-saved register, paying <code>push</code>/<code>pop</code> once per function; (2) spill around the call, 2 memory ops per call per value; (3) split the range so it isn't live across the call. A loop making one call per iteration with six live values takes route 1 for all six — <code>rbx, rbp, r12-r15</code> is the ABI's complete callee-saved set; the decision reads straight off the prologue.</p>
+<p>Then the prologue is emitted — Module 01 ch04's diagram <em>derived</em> rather than asserted. The real frame of the lab's 20-live-variable function (gcc 14.2.0, x86-64, <code>-O2</code>), each region labeled with its decision-maker:</p>
+<pre><code class="language-text">        higher addresses
++------------------------------------+  ← caller's rsp ≡ 0 (mod 16) — the
+|  outgoing stack args (7th+, if any)|     16-byte call-site contract
++------------------------------------+  ← CALL pushed return address:
+|  return address        (8 B)       |     entry rsp ≡ 8 (mod 16)
++------------------------------------+
+|  saved rbx, rbp, r12-r15  (48 B)   |  ← REGALLOC: values homed in callee-
++------------------------------------+     saved regs — route 1 above
+|  spill slots: 21 × 8 = 168 B       |  ← REGALLOC: live ranges that lost
+|                                    |     their color — the "locals are
++------------------------------------+     free" tax bill, priced per access
+|  alignment padding      (16 B)     |  ← prologue emitter: restore rsp ≡ 0
++------------------------------------+     (mod 16) so this frame may CALL
+        lower addresses  ← rsp after `subq $184, %rsp` — ONE instruction</code></pre>
+<p>Why 16 bytes? System V AMD64 requires <code>rsp ≡ 0 (mod 16)</code> immediately before every <code>call</code>, because callees (and the kernel, in signal frames) store SSE values with <code>movaps</code>/<code>movdqa</code>, which fault on misaligned addresses. The emitter rounds the claim so entry offset + pushes + <code>sub</code> lands on a boundary: 8 + 48 + 184 = 240 ≡ 0 (mod 16). When alignment is unknowable at compile time (varargs, <code>alloca</code>) you see the blunt instrument: <code>andq $-16, %rsp</code>.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The 16-byte rule is a call-site contract, not a frame rule</strong>: a leaf that never calls and stores no SSE values needs no padding — hence odd-sized tiny frames, and misaligned-<code>movaps</code> crashes surfacing only in varargs or alloca-heavy callees.</li>
+<li><strong>Why JITs chose linear scan</strong>: allocation is a large fraction of backend compile time, and JIT compile time is latency on a thread you are paying for. C1 exists to make tier-1 compiles cheap; C2's graph coloring runs only on proven-hot methods.</li>
+<li><strong>Coalescing fights spilling</strong>: merging a <code>mov</code>'s endpoints unions their interferences; Briggs' conservative merge test is the standard compromise. Chaitin-style aggressive coalescing can <em>add</em> instructions by triggering spills costlier than the moves it removed.</li>
+<li><strong>Spill weights are loop-depth-driven</strong>: uses weighted ~10ⁿ at nesting depth n. GCC's IRA dump prints the arithmetic in the open — <code>potential spill: pri=56, cost=5032</code> — <code>cost</code> is the frequency-weighted estimate the heuristic ranks victims by.</li>
+<li><strong>The observation flags</strong>: <code>gcc -fverbose-asm</code> annotates spills as offsets from <code>%sfp</code>, GCC's virtual frame pointer; <code>gcc -fdump-rtl-all</code> drops the coloring-stage dumps (<code>*.r.ira</code>, <code>*.r.reload</code>); LLVM needs <code>llc -debug-only=regalloc</code> (an assertions build) or <code>-print-after=greedy</code>; <code>llc -regalloc=fast</code> shows the <code>-O0</code> allocator.</li>
+<li><strong>The vectorizer changes k</strong>: 20 live <code>long</code>s "can't fit" 15 GPRs, but the auto-vectorizer packs two per XMM register — 20 scalars become 10 XMM values and the pressure vanishes. Pressure arithmetic on x86-64 must count the 16 XMM registers too.</li>
+<li><strong>GCC's <code>-O3</code> does not unroll by default</strong> (that is <code>-funroll-loops</code>, or clang, which does unroll at <code>-O3</code>). The folklore "loop spills at -O3 but fit at -O2" is real on clang; on GCC 14 add <code>-funroll-loops</code> (lab below).</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Platform: gcc 14.2.0 (Debian), x86-64. Generate functions with 10/16/20 live accumulators:</p>
+<pre><code class="language-console">$ python3 -c "
+for n in (10,16,20):
+    d=', '.join(f's{i}=0' for i in range(n))
+    a='\n        '.join(f's{i} += a[{i}*n+i];' for i in range(n))
+    r=' + '.join(f's{i}' for i in range(n))
+    open(f'v{n}.c','w').write(f'void sink(long);\nlong sum{n}(const long *a, int n) {{\n    long {d};\n    for (int i=0;i&lt;n;i++) {{\n        {a}\n    }}\n    sink(n);\n    return {r};\n}}\n')
+"</code></pre>
+<p>Plain <code>-O2</code> first: the mov-to-stack count is <strong>zero</strong> even at n=20 — the vectorizer packed everything into XMM registers (bullet above). Force the scalar story the chapter derived, compile the emitted (non-leaf) files plus leaf versions with the <code>sink(n)</code> call deleted, and measure the frame claim and spill slots in each <code>.s</code>:</p>
+<pre><code class="language-console">$ for n in 10 16 20; do gcc -O2 -fno-tree-vectorize -S v$n.c; done</code></pre>
+<div class="table-wrap"><table><thead><tr><th>n</th><th>leaf: <code>subq $N,%rsp</code></th><th>leaf slots</th><th>non-leaf: <code>subq $N,%rsp</code></th><th>non-leaf slots</th></tr></thead><tbody><tr><td>10</td><td>(none)</td><td>5, <code>-8…-40(%rsp)</code></td><td>56</td><td>5</td></tr><tr><td>16</td><td>(none)</td><td>14, <code>-8…-112(%rsp)</code></td><td>120</td><td>13</td></tr><tr><td>20</td><td>40</td><td>19, red zone blown</td><td>184</td><td>21</td></tr></tbody></table></div>
+<p>Two payoffs. The spill count explodes as the arithmetic predicts — and in the <em>leaf</em> versions the five slots at n=10 live in the <strong>128-byte red zone</strong> (module 01 ch04): the leaf's free spill attic, invisible to any frame walk, until n=20 exhausts it. Second, all six callee-saved GPRs are pushed in every variant: the allocator wanted every allocatable register, and the ABI split shows up as six <code>pushq</code>s. The n=20 prologue, verbatim:</p>
+<pre><code class="language-asm">pushq   %r15                ; ┐
+pushq   %r14                ; │
+pushq   %r13                ; │ 48 B of callee-saved regs —
+pushq   %r12                ; │ the allocator's ABI-forced route 1
+pushq   %rbp                ; │
+pushq   %rbx                ; ┘
+subq    $184, %rsp          ; 21 spill slots + 16 B alignment, ONE instruction
+...
+movq    %rcx, 168(%rsp)     ; this live range just lost its register
+...
+addq    $184, %rsp          ; epilogue: frame dies in bulk (popq ×6, ret)</code></pre>
+<p>Read the allocator's own annotations:</p>
+<pre><code class="language-console">$ gcc -O2 -fno-tree-vectorize -fverbose-asm -S v10.c</code></pre>
+<pre><code class="language-asm"># v10.c:3:     long s0=0, s1=0, ...;
+        movq    %rcx, 16(%rsp)     # s0, %sfp
+# v10.c:5:         s0 += a[0*n+i];
+        addq    %rdi, 16(%rsp)     # tmp225, %sfp</code></pre>
+<p><code>s0</code> gets its frame home at the definition — and pays it in the loop, every iteration, as read-modify-write traffic to <code>16(%rsp)</code>. For the allocator's own reasoning, dump its coloring pass, and reproduce the "-O3 spills more" phenomenon (GCC 14 edition — add <code>-funroll-loops</code>; <code>u10.c</code> is <code>v10.c</code> with the <code>sink(n)</code> call removed):</p>
+<pre><code class="language-console">$ gcc -O2 -fno-tree-vectorize -c -fdump-rtl-all v20.c
+$ rg 'potential spill' v20.c.*.r.ira
+      Pushing a52(r141,l0)(potential spill: pri=56, cost=5032)
+$ gcc -O2 -fno-tree-vectorize -S u10.c                  # 5 spill slots
+$ gcc -O3 -funroll-loops -fno-tree-vectorize -S u10.c   # 14 spill slots</code></pre>
+<p>Unrolling doubles the live values per loop body: five slots become fourteen with one flag (on clang, <code>-O3</code> alone — it unrolls by default).</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Hot-loop triage</strong>: one <code>rg '\(%rsp\)'</code> over the disassembly says whether a hot loop pays the spill tax. The fix is source-level — fewer simultaneously-live values (tile a 20-accumulator kernel into blocks of 8), not assembly surgery.</li>
+<li><strong>The mysterious "-O3 got slower"</strong>: unrolling or inlining raised pressure and spilled a value <code>-O2</code> kept in a register — a five-minute diagnosis.</li>
+<li><strong>Debugging</strong>: gdb's <code>&lt;value optimized out&gt;</code> is this chapter — no slot, or a split live range; and <code>-O0</code>'s see-every-variable behavior is the trivial allocator's every-value-gets-a-slot policy.</li>
+<li><strong>Reading binaries (module 04)</strong>: push count and <code>sub rsp</code> size are a fingerprint — six pushes plus a big claim says "loop-heavy, register-bound body" before you read another instruction.</li>
+<li><strong>Interview-grade answer</strong>: allocation is k-coloring an interference graph of live ranges; NP-complete, so greedy heuristics with weighted spill costs, range splitting, conservative coalescing; JITs trade ~10% code quality for linear-scan speed.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch04</strong> — the frame diagram asserted there is derived here: spill slots, saved registers, alignment padding are allocator decisions; "locals are free" gets its tax bill.</li>
+<li><strong>Module 01 ch07</strong> — the assembly reference: prologues, epilogues, and ABI register roles are the surface these decisions emit.</li>
+<li><strong>Module 10 ch01</strong> — SSA's virtual registers are this pass's input; phi nodes are the merges the allocator must honor at joins.</li>
+<li><strong>Module 10 ch02</strong> — SROA dissolves stack structs into SSA values; DSE decides which scrubbing memsets survive.</li>
+<li><strong>Module 10 ch05</strong> — the ABI side: argument registers, struct classification, the 16-byte call-site alignment contract.</li>
+<li><strong>Module 04 ch03</strong> — reading disassembly: prologues as pressure fingerprints, spill slots as variable recovery.</li>
+<li><strong>Module 03 ch02</strong> — uninitialized reads from dead frames: spill slots are never zeroed, so yesterday's register is tomorrow's garbage.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> Two variables are used in the same statement; two others are used 200 lines apart, both inside the same loop. Which pairs necessarily interfere, and what property defines the edge?</li>
+<li><strong>Concept.</strong> k-coloring is NP-complete, yet compilers run allocation millions of times per build. What do heuristics give up, and what do they optimize instead of optimality?</li>
+<li><strong>Predict the number.</strong> A leaf x86-64 function (no calls, <code>-O2</code>, vectorization off) keeps 10 <code>long</code> accumulators live across a loop; 5 lose their registers. Where do those 5 homes live, and what does the prologue claim with <code>sub rsp</code>?</li>
+<li><strong>Predict the layout.</strong> The non-leaf variant pushes all six callee-saved registers then runs <code>subq $184, %rsp</code>. Given entry <code>rsp ≡ 8 (mod 16)</code>, show the prologue leaves <code>rsp</code> 16-byte aligned, and say why the ABI demands that before this function's <code>call</code>s.</li>
+<li><strong>Predict the output.</strong> <code>-fverbose-asm</code> prints <code>movq %rcx, 16(%rsp) # s0, %sfp</code> at <code>s0</code>'s definition and <code>addq %rdi, 16(%rsp) # tmp225, %sfp</code> inside the loop. What is <code>%sfp</code>, and what do these two instructions say happened to <code>s0</code>?</li>
+<li><strong>Bug diagnosis.</strong> A kernel ran 82 ns/pixel at <code>-O2</code>; after <code>clang -O3</code> it runs 94 ns/pixel, and disassembly now shows a <code>movq %rax, -48(%rsp)</code> plus matching load <em>inside</em> the hot loop. What happened? Name two source-level fixes.</li>
+<li><strong>Bug diagnosis.</strong> A penetration test recovers an API token from a core dump taken <em>after</em> the function holding it returned; the token was spilled to <code>152(%rsp)</code>. Why do the bytes outlive the frame, and who ends up reading them?</li>
+<li><strong>Cross-chapter.</strong> A loop with six live <code>long</code>s makes one call per iteration; the compiler pushes all six callee-saved GPRs instead of spilling or splitting. Derive the cost comparison that justifies it, and connect it to module 01 ch04's frame diagram.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li>The same-statement pair always interferes. The distant pair interferes only if their live ranges overlap — a loop accumulator interferes with everything born inside the loop. The edge is <em>simultaneous liveness</em> at some program point, not textual proximity.</li>
+<li>They give up the minimum-spill coloring and its proof. They optimize speed plus a good-enough spill set: greedy coloring order, victims ranked by frequency-weighted cost (loop depth ~10ⁿ), live-range splitting to confine spills to cold regions. Extra colors are free; spills are not.</li>
+<li>Red-zone slots at <code>-8(%rsp)</code>…<code>-40(%rsp)</code> — below <code>rsp</code>, invisible to any frame walk — and the prologue claims <strong>zero</strong> bytes: leaf functions may use the 128-byte red zone as spill space for free (the lab shows: 5 slots, no <code>subq</code>).</li>
+<li>Entry ≡ 8; six pushes add 48 (≡ 0 mod 16), still ≡ 8; 184 ≡ 8 (mod 16), so after the claim <code>rsp ≡ 0 (mod 16)</code>. The ABI requires 16-byte alignment immediately before every <code>call</code> because callees may execute aligned SSE stores (<code>movaps</code>/<code>movdqa</code>), which fault on misalignment; the callee's entry then repeats the arithmetic.</li>
+<li><code>%sfp</code> is GCC's <em>virtual stack frame pointer</em> — the anchor frame-relative accesses use before final emission substitutes real offsets. Together the lines say <code>s0</code> got the slot <code>16(%rsp)</code> at birth (it lost its register) and pays read-modify-write traffic there every iteration.</li>
+<li><code>-O3</code> unrolled or inlined the loop, raising simultaneously-live values; an accumulator's live range now spans the hot loop and got spilled, adding store+load per iteration (~12 ns/pixel of L1 round-trips and stalls). Fixes: reduce simultaneously-live values — tile the kernel so ~8 accumulators are live — or keep that unit at <code>-O2</code> with the measurement as evidence.</li>
+<li><code>addq $184, %rsp</code> and the <code>popq</code>s move the stack pointer; nothing zeroes the spill slots (module 01 ch04: frames are never erased on reuse). The bytes sit in dead-but-mapped stack until the next call's frame overlaps them — becoming that function's <em>uninitialized read</em>, module 03 ch02's family: an info-leak that is also a correctness bug in the reader. Mitigate with <code>-ftrivial-auto-var-init=zero</code> or a scrub before return — which module 10 ch02's DSE may delete unless it is a <code>volatile</code> store.</li>
+<li>Per iteration: spilling six values around one call costs 12 memory operations; splitting costs comparable moves; callee-saved homing costs <strong>zero</strong> per-iteration traffic and 12 one-time instructions (6 <code>push</code>, 6 <code>pop</code>) — amortized over thousands of iterations. The saved-register region in module 01 ch04's frame diagram is this decision materialized: ABI-forced interference resolved once per function, not once per call.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch02.html"><span class="cn-label">previous</span><span class="cn-title">Ch 02</span></a>
+<a class="next" href="ch04.html"><span class="cn-label">next</span><span class="cn-title">Ch 04</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 10 — Compilers &amp; runtime internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

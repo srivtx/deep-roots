@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Use-after-free — deep-roots</title>
+<meta name="description" content="Chapter 05 of module 02: Use-after-free">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Use-after-free — deep-roots">
+<meta property="og:description" content="Chapter 05 of module 02: Use-after-free">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Use-after-free — deep-roots">
+<meta name="twitter:description" content="Chapter 05 of module 02: Use-after-free">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 02 &middot; the dark mirror of module 01</div>
+<h1 class="post-title">Use-after-free</h1>
+<div class="post-meta">chapter 05 &middot; ~18 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A use-after-free is a bug in <em>time</em>, not in space: an object is freed while pointers to it survive, and the allocator hands the same bytes to the next same-size request. If the attacker makes that request — a heap spray of controlled bytes — the next use of the stale pointer operates on attacker data. In C++ the first 8 bytes of a polymorphic object are the vptr, so a virtual call through reclaimed memory is an indirect call into attacker-chosen code. Browsers, with millions of C++ objects living script-driven lifetimes, are the natural habitat — which is why use-after-free tops the modern bug charts while canaries, NX, and ASLR look away: they defend spatial and control-flow invariants, and this bug breaks a <em>lifetime</em> invariant none of them models. Every mitigation narrows the odds; ownership removes the compile-time subset outright.</blockquote>
+<h2 id="a-bug-the-classic-ladder-cannot-see">A bug the classic ladder cannot see</h2>
+<p>Chapters 02–04 attacked <em>spatial</em> corruption — overwrite saved RIP, ROP past NX, poison glibc's chunk metadata — and the ladder grew to match: canaries guard a fixed location, NX guards which pages execute, ASLR hides addresses from a stolen control flow.</p>
+<p>A use-after-free writes nothing illegal anywhere. The <code>delete</code> is legal; the chunk returns to a free list in perfect health; the later use is a normal read of a mapped address through a pointer whose validity the language never tracked. The broken invariant is <em>temporal</em> — "this pointer points at a live object" — and no C or C++ runtime maintains it. glibc catches double-frees (the tcache <code>key</code>, chapter 04) but is blind to a late use: by the stale read, the bytes legitimately belong to a new owner. The ladder priced out spatial corruption; the flagship targets then moved to the one memory model where temporal errors are epidemic.</p>
+<p>A 1998 daemon is C, flat buffers, a process per connection, a few dozen structs dying with the connection. A 2018 browser is a C++ object graph of millions of live objects in one long-lived process — plus the decisive ingredient: <em>JavaScript can destroy almost any object at almost any moment</em> (close a tab, remove a node, drop a reference). RAII (module 01, chapter 09) ties lifetime to <em>scope</em>: the closing brace is the destructor call. A DOM node's lifetime is not a scope; it ends on an <em>event</em> at an arbitrary stack depth, while observers, callbacks, and posted tasks hold references no brace ever owned. Marked by source: MSRC reported ~70% of its CVEs are memory-safety bugs (BlueHat 2019, 2006–2018 data); Chromium's reporting lands in the same range, and within the renderer's memory-safety slice, use-after-free has for years been the largest single subclass.</p>
+<h2 id="the-three-step-pattern-free-reclaim-confuse">The three-step pattern: free, reclaim, confuse</h2>
+<p>A dangling pointer alone is a crash. An exploit needs determinism — control over <em>what the freed bytes contain</em> at the instant of the stale use — hence three steps, and every browser write-up is a concrete instantiation of them:</p>
+<ol>
+<li><strong>Free</strong> — trigger the victim's destruction while a reference survives. This is the bug; everything after is engineering.</li>
+<li><strong>Reclaim</strong> — allocate into the freed slot with attacker-chosen contents. The allocator's contract helps: same size class, prompt allocation, and (glibc tcache, chapter 04) LIFO order that returns the most recently freed chunk of that size first.</li>
+<li><strong>Confuse</strong> — use the stale pointer. The old code now executes against the new, attacker-shaped contents — a type confusion. If the use is a virtual call, the replacement's first 8 bytes are read as a vptr, and the call lands wherever they say.</li>
+</ol>
+<p>The whole pattern in one minimal C++ program — the exact source the lab runs:</p>
+<pre><code class="language-cpp">// uaf.cpp -- the three-step pattern in miniature (module 02, chapter 05)
+#include &lt;cstdio&gt;
+
+struct Session {                       // the victim: polymorphic, 16 bytes
+    virtual void ping() { std::printf("legit Session::ping\n"); }
+    virtual ~Session() = default;      // virtual dtor: keep the demo one-bug-clean
+    char pad[8]{};                     // sizeof(Session) == 16: vptr + pad
+};
+
+struct Evil {                          // the replacement: attacker bytes, 24 bytes
+    void** fake_vtable;                // lands exactly on Session's vptr (offset 0)
+    long payload[2]{};
+};
+
+static void attacker_fn() {            // where the stale call must land
+    std::printf("!!! stale call landed in attacker-chosen code\n");
+}
+
+static void* fake_vt[4] = {            // fake vtable in .data: every slot points
+    (void*)&amp;attacker_fn, (void*)&amp;attacker_fn,
+    (void*)&amp;attacker_fn, (void*)&amp;attacker_fn
+};
+
+int main() {
+    Session* registry[1];              // raw, non-owning back-reference
+    registry[0] = new Session();       // step 0: live object, registered
+
+    delete registry[0];                // step 1: FREE -- registry[0] goes stale
+
+#ifndef NO_SPRAY
+    Evil* e = new Evil();              // step 2: SPRAY -- same chunk size (32 B)
+    e-&gt;fake_vtable = fake_vt;          //   reclaims the slot; offset 0 is now an
+                                       //   attacker-chosen vptr
+    std::printf("victim slot = %p, replacement = %p\n",
+                (void*)registry[0], (void*)e);
+#endif
+
+    registry[0]-&gt;ping();               // step 3: stale virtual call through the
+}                                      //   reclaimed, attacker-chosen slot</code></pre>
+<p>Why is <em>same size class</em> load-bearing? <code>sizeof(Session)</code> is 16, <code>sizeof(Evil)</code> is 24; both round to a 32-byte glibc chunk (payload + 8-byte header, 32 minimum — chapter 04's arithmetic). Same bin, LIFO: <code>new Evil</code> receives <em>exactly</em> the chunk just freed. On PartitionAlloc the constraint reappears as a bucket match plus a partition match (see <em>What insiders know</em>). The bytes and the call — module 01's chapters 06 and 09, read adversarially:</p>
+<pre><code class="language-text">STEP 1: free                    STEP 2: spray to reclaim          STEP 3: stale virtual call
+
+ Session* s = 0x...2b0          registry[0] still holds           registry[0]-&gt;ping()
+ +--------------+               0x...2b0 (STALE)                     |
+ | vptr    8 B  |  delete s        |                                v
+ +--------------+  -&gt; tcache,      v                        mov (%rax),%rax  &lt;- slot+0:
+ | pad (8 B)    |    32-B bin,  +---------------+             fake_vtable (attacker ptr)
+ +--------------+    LIFO head  | fake_vtable  |          mov (%rax),%rdx  &lt;- fake_vt[0]:
+        |                      | (attacker    |             attacker_fn
+        v                      |  pointer)    |          call *%rdx       &lt;- the stale call
+   Session vtable               +---------------+            executes ATTACKER code
+   +------------------+         | payload 16 B |             with this = the slot
+   | [0] ping         |         +---------------+
+   | [1] ~Session     |         replacement object, same 32-B chunk:
+   | [2] ~deleting    |         offset 0 is ATTACKER-CHOSEN bytes
+   +------------------+         attacker's fake vtable (in .data here;
+                                in a real exploit, sprayed heap):
+                                +------------------+
+                                | [0] attacker_fn  |  &lt;- the call lands HERE
+                                +------------------+
+
+ p-&gt;ping() compiles to (g++ 14.2, -O0, Itanium ABI; vtable slots follow
+ DECLARATION order, so ping -- declared first -- is slot [0], and the
+ deleting destructor is slot [2]):
+    mov  (%rax),%rax    ; vptr   = *(p + 0)      &lt;- attacker bytes after reclaim
+    mov  (%rax),%rdx    ; target = *(vptr + 0)   &lt;- fake_vt[0] = attacker_fn
+    call *%rdx          ; attacker_fn(this = p)</code></pre>
+<p>Two loads, one indirect call — after the reclaim, every address except the first is attacker-influenced. There is no type tag on the object besides those first 8 bytes, which is why replacing them replaces the type.</p>
+<p>Three flavors of confusion, escalating in elegance:</p>
+<ul>
+<li><strong>Fake vtable</strong> (the lab's route): raw attacker bytes; the vptr aims at a fake vtable of chosen addresses. Requires an indirect call.</li>
+<li><strong>Wrong-but-real object</strong> (the browser workhorse): reclaim with a <em>legitimately constructed</em> object of another class whose fields script can set; the stale C++ pointer reads those numbers as pointers, lengths, or refcounts.</li>
+<li><strong>Data-only UAF</strong>: the stale use is a field write or a <code>refcount--</code>, not a call — no hijack, no CFI violation.</li>
+</ul>
+<h2 id="where-use-after-frees-breed">Where use-after-frees breed</h2>
+<p>Four shapes account for most of the real-world crop. Each shares one property: the free is triggered from <em>below</em> the code that still holds the pointer — a callback, a destructor, a queued task — control flow the holder never observes.</p>
+<p><strong>Shape 1 — notify-during-destruction (observers).</strong> The subject's destructor informs its observers, and the handlers mutate the list being iterated:</p>
+<pre><code class="language-cpp">class Tab {
+    std::vector&lt;Observer*&gt; observers_;        // raw, non-owning
+public:
+    ~Tab() {
+        for (Observer* o : observers_)        // BUG SHAPE: iterate while handlers
+            o-&gt;onTabClosed(this);             // can unregister or destroy others --
+    }                                         // observers_[i+1] may already be freed
+};</code></pre>
+<p>An <code>onTabClosed</code> handler that tears down a sibling observer (or the <code>Tab</code> itself) makes the loop's <em>next</em> iteration our <code>registry[0]</code>. This is the most common UAF shape in browser codebases; Blink grew dedicated patterns for exactly it.</p>
+<p><strong>Shape 2 — destructor-triggered destruction.</strong> A destructor drops a refcount, the count hits zero, and an object the <em>caller</em> still points at dies as a side effect of leaving a scope. The member-scope version is a teardown-order bug — module 01 chapter 09's reverse-construction-order rule, read adversarially:</p>
+<pre><code class="language-cpp">class Panel {
+    Toolbar toolbar_;   // declared FIRST  -&gt; destroyed LAST  (~Toolbar runs last)
+    Canvas  canvas_;    // declared SECOND -&gt; destroyed FIRST
+    // ~Toolbar() calls canvas_.flush() -- canvas_ is already destructed: UAF
+};</code></pre>
+<p>Members die in reverse declaration order because a later member may depend on an earlier one; the bug is a dependency arrow pointing the wrong way.</p>
+<p><strong>Shape 3 — async cancellation.</strong> Work posted to a future tick with no ownership and no cancellation token:</p>
+<pre><code class="language-cpp">void Chart::scheduleRefresh() {
+    task_runner_-&gt;PostTask(FROM_HERE,
+        BindOnce(&amp;Chart::refresh, Unretained(this)));  // BUG SHAPE: no ownership,
+}                                                      // no weak handle
+// Tab closes between Post and Run -&gt; refresh() runs on a freed Chart</code></pre>
+<p>The post-to-run window is unbounded, destruction is script-triggered, and the crash reproduces "only on fast tab close" — which is why these survive QA.</p>
+<p><strong>Shape 4 — DOM teardown / reentrancy during mutation.</strong> Removing a node fires listeners; script re-enters a half-torn-down tree; finalizers run during garbage collection while script still holds handles. The name for all of it is <em>reentrancy during teardown</em>: destruction is not atomic with respect to script, so "the tree is consistent while we destroy the tree" is a load-bearing and frequently wrong invariant.</p>
+<h2 id="anatomy-of-a-real-one-cve-2019-5782-chrome-s-filereader">Anatomy of a real one: CVE-2019-5782, Chrome's FileReader</h2>
+<p>A summarized public anatomy — mechanism per the public reconstructions of the bug; every line maps onto the three steps.</p>
+<ul>
+<li><strong>Where:</strong> Blink's FileAPI, <code>FileReader</code>. Chrome up to 72.0.3626.119; fix shipped in 72.0.3626.121 (March 2019).</li>
+<li><strong>The free (the bug):</strong> a <code>FileReader</code> is re-used for a second read while a reference to the first read's result buffer survives; the first result's backing allocation is freed out from under that reference — shape 4's reentrancy with an object-graph twist.</li>
+<li><strong>The reclaim (the spray):</strong> script-driven allocations of the matching size, repeated until the freed slot holds attacker-controlled bytes. JavaScript is a <em>programmable allocator</em> with a loop — spray, trigger, check.</li>
+<li><strong>The confuse:</strong> the stale reference now aliases script-controlled bytes; the exploit shapes them into a fake internal object and escalates to arbitrary read/write in the renderer.</li>
+<li><strong>The chain (impact):</strong> renderer code execution is contained by the sandbox. The in-the-wild use (watering-hole activity reported by Volexity, 2019) paired it with CVE-2019-0808, a win32k bug on Windows 7, to escape — the "a modern exploit is several bugs long" story chapter 06 completes.</li>
+<li><strong>The fix:</strong> lifetime soundness — the reference became ownership, so the free-under-a-live-handle cannot happen.</li>
+</ul>
+<h2 id="every-defense-is-partial-the-honest-ledger">Every defense is partial — the honest ledger</h2>
+<p>The full ladder is chapter 06; here is the UAF-specific ledger, each rung with the reason it is not the end.</p>
+<p><strong>Quarantine (delayed reuse).</strong> Park freed memory instead of recycling it, so a stale access hits bytes still marked "freed" rather than a fresh replacement. AddressSanitizer does this at detection scale: freed regions sit in a quarantine (defaults on 64-bit Linux, ASan runtime of the LLVM 17 era: 256 MB global, 1 MB thread-local) while the shadow memory keeps marking them <code>0xfd</code>, so the stale read <em>reports</em> instead of aliasing. Two partialities: it is detection, not prevention — shrink the quarantine and the exploit works again; and once a region exits quarantine and is reused, a <em>late</em> use-after-free is invisible ("passes ASan in CI, crashes in production"). 256 MB is also a QA budget, not a shipping one — production samples instead: GWP-ASan runs a small quarantine on a small fraction of users' processes (single-digit percent, Chrome's 2020s configuration), at most one report each.</p>
+<p><strong>Pointer poisoning on free.</strong> Overwrite freed bytes with garbage (ASan's optional free-fill writes <code>0xbe</code> into up to the first 4 KiB) or with fault-guaranteeing values (PartitionAlloc stores its <em>encoded</em> freelist link in the slot's first 8 bytes, so an immediate stale vtable call dereferences allocator bookkeeping, not zeros). Partial by construction: it defends only the <em>un-reclaimed</em> window — an exploit that reclaims the slot never reads the poison.</p>
+<p><strong>Hardened allocator metadata.</strong> PartitionAlloc is Chrome's structural answer: requests round up to bucket sizes (8- and 16-byte spacing in the smallest ranges, coarsening upward), slots live in slot spans inside 2 MiB super pages, freelist links are encoded and validated on pop to stay inside the slot span, and per-super-page metadata is out of band of user slots. Chapter 04's glibc playbook — poison the in-band <code>fd</code>/<code>bk</code> — mostly dies here. But it hardens the <em>allocator</em>, not the <em>lifetime</em>: a UAF whose replacement is a legitimate new object is untouched, because nothing was corrupted.</p>
+<p><strong>Forward-edge CFI (vtable checks).</strong> Clang's <code>-fsanitize=cfi-vcall</code> verifies, before an indirect virtual call, that the loaded vptr is in the bitset of vtables that exist in the compiled program. The fake-vtable route dies: sprayed heap bytes are not a registered vtable. Partial twice over: COOP ("Counterfeit Object-Oriented Programming," USENIX 2015) aims the stale call at <em>real</em> objects with <em>real</em> vtables, composing whole legitimate virtual functions as gadgets — it checks vtable provenance, not call semantics; and data-only UAFs make no indirect call, so vcall CFI never runs.</p>
+<p><strong>BackupRefPtr / MiraclePtr (Chrome, rolling out since ~2022).</strong> <code>raw_ptr&lt;T&gt;</code> increments a use-count piggybacking on the slot; a free while the count is nonzero crashes at the dangling dereference — in production, the first mitigation that catches UAFs in the field. Partial: the count is in-band (reachable by a malicious UAF write), and coverage requires migrating a multimillion-line codebase to <code>raw_ptr</code> — an audit-and-rewire project measured in years.</p>
+<p><strong>Rust: the compile-time subset, eliminated.</strong> Module 01 chapter 10's payoff. One owner per value; borrows carry lifetimes provably shorter than the owner's; the free happens only at owner drop. The stale-pointer program does not compile — <code>error[E0597]: does not live long enough</code> where C++ gives you a segfault. What survives, honestly: <code>unsafe</code> blocks opt out with raw pointers; FFI is invisible to the borrow checker — a C library that caches the <code>*mut T</code> you handed it will call back after the <code>Box</code> drops: same UAF, new language; and <em>logical</em> use-after-frees — bytes alive, resource closed — no memory violation, same incident.</p>
+<p>Across the ledger: allocator- and control-flow-flavored mitigations narrow <em>determinism</em> or improve <em>detection</em>. Only ownership attacks the invariant itself.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>ASan's quarantine is the entire detection story; defaults are 256 MB global (<code>quarantine_size_mb</code>), 1 MB per-thread cache (<code>thread_local_quarantine_size_kb=1024</code>), 64-bit Linux, LLVM 17-era runtime.</strong> Freed regions keep shadow <code>0xfd</code>, redzones <code>0xfa</code>; a UAF firing <em>after</em> quarantine expiry and reuse reads shadow <code>0x00</code> — addressable, invisible. <code>ASAN_OPTIONS=quarantine_size_mb=0</code> proves the mechanism — the report degrades to <code>heap-buffer-overflow</code>.</li>
+<li><strong>PartitionAlloc has three match conditions, not one.</strong> The spray must hit the same <em>bucket</em> (size rounded up), the same <em>partition</em> (Chrome runs separate partitions — DOM objects and ArrayBuffer backing stores are not neighbors), and — because of PA's per-thread cache — ideally the <em>thread</em> whose cache owns the freed slot, or force a central-freelist flush.</li>
+<li><strong>The observer shapes have a canonical fix vocabulary.</strong> "Notify while alive, then destroy" (two-phase teardown); snapshot the observer list before iterating; and Chromium's style rule that a <code>WeakPtrFactory</code> member is declared <em>last</em>, so weak handles invalidate before the members they guard destruct. A diff that moves a <code>WeakPtrFactory</code> up the member list is a latent UAF fix in reverse.</li>
+<li><strong><code>base::Unretained(this)</code> in a posted task is a UAF with a timer on it.</strong> The Chromium rule — <code>Unretained</code> only for synchronous, same-stack handoffs — exists because the post-to-run window is unbounded and script-triggered teardown fits inside it. Review flag, not a style nit.</li>
+<li><strong>Browser spray sizes are small and many, not big and few.</strong> Reclaim needs bucket-exact objects: real-world sprays run 32–512-byte allocations by the tens of thousands (a few MB total). The megabyte-string sprays of the Flash era delivered <em>payloads</em>; the reclaim spray has a different job.</li>
+<li><strong>Vtable slot order is declaration order (Itanium ABI).</strong> <code>ping</code> declared before the destructor sits in slot [0]; the destructor pair lands at the destructor's declaration position. Exploit-writing and vtable forensics (module 04) both hinge on which slot the hot virtual occupies.</li>
+<li><strong>glibc catches the double-free, never the late use.</strong> tcache's <code>key</code> field (glibc 2.29+) aborts on the second free; nothing in glibc tracks dereferences of a handed-back chunk. Tcache's 7-per-bin LIFO — chapter 04's poisoning facts — are exactly why step 2 is <em>deterministic</em> here.</li>
+<li><strong>The interview trap: "we freed it, so it's gone."</strong> The bytes are mapped, the chunk is healthy, the next same-size allocation gets them. A use-after-free is two legal users of one address, separated in time — no mainstream C/C++ allocator "knows" a pointer is stale.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>One file, three runs, all three steps — reproduced on Debian 13, g++ 14.2.0, glibc 2.41, x86-64. Save the 39-line <code>uaf.cpp</code> from "The three-step pattern" verbatim (the report's line numbers depend on it), then:</p>
+<pre><code class="language-bash">mkdir ch05uaf &amp;&amp; cd ch05uaf
+# paste uaf.cpp here
+g++ -std=c++17 -g uaf.cpp -o uaf &amp;&amp; ./uaf</code></pre>
+<p>Run one, no sanitizers — the exploit in miniature:</p>
+<pre><code class="language-text">victim slot = 0x55d9e7dca2b0, replacement = 0x55d9e7dca2b0
+!!! stale call landed in attacker-chosen code</code></pre>
+<p>One address twice: the 24-byte <code>Evil</code> reclaimed the 16-byte <code>Session</code>'s 32-byte chunk, and <code>registry[0]-&gt;ping()</code> — load, load, indirect call — executed <code>attacker_fn</code>.</p>
+<p>Run two, no spray — why spraying is not optional:</p>
+<pre><code class="language-bash">g++ -std=c++17 -g -DNO_SPRAY uaf.cpp -o uaf-nospray &amp;&amp; ./uaf-nospray
+# Segmentation fault (exit code 139)</code></pre>
+<p>The slot's first 8 bytes now hold glibc 2.41's tcache bookkeeping — a safe-linking-encoded <code>next</code> pointer — which the virtual call dereferences as a vptr. Crash, no control: the attacker's whole job is step 2.</p>
+<p>Run three, under AddressSanitizer:</p>
+<pre><code class="language-bash">clang++ -std=c++17 -g -fsanitize=address uaf.cpp -o uaf-asan &amp;&amp; ./uaf-asan
+#   (clang was absent on the box that captured this output; g++ works identically:
+g++    -std=c++17 -g -fsanitize=address uaf.cpp -o uaf-asan &amp;&amp; ./uaf-asan</code></pre>
+<p>The report, trimmed to the frames that matter:</p>
+<pre><code class="language-text">==13113==ERROR: AddressSanitizer: heap-use-after-free on address 0x502000000010
+READ of size 8 at 0x502000000010 thread T0
+    #0 0x... in main uaf.cpp:38              &lt;- THE ACCESS STACK: the stale vptr load
+    ...
+freed by thread T0 here:
+    #0 ... operator delete(void*, unsigned long)
+    #1 0x... in Session::~Session() uaf.cpp:6
+    #2 0x... in main uaf.cpp:28              &lt;- THE FREE STACK: `delete registry[0]`
+    ...
+previously allocated by thread T0 here:
+    #0 ... operator new(unsigned long)
+    #1 0x... in main uaf.cpp:26              &lt;- THE ALLOCATION STACK
+SUMMARY: AddressSanitizer: heap-use-after-free uaf.cpp:38 in main
+Shadow bytes around the buggy address:
+=&gt;0x502000000000: fa fa[fd]fd fa fa fa fa ...</code></pre>
+<p>What to notice. The report <em>names the free stack and the access stack</em> — lines 28 and 38 of your source. That is the quarantine's debugging value: ASan parked the freed region and shadow-marked it (<code>fd</code> = freed, <code>fa</code> = redzone) long enough to catch the load instead of letting <code>Evil</code> reclaim it. The <code>READ of size 8</code> at offset 0 is the vptr load — the first instruction of the virtual dispatch, caught before it becomes an indirect call. Then prove the mechanism:</p>
+<pre><code class="language-bash">ASAN_OPTIONS=quarantine_size_mb=0 ./uaf-asan
+# ==ERROR: AddressSanitizer: heap-buffer-overflow ... (no longer use-after-free)</code></pre>
+<p>Kill the quarantine and the classification degrades to plain out-of-bounds: the "freed" state exists only while the quarantine holds it — which is why production ships sampling (GWP-ASan) rather than 256 MB per process.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Reading CVEs.</strong> "Use-after-free in X during Y" now parses into the anatomy: find the <em>free</em> (which event triggers Y), find who still holds the <em>stale</em> reference, and ask which rung the exploit had to beat — quarantine, CFI, or neither (data-only).</li>
+<li><strong>Code review.</strong> The four shapes are review patterns: notify-while-iterating in a destructor, member order versus dependency direction, <code>Unretained</code>/<code>post</code> without cancellation, any callback fired during teardown. A diff adding a callback to a destructor's loop deserves the scrutiny of a diff adding <code>strcpy</code>.</li>
+<li><strong>Debugging production crashes.</strong> A crash PC on <code>call *%rdx</code> a few loads from a heap pointer, or a crash "only on tab close," is a UAF fingerprint. Reproduce under ASan with a <em>large</em> quarantine (<code>ASAN_OPTIONS=quarantine_size_mb=1024</code>) for long-lifecycle bugs.</li>
+<li><strong>Design choices.</strong> Make owns-observes explicit: weak handles invalidated at teardown, two-phase destruction, cancellation tokens for anything async. When crossing FFI from Rust, never hand out a <code>*mut T</code> that can outlive its owner without a contract.</li>
+<li><strong>Interview answers with derivations.</strong> Why UAF dominates browsers (event lifetimes escape scope-RAII; mitigations attack determinism or detection, not the invariant); why CFI does not stop it (COOP, data-only); what Asan changes (the quarantine keeps the temporal window observable).</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01, chapter 09 (C++/RAII):</strong> the inversion studied here — scope-bound destructors are exact, but browsers put lifetimes on events, not braces; the four breeding shapes are the escape routes from scope.</li>
+<li><strong>Module 01, chapter 10 (Rust):</strong> the payoff — the borrow checker as compile-time lifetime proof, and this chapter's ledger as the honest boundary of that proof (unsafe, FFI, logical UAF).</li>
+<li><strong>Module 01, chapters 05/06 (heap, object layout):</strong> chunk arithmetic (16 + 8 → 32-byte minimum) and vptr-first layout are the machinery every step stands on.</li>
+<li><strong>Module 01, chapter 19 (allocators):</strong> tcache bins and size classes — why reclaim is deterministic; PartitionAlloc's buckets and super pages as the alternative design.</li>
+<li><strong>Module 02, chapter 04 (heap exploitation):</strong> same allocator, different attacker — tcache poisoning needs a pre-existing overflow; UAF needs no corruption at all, which is why it survived where the Houses fell.</li>
+<li><strong>Module 02, chapter 06 (the mitigation ladder):</strong> CFI's cost and bypass ledger, MTE's tagging (freed memory retagged — a hardware quarantine at a 1/16 guess rate), and the composite stack that makes exploits five bugs long.</li>
+<li><strong>Module 03, chapter 02 (bug taxonomy, queued):</strong> UAF's slot in the memory-corruption family tree, and how fuzzing plus sanitizers surface these bugs in practice.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>The classic ladder — canaries, NX/DEP, ASLR — was built for spatial corruption. Name the invariant each defends, then explain in one sentence why a use-after-free violates <em>none</em> of them.</li>
+</ol>
+<ol>
+<li>The lab runs on glibc 2.41, g++ 14.2, x86-64: <code>sizeof(Session)</code> is 16, <code>sizeof(Evil)</code> is 24. Compute the glibc chunk size for each request, name the tcache bin they share, and predict the relationship between the two addresses the program prints. Then predict what changes if <code>Evil</code> grows to 56 bytes of members.</li>
+</ol>
+<ol>
+<li>In the <code>-DNO_SPRAY</code> run the program segfaults <em>at the virtual call</em>, not at the <code>delete</code>. What exactly do the first 8 bytes of the freed slot contain in glibc 2.41, and why does dereferencing them as a vptr fault?</li>
+</ol>
+<ol>
+<li>Diagnose: this destructor runs, and the process crashes in the <em>second</em> loop iteration with a garbage vptr —</li>
+</ol>
+<pre><code class="language-cpp">   ~Tab() {
+       for (Observer* o : observers_)    // observers_: std::vector&lt;Observer*&gt;
+           o-&gt;onTabClosed(this);         // handler may unregister or destroy others
+   }</code></pre>
+<p>Explain the mechanism in terms of the chapter's three steps, and give the two canonical fixes.</p>
+<ol>
+<li>Diagnose: a browser crash reproduces only when the user closes a tab while a background refresh task is in flight; the task was posted with <code>BindOnce(&amp;Chart::refresh, Unretained(this))</code>. Walk the race window, name the breeding shape, and state what the posted task needed instead of <code>Unretained</code>.</li>
+</ol>
+<ol>
+<li>Your fuzzing harness runs a 20-minute ASan soak and reports nothing; the same input crashes in production with a garbage vptr. Give the two quarantine-related reasons ASan can miss a late use-after-free, and one knob that improves the odds.</li>
+</ol>
+<ol>
+<li>Cross-chapter, module 02 ch04: tcache poisoning and UAF reclaim both rely on the same two tcache properties. Name them, state in one sentence what the attacker controls in each — and which technique needs a pre-existing memory-corruption bug.</li>
+</ol>
+<ol>
+<li>Cross-chapter, module 02 ch03/ch06: the stale virtual call is <code>mov (%rax),%rax; mov (%rax),%rdx; call *%rdx</code>. Which step does <code>-fsanitize=cfi-vcall</code> check, why does the fake-vtable exploit die — and in one sentence each, why do COOP and data-only use-after-free survive it?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Canaries</strong> guard the saved return address; <strong>NX/DEP</strong> guards which pages may execute; <strong>ASLR</strong> guards <em>address knowledge</em> for an attacker who already controls flow. A use-after-free breaks none: the free is well-formed, the chunk healthy, the stale access a normal read of a mapped address — the invariant broken is <em>temporal</em>. No canary differs, no page mis-executes, no flow is stolen.</li>
+</ol>
+<ol>
+<li>Session: 16 + 8 header = 24, aligned to 16 → <strong>32-byte chunk</strong>; Evil: 24 + 8 = 32 → <strong>32-byte chunk</strong>. Same <strong>32-byte tcache bin</strong>; LIFO makes <code>new Evil</code> receive exactly the freed chunk — the program prints the <strong>same address twice</strong>. At 56 bytes: 56 + 8 = 64 → <strong>64-byte chunk</strong>, a different bin; the reclaim fails and the stale call reads tcache bookkeeping as a vptr. Size-class matching is step 2's load-bearing constraint.</li>
+</ol>
+<ol>
+<li>glibc ≥ 2.32 stores the tcache <code>next</code> pointer in the freed chunk's first 8 bytes, <strong>safe-linking encoded</strong> as <code>(slot_address &gt;&gt; 12) ^ next</code> — with an empty bin, essentially <code>slot_address &gt;&gt; 12</code>, a smallish unmapped integer. The call dereferences it as a vptr → SIGSEGV: the <code>delete</code> completed legally, only the use is late.</li>
+</ol>
+<ol>
+<li>Step 1 happens <em>inside</em> the loop: the first handler frees a sibling observer. <code>observers_[i]</code> for the next iteration is stale; any same-size allocation in between reclaims the slot (step 2); the next <code>o-&gt;onTabClosed(this)</code> is a virtual call through reclaimed memory (step 3). Fixes: <strong>two-phase teardown</strong> (notify while alive, then destroy) and <strong>snapshot-then-iterate</strong> (walk a copy, re-check membership).</li>
+</ol>
+<ol>
+<li>The window is post-to-run: the queued task holds a raw, unowned <code>Chart*</code>. Script destroys the tab's graph inside the window — freed (1), reclaimed (2), <code>refresh</code> runs on the stale <code>this</code> (3). Shape 3: async cancellation without ownership. The task needed a weak handle validated before running, or ownership that keeps the object alive — a <code>WeakPtr</code>, never <code>Unretained</code> across an asynchronous boundary.</li>
+</ol>
+<ol>
+<li>First, <strong>quarantine expiry</strong>: the region is parked for a bounded time (256 MB / 1 MB thread-local defaults); once it cycles out and is reused, shadow returns to addressable (<code>0x00</code>) and the late stale access reads a <em>valid</em> replacement — no report. Second, a very late UAF can alias a region freed and reused long before the stale pointer is touched, so the access reads the new owner's data as legitimate. Knob: <code>ASAN_OPTIONS=quarantine_size_mb=1024</code>; the lab showed <code>0</code> degrades the report to <code>heap-buffer-overflow</code> — the "freed" classification exists only while the quarantine holds it.</li>
+</ol>
+<ol>
+<li>Both rely on <strong>per-size-class bins</strong> and <strong>LIFO order</strong>. In tcache <em>poisoning</em> the attacker controls the <strong>free list's next pointer</strong>, via a pre-existing overflow corrupting the in-band <code>next</code> — the allocator then returns an arbitrary address, so a corruption bug is required first. In UAF reclaim the attacker controls <strong>the contents of the freed slot</strong>, acquired by a legal allocation; no metadata is corrupted. That is why UAF survived where the Houses fell: nothing was ever broken.</li>
+</ol>
+<ol>
+<li><code>cfi-vcall</code> checks the <strong>vptr between the two loads</strong>: the value from <code>mov (%rax),%rax</code> must be in the program's bitset of real vtables before use as a table base. The fake-vtable exploit dies because a sprayed vtable pointer is not a registered vtable — the call aborts before <code>call *%rdx</code>. <strong>COOP survives</strong> by aiming the stale call at a <em>real</em> object with a <em>real</em> vtable — legitimate virtual functions become gadgets; CFI checks provenance, not semantics. <strong>Data-only UAF survives</strong> because it makes no indirect call — the stale write never reaches a vcall check.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch04.html"><span class="cn-label">previous</span><span class="cn-title">Ch 04</span></a>
+<a class="next" href="ch06.html"><span class="cn-label">next</span><span class="cn-title">Ch 06</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 02 — Memory security &amp; exploitation</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

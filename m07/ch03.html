@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Windows: the NT heap — deep-roots</title>
+<meta name="description" content="Chapter 03 of module 07: Windows: the NT heap">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Windows: the NT heap — deep-roots">
+<meta property="og:description" content="Chapter 03 of module 07: Windows: the NT heap">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Windows: the NT heap — deep-roots">
+<meta name="twitter:description" content="Chapter 03 of module 07: Windows: the NT heap">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 07 &middot; Windows, Linux, macOS side by side</div>
+<h1 class="post-title">Windows: the NT heap</h1>
+<div class="post-meta">chapter 03 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Every <code>HeapAlloc</code> is served by a two-tier machine in ntdll: a <strong>back end</strong> that owns real address space — segments reserved at 1 MB granularity, committed page by page, chopped into blocks and knitted back together by coalescing — and a <strong>front end</strong>, the <strong>LFH</strong> (Low Fragmentation Heap), which intercepts <em>hot</em> sizes and serves them from pre-carved same-size containers that fragmentation cannot strand. It wakes only after a size class has been hit about 17 times, and never above 16 KB (0x4000). Between the tiers sits an 8-byte header per block — since Windows 8 it is <strong>XOR-encoded with a per-heap key</strong>, because two decades of heap exploitation taught Microsoft what happens to plaintext metadata. When it breaks: pageheap (<code>gflags ... +hpa</code>), <code>!heap -s -a</code>, UMDH diffs.</blockquote>
+<h2 id="the-exchange-again-and-why-it-needs-two-tiers">The exchange, again — and why it needs two tiers</h2>
+<p>Module 01 ch19 derived every allocator from one trade: the OS sells only 4 KB pages (module 01 ch03), programs want 16-byte nodes, and the allocator makes change while promising cheap reuse, bounded waste, and metadata hostile to forgery. The NT heap — a per-process <code>RtlAllocateHeap</code>, born with NT 3.1 — is the Windows answer, and like glibc's ptmalloc it is two machines bolted together: a general back end plus a fast-path front end. glibc pairs <code>tcache</code> with an arena; Windows pairs the LFH with the segment manager. tcache is per-thread and always on; the LFH is per-heap and <strong>activated by heat</strong> — only sizes that prove themselves get the fast path.</p>
+<pre><code class="language-text">        malloc(n) -&gt; HeapAlloc -&gt; RtlAllocateHeap
+                        |
+        round (n + 8 B header) up to a 16-B multiple     (x64; 8-B on x86)
+                        |
+        +---------------+----------------+
+        |                                |
+  n &lt;= 0x4000 AND class hot      n &gt; 0x4000, or class cold
+  (17+ hits)                     (counter &lt; 17)
+        |                                |
+ +------v-------+  LFH miss    +---v---------------------------+
+ | FRONT END    | -----------&gt; | BACK END                      |
+ | (LFH)       |  fall through| segment: 1 MB (0x100000)      |
+ |             |              | reserved, 8 KB committed;     |
+ | bucket ladder (x64):       | pages commit on demand; UCR   |
+ |  0x10 0x20 0x30 ... 0x1f0  | list tracks uncommitted holes |
+ |  0x200 ... step widens ...  | decommit returns idle pages   |
+ |  ceiling 0x4000 (16 KB)    |                               |
+ |                            | free chunks: size-indexed    |
+ | per bucket: UserBlock      | free lists (ListHints),       |
+ | containers of same-size    | coalesced with neighbors      |
+ | chunks; busy bitmap;       |                               |
+ | per-CPU affinity (Win8+)   | &gt; VirtualMemoryThreshold:    |
+ | random slot order (Win8+,  | own VirtualAlloc region +    |
+ | anti-UAF)                  | fatter header, randomized    |
+ +----------------------------+ placement (Win8+)            |
+                              +-------------------------------+</code></pre>
+<p>Two properties deserve derivation. <strong>Why a front end:</strong> a general best-fit allocator must search and split, and its free space <em>fragments</em> — free 100-byte holes scatter between live blocks until a 1 KB request fails with 1 MB free. A bucket of same-size chunks is immune by construction: every hole in it is an exact fit for the class, so external fragmentation inside a bucket is zero and waste is bounded by the class step.</p>
+<h2 id="the-back-end-segments-free-lists-and-the-decommit-bargain">The back end: segments, free lists, and the decommit bargain</h2>
+<p><code>RtlCreateHeap</code> (the engine under <code>HeapCreate</code>) reserves its first <strong>segment: 1 MB (0x100000) of address space with only 8 KB (0x2000) committed</strong> on a default Windows 10 x64 heap — both numbers live in <code>_HEAP</code> as <code>SegmentReserve</code>/<code>SegmentCommit</code>, so they are policy, not law. The heap grows by committing pages on demand, adds new ~1 MB segments as they fill, and walks a <strong>UCR list (uncommitted ranges)</strong> to know which holes have no backing — module 01 ch03's demand paging bought wholesale: reserve is free, commit is the real cost, the same bargain as Linux's anonymous brk.</p>
+<p>Carved from committed pages are <strong>blocks</strong>, each prefixed by an 8-byte <code>_HEAP_ENTRY</code>. Free blocks sit on doubly linked <strong>free lists</strong> indexed by size, with "ListHints" caching the last-found spot; freeing coalesces a block with its neighbors (the next header records <code>PreviousSize</code>, so neighbors are found without a scan). The 1990s folklore that birthed the LFH lives here: NT 3.x/4-era applications churned these lists into dust — free space trapped between live blocks, allocation slowing as lists grew, large requests failing with plenty of total free memory.</p>
+<p>The back end also shrinks: a coalesced free block larger than <code>DeCommitFreeBlockThreshold</code> (~1 KB on a Windows 10 x64 default heap), once total free passes <code>DeCommitTotalFreeThreshold</code> (~4 KB), has tail pages returned via <code>VirtualFree(MEM_DECOMMIT)</code>. Hence <code>!heap -s</code> shows <strong>Reserve</strong> flat at megabytes while <strong>Commit</strong> rises and falls with the workload: the heap keeps its address space and gives back the memory. Escape hatch: requests above the heap's <code>VirtualMemoryThreshold</code> — <strong>0x7F000 (508 KB) as set by <code>RtlCreateHeap</code> on 32-bit Windows 7/8</strong> — never touch the free lists; they get a dedicated <code>VirtualAlloc</code> region, a fatter <code>_HEAP_VIRTUAL_ALLOC_ENTRY</code> header, and (Windows 8+) randomized size and offset.</p>
+<h2 id="the-front-end-the-lfh-its-activation-counter-and-the-ladder">The front end: the LFH, its activation counter, and the ladder</h2>
+<p>The LFH is not a separate heap — Microsoft's docs say it plainly: it is a <em>policy</em> the heap manager applies, automatically since Windows Vista, to sizes that earn it. Activation is per size class, and the mechanism (verified against Windows 8 back-end code, functionally the same on 7) is beautifully cheap: an array of 16-bit counters, <code>FrontEndHeapUsageData</code>, one per size. Each allocation of a size adds <strong>0x21 (33)</strong> — chosen so 17 additions push the low five bits past 0x10. The test is literally <code>(count &amp; 0x1F) &gt; 0x10</code>, so the <strong>17th allocation of the same size flips that class onto the LFH</strong>; a separate <code>count &gt; 0xFF00</code> test promotes slow accumulators. Frees run the counter down.</p>
+<p>Hot classes are served from <strong>UserBlock containers</strong> — <code>1 &lt;&lt; PageShift</code>-byte slabs (capped at 0x78000, Windows 8 32-bit) carved entirely into same-size chunks, tracked by a one-bit-per-chunk busy bitmap. Windows 8 added two behaviors: <strong>allocation affinity</strong> — per-logical-processor subsegment arrays (the TEB's <code>HeapVirtualAffinity</code> picks one), so a hot bucket doesn't serialize threads — and <strong>randomized slot order</strong>, which demolished the "predict the next chunk" step of every pre-2012 use-after-free groom.</p>
+<p>The ladder (sizes round <em>up</em> into the next class), per version:</p>
+<pre><code class="language-text">classic NT heap (x64, Vista .. Win11, still the default for desktop apps):
+    classes step 16 B at the bottom (forced: chunks are 16-B multiples),
+    the step widens as classes grow; hard ceiling at 0x4000 (16 KB).
+    Above 0x4000: back end only, always.
+
+segment heap (Windows 10, 1709/1809 era onward; default for UWP/MSIX apps,
+    opt-in otherwise; classic desktop apps keep the NT heap as of Win11):
+    16-B classes up to 0x200 (512 B), then the half-power ladder
+    0x200, 0x300, 0x400, 0x600, 0x800, 0xC00, 0x1000, 0x1800, ...
+    ceiling again 0x4000.</code></pre>
+<p><code>_LFH_HEAP</code> carries at most <strong>129 buckets</strong> (Windows 8, 32-bit; <code>Buckets[129]</code>) — why the ladder widens with size instead of tracking every 16-byte multiple to the ceiling.</p>
+<h2 id="the-armored-header-why-your-metadata-is-xor-soup">The armored header: why your metadata is XOR soup</h2>
+<p>Every block — front end or back end — is prefixed with 8 bytes of metadata, the <code>_HEAP_ENTRY</code>, at <code>user_pointer - 8</code> (x64, classic NT heap, Vista..Win11): <code>Size:2B</code> (granularity units — 16 B on x64, 8 B on x86, so <code>malloc(3)</code> on x64 is one 16-byte chunk, <code>Size = 1</code>), <code>Flags:1B</code> (bit 0 is <strong>busy</strong>), <code>SmallTagIndex:1B</code>; then <code>PreviousSize:2B</code>, <code>SegmentOffset:1B</code>, <code>UnusedBytes:1B</code> — the next header's <code>PreviousSize</code> is how free finds its neighbors without a scan.</p>
+<p>Since Windows 8 those bytes are not what they seem: <code>_HEAP</code> stores an <code>Encoding</code> key (an entire <code>_HEAP_ENTRY</code>-shaped template) plus an <code>EncodeFlagMask</code> gate; headers are written XOR'd with the key and decoded on every legitimate access. LFH chunks go further — the first 4 bytes are <code>heap_entry ^ subsegment_ptr ^ global_LFH_key ^ (chunk_address &gt;&gt; 3)</code> (Windows 8, 32-bit), so a forged header is valid <em>only at one address</em>.</p>
+<p>The why is module 02 ch04's curriculum. The classic heap exploit is a metadata overwrite: overflow chunk A into chunk B's header, corrupt B's size or free-list links, and make <code>free()</code>/unlink perform your write. Windows paid that tuition in public — <strong>safe unlinking landed in Windows XP SP2</strong> (<code>Blink-&gt;Flink == Flink-&gt;Blink</code>, or abort), free-list pointers were XOR-obfuscated in Vista, and Windows 8 added full header encoding, <code>RtlpLogHeapFailure</code> diagnostics, the <code>Heap == Header</code> check (freeing a fake <code>_HEAP</code> — Ben Hawkes' technique — dies there), randomized LFH slot order, and randomized virtual allocations.</p>
+<h2 id="two-allocation-worlds-your-heap-and-the-kernel-s-handle-tables">Two allocation worlds: your heap, and the kernel's handle tables</h2>
+<p>Not everything that looks heap-allocated is in your heap. The USER objects behind <code>HWND</code>/<code>HMENU</code> — a window's <code>WND</code> record, its class, its menus — live in the <strong>desktop heap</strong>, a win32k-owned heap shared per desktop and mapped read-only into each process. An <code>HWND</code> is not a pointer: it is a <strong>16-bit index into the desktop's handle table plus a 16-bit generation counter</strong> (reuse bumps the generation, so stale handles fail rather than alias). A process-heap overflow therefore can never forge a window object — that object is a handle-table lookup into a different heap in a different range.</p>
+<h2 id="the-instrumented-heap-debug-flags-pageheap-and-the-fill-patterns">The instrumented heap: debug flags, pageheap, and the fill patterns</h2>
+<p><code>_HEAP.ForceFlags</code> (set by gflags or Application Verifier) carries the heap's own debug features — tail checking, free checking, tagging. Above that sits <strong>pageheap</strong>, the big hammer:</p>
+<ul>
+<li><code>gflags /p /enable app.exe /full</code> — <strong>full pageheap</strong>: every allocation is page-aligned, user data ending exactly at a page boundary against a <code>PAGE_NOACCESS</code> guard page. An overflow faults <em>at the store instruction that wrote past the end</em>, not at free. Cost: roughly one extra committed page per allocation — the docs warn it can exhaust memory.</li>
+<li><code>gflags /p /enable app.exe</code> — <strong>standard pageheap</strong>: fill patterns after each block, checked when the block is freed. Cheaper, later.</li>
+<li><code>gflags /i app.exe +hpa</code> — the same switch in flag form (<code>/size</code> spares the small allocations); <code>gflags /p</code> lists what's on (<code>traces</code> = standard, <code>full traces</code> = full). Settings are registry-persistent and bind only at process start: enable, then <em>restart the process</em>.</li>
+</ul>
+<p>The fill patterns are folklore every Windows debugger reads by sight: <strong>0xbaadf00d</strong> = freshly heap-allocated memory nobody wrote; <strong>0xfeeeffee</strong> = memory after <code>HeapFree</code>; <strong>0xabababab</strong> = no-man's-land padding after a block; <strong>0xdeadbeef</strong> = the ancestral poison value. One layer down, the MSVC debug CRT paints 0xcd (freshly malloc'd), 0xdd (freed), 0xfd (guard fences). Which layer painted the bytes names the culprit allocator: 0xfeeeffee in a dump means the OS heap already freed that block (use-after-free, module 03 ch02).</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The 17-allocation LFH activation is exact and mechanical</strong>: the counter adds 0x21 per allocation, the test is <code>(count &amp; 0x1F) &gt; 0x10</code>, so the 17th net allocation of a size flips it onto the LFH; <code>count &gt; 0xFF00</code> is the slow cumulative path (Windows 7/8 mechanism, carried into 10/11).</li>
+<li><strong>The encoded header means a raw dump lies to you</strong>: an <code>_HEAP_ENTRY</code> dump on Windows 8+ is garbage until XOR'd with <code>_HEAP.Encoding</code> (+0x080 on a Win10 x64 <code>_HEAP</code>); LFH chunks also fold in the subsegment pointer, a global LFH key, and <code>chunk_address &gt;&gt; 3</code>.</li>
+<li><strong>The fill-pattern cheat sheet</strong>: 0xbaadf00d allocated-unwritten, 0xfeeeffee freed-by-OS-heap, 0xabababab post-block padding; 0xcd/0xdd/0xfd are the MSVC debug CRT (new/freed/fences).</li>
+<li><strong>One !heap command per question</strong>: <code>!heap -s</code> (Reserv/Commit/Free; Flags 0x00008002 = LFH, modern WinDbg adds a FrontEnd column, 2 = LFH); <code>!heap -stat -h &lt;h&gt;</code> (size histogram — the leak detector); <code>!heap -flt s &lt;size&gt;</code> (one size); <code>!heap -x &lt;addr&gt;</code> (which heap and front end own an address); <code>!heap -a &lt;h&gt;</code> = <code>-h -f -m</code>, everything, slow; <code>!heap -triage</code> — per Microsoft's docs the <em>only</em> mode that validates LFH corruption.</li>
+<li><strong>Full pageheap costs about a page per allocation</strong> — restrict with <code>/size</code> or fall back to standard pageheap when full blows up the process; settings survive reboots and bind only at process start. And <code>!heap -stat</code> sizes are granularity units, not bytes: ×16 on x64 (×8 x86), so a "size 0x4f0" line means 0x4f0 × 16 bytes per block.</li>
+<li><strong>The 0x4000 (16 KB) LFH ceiling has held since Vista</strong>, segment heap included; above it you talk to the back end, above ~0x7F000 (32-bit Win7/8) to <code>VirtualAlloc</code> itself.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>No Windows box was available while writing this chapter</strong> (this sandbox runs Linux, no wine), so the walkthroughs below are <em>documented</em> sessions — commands, flags, and expected output fragments, version-marked and reconstructed from tool documentation and published dumps, not a live run. Reproduce them on any Windows 10/11 VM with WinDbg and the Debugging Tools (free in the Windows SDK).</p>
+<p><strong>1. A <code>!heap -s</code> session, step by step</strong> (documented walkthrough):</p>
+<pre><code class="language-c">/* heaplab.c — cl /W4 /Zi heaplab.c   (Windows 10/11, x64) */
+#include &lt;windows.h&gt;
+
+int main(void) {
+    /* warm one size class: 17+ allocations flips it onto the LFH */
+    void *hot[20];
+    for (int i = 0; i &lt; 20; i++)
+        hot[i] = HeapAlloc(GetProcessHeap(), 0, 0x30);   /* 48 B class */
+
+    void *cold = HeapAlloc(GetProcessHeap(), 0, 0x1234); /* cold size */
+
+    DebugBreak();                     /* stop here for WinDbg */
+    for (int i = 0; i &lt; 20; i++) HeapFree(GetProcessHeap(), 0, hot[i]);
+    HeapFree(GetProcessHeap(), 0, cold);
+    return 0;
+}</code></pre>
+<p>Under WinDbg (<code>windbg heaplab.exe</code>), at the <code>DebugBreak</code> run <code>!heap -s</code>. Expected shape (Windows 10 x64; numbers differ):</p>
+<pre><code class="language-text">0:001&gt; !heap -s
+Heap     Flags   Reserv  Commit  Virt   Free  List   UC  Ext  FrontEnd
+00550000 00000002     1 MB   148k   1 MB    13k     5     1      2   (LFH)</code></pre>
+<p><code>Flags</code> 0x00000002 is <code>HEAP_GROWABLE</code>; the high bit 0x00008002 (or FrontEnd reading 2) is the LFH announcing itself. Then <code>!heap -stat -h 00550000</code> — the size histogram, with the 0x30 class at ~20 blocks (sizes are granularity units; ×16 for bytes on x64). Free everything, <code>DebugBreak()</code> again, rerun <code>!heap -s</code>: <strong>Commit drops, Reserve does not</strong> — the decommit policy at work. <code>!heap -x &lt;hot[0]&gt;</code> reports the owning heap and front end; the 0x1234 allocation never appears in an LFH bucket — cold sizes don't get one.</p>
+<p><strong>2. gflags +hpa catching a deliberate overflow</strong> (documented narrative): enable <code>gflags /p /enable heapovf.exe /full</code>, restart the process, and let the program do <code>char *p = malloc(16); memset(p, 0x41, 17);</code>. Expected: an access violation <strong>at the memset's last store</strong>, one byte past the allocation — full pageheap placed the 16 user bytes against a <code>PAGE_NOACCESS</code> guard page. Without pageheap, that 17th byte lands in the next chunk's header, which the XOR decoding turns into garbage that surfaces much later as a corruption failure in <code>RtlFreeHeap</code>. <code>!heap -p -a &lt;address&gt;</code> prints the block details; disable with <code>gflags /p /disable heapovf.exe</code>.</p>
+<p><strong>3. UMDH for leaks</strong>: enable the stack-trace database (<code>gflags /i bloat.exe +ust</code>), restart, then <code>umdh -p:PID -f:snap1.log</code> (baseline), exercise the leak, <code>umdh -p:PID -f:snap2.log</code>, and <code>umdh snap1.log snap2.log -f:diff.txt</code>. The diff's top lines are <code>+ &lt;bytes&gt; &lt;count&gt; &lt;allocating stack&gt;</code> — read top-down: that's your leak.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>"Is it a leak?"</strong> — <code>!heap -s</code> before and after a workload cycle: Reserve flat + Commit oscillating = healthy decommit; Commit ratcheting + one size class climbing in <code>!heap -stat -h</code> = a leak, and UMDH diffs name the stack.</li>
+<li><strong>"Heap corruption detected"</strong> — the crash site is the <em>victim</em>; full pageheap plus a restart moves the crash to the offending write.</li>
+<li><strong>Performance</strong>: sizes just past a ladder edge pay for the next class (a 0x201 request on the segment-heap ladder pays 0x300) — batch structures under the edge (module 01 ch19's rounding arithmetic).</li>
+<li><strong>Exploit-side literacy</strong> (module 02): sprays target 17+ allocations, post-2012 UAF grooms can't predict slot order, header forgery needs the per-heap key.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch19 (allocator design patterns)</strong> — LFH + back end = glibc's tcache + arena architecture; the bucket ladder is size-class segregation; 17-hit activation is tcache's always-on policy replaced by a heat detector.</li>
+<li><strong>Module 02 ch04 (heap exploitation)</strong> — the encoded header, safe unlinking (XP SP2), and the <code>Heap == Header</code> check are the counter-moves to that chapter's unlink/metadata-overwrite attacks.</li>
+<li><strong>Module 03 ch02 (the memory-bug family)</strong> — 0xbaadf00d and 0xfeeeffee are the OS heap's fingerprints for the uninitialized-read and use-after-free members; pageheap converts late crashes into at-fault ones.</li>
+<li><strong>Module 07 ch05 (Linux memory machinery)</strong> — slab/slub (kmalloc-8..96, the special kmalloc-192, /proc/slabinfo) vs the LFH's UserBlocks and per-LP affinity: same problem, kernel vs user space.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>On 64-bit Windows 10 (classic NT heap), a program calls <code>malloc(3)</code> and, elsewhere, <code>malloc(18)</code>. How many bytes does each chunk consume <em>including its header</em>, and what is each <code>_HEAP_ENTRY</code>'s <code>Size</code> field?</li>
+</ol>
+<ol>
+<li>A loop allocates the same 0x60-byte user size 20 times, freeing each block immediately after the next (never more than 2 live at once). A colleague claims the 0x60 class is "on the LFH by allocation #17." Is he right? Justify with the counter mechanism.</li>
+</ol>
+<ol>
+<li><em>Concept.</em> A bucket of same-size chunks has zero external fragmentation <em>within</em> the bucket — by argument, not luck. Give the argument, then explain why the heap as a whole can still fragment.</li>
+</ol>
+<ol>
+<li><em>Concept.</em> The Windows 8 LFH header encoding XORs in <code>(chunk_address &gt;&gt; 3)</code>. What class of forgery does that term kill, even for an attacker who knows the key and the subsegment pointer?</li>
+</ol>
+<ol>
+<li><em>Bug diagnosis.</em> An application crashes in <code>RtlFreeHeap</code> (heap corruption) after hours of correct running. With full pageheap enabled and the process restarted, it crashes immediately in a <code>strcpy</code> writing 16 bytes into a 0x50-byte allocation. Explain (a) why the original crash was late, (b) why the pageheap crash is at the strcpy, (c) what the corrupted bytes did to the next chunk's header.</li>
+</ol>
+<ol>
+<li><em>Bug diagnosis.</em> <code>!heap -s</code> around a workload loop shows Commit climbing 4 MB to 40 MB, never dropping; <code>!heap -stat -h</code> shows <code>size 0x4f0</code> with a block count growing ~50 per iteration. What is the program doing, and what are your next two commands?</li>
+</ol>
+<ol>
+<li><em>Cross-chapter.</em> "Windows' LFH is just glibc's tcache." Name two structural differences (ownership, activation) and one behavioral difference on a front-end miss, using module 01 ch19's vocabulary for the glibc side.</li>
+</ol>
+<ol>
+<li><em>Layout.</em> After a heap overflow, an attacker wants to overwrite a window object's <code>WNDPROC</code> by treating an <code>HWND</code> as a pointer into the process heap and writing through it. Why does that fail — where does the <code>WND</code> record live, and what is an <code>HWND</code>?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>16 bytes and 32 bytes; <code>Size</code> fields 1 and 2.</strong> On x64 every chunk is a multiple of 16 (granularity units of 16), the 8-byte <code>_HEAP_ENTRY</code> included: 3 + 8 = 11 → 16, <code>Size = 1</code>; 18 + 8 = 26 → 32, <code>Size = 2</code>.</li>
+</ol>
+<ol>
+<li><strong>No.</strong> The activation counter increments by 0x21 per allocation of the size and <em>decrements on each free</em>; the trigger <code>(count &amp; 0x1F) &gt; 0x10</code> needs 17 <em>net</em> live allocations of the class, and with every block freed immediately the counter never nets 17 — only the slow cumulative path (<code>count &gt; 0xFF00</code>) could promote it.</li>
+</ol>
+<ol>
+<li><strong>Argument:</strong> every hole in a bucket is exactly the class size, hence a perfect fit for the next request of that class — nothing is "free but too small"; waste is bounded inside the chunk. <strong>Whole heap:</strong> the back-end free lists still serve cold sizes, large sizes, and everything before activation; those blocks coalesce and split against arbitrary neighbors, so holes between live blocks of <em>different</em> sizes can still strand.</li>
+</ol>
+<ol>
+<li><strong>Replay forgery at a different address.</strong> Knowing key and subsegment, an attacker could compute bytes that decode to a valid size/flags — but with the chunk's own address (&gt;&gt; 3) as an XOR input, those bytes decode correctly only <em>where the heap originally put them</em>; no one "magic header" can be planted anywhere.</li>
+</ol>
+<ol>
+<li><strong>(a)</strong> The 16th byte of the strcpy landed in the <em>next</em> chunk's <code>_HEAP_ENTRY</code> (a header sits immediately after the previous chunk's user data) and corrupted the XOR-encoded size/flags; it sat as garbage until that chunk was freed and <code>RtlFreeHeap</code>'s decode-and-validate failed — hours later, far from the perpetrator. <strong>(b)</strong> Full pageheap ends each allocation against a <code>PAGE_NOACCESS</code> guard page, so the overflow faults <em>at the store instruction</em> — the strcpy itself. <strong>(c)</strong> The corrupted byte changed the next chunk's decoded size/flags (bit 0 of <code>Flags</code> is busy).</li>
+</ol>
+<ol>
+<li><strong>A size-class leak: ~50 blocks of 0x4f0 × 16 bytes (x64) allocated and never freed per iteration.</strong> Next: UMDH snapshots around one iteration (<code>gflags /i bloat.exe +ust</code>, restart, <code>umdh -p:PID -f:snap1.log</code>, one loop, <code>umdh -p:PID -f:snap2.log</code>, <code>umdh snap1.log snap2.log -f:diff.txt</code>) to capture the allocating stack; and <code>!heap -flt s 0x4f0</code> to enumerate the blocks.</li>
+</ol>
+<ol>
+<li><strong>Ownership:</strong> tcache is <em>per-thread</em> (each thread's private bins); the LFH is <em>per-heap</em> — every heap object has its own front end, shared by threads, with per-logical-processor <em>affinity</em> softening contention. <strong>Activation:</strong> tcache is always on from the first malloc; the LFH activates per size class when the heat counter trips (17 net, or 0xFF00 cumulative). <strong>On a miss:</strong> glibc falls to the arena's unsorted/small/large bins and consolidation over brk/mmap; Windows falls to the back end's free lists and segments.</li>
+</ol>
+<ol>
+<li><strong>It fails twice.</strong> An <code>HWND</code> is not a pointer: it is a 16-bit index into the desktop's USER handle table plus a 16-bit generation counter, so "writing through" it dereferences a handle-table slot, not heap memory. And the <code>WND</code> record lives in the <strong>desktop heap</strong> — win32k-owned, shared per desktop, mapped read-only into the process — not in the process heap the overflow corrupted.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch02.html"><span class="cn-label">previous</span><span class="cn-title">Ch 02</span></a>
+<a class="next" href="ch04.html"><span class="cn-label">next</span><span class="cn-title">Ch 04</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 07 — Desktop OS internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

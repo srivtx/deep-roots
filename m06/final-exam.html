@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 06 final exam — deep-roots</title>
+<meta name="description" content="Final exam for module 06 (a memory-distrust machine), with worked answers.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Module 06 final exam — deep-roots">
+<meta property="og:description" content="Final exam for module 06 (a memory-distrust machine), with worked answers.">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Module 06 final exam — deep-roots">
+<meta name="twitter:description" content="Final exam for module 06 (a memory-distrust machine), with worked answers.">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 06 &middot; a memory-distrust machine &middot; final exam</div>
+<h1 class="post-title">Module 06 final exam</h1>
+<div class="post-meta">every chapter &middot; worked answers behind the fold</div>
+<p>Twelve questions across all five chapters, plus the module 01/05 comparisons the module is framed against. Closed book; answers are worked, not stated — the derivations are the point. Scoring: 11+ = you own this module; 8-10 = solid, revisit the chapters your misses cluster in; &lt;8 = the chapter quizzes are the study path.</p>
+<p><strong>Part I — the kernel and the kill policy (chapters 01-02)</strong></p>
+<ol>
+<li>A Mach task owns exactly three things; a thread owns none of them. Name the three, name what a thread brings instead, and derive why <code>task_for_pid</code> is entitlement-gated from what a task port is worth.</li>
+</ol>
+<ol>
+<li>A phone maps 2 GB of dense framework text. For a 48-entry TLB, give the coverage at 4K and at 16K pages; for the mapping itself, give the page-table bytes at 4K and at 16K. State the factor both answers share, and the cost that buys it.</li>
+</ol>
+<ol>
+<li>An app holds 120 MB of resident dirty anonymous memory and 30 MB of touched clean file-backed pages. The compressor later folds 48 MB of the now-cold dirty pages into a 12 MB store. Give RSS, phys_footprint, and the RAM the kernel got back — then name which number the foreground band's limit checks.</li>
+</ol>
+<ol>
+<li>"Volatile purgeable memory is dirty by content and clean by promise." Explain the three-tier footprint economy behind that sentence, and derive why a 200 MB purgeable image cache can sit near zero footprint while a 200 MB decoded bitmap cannot.</li>
+</ol>
+<ol>
+<li>A user reports the app "crashes" while visible. The only artifact is a <code>JetsamEvent-*.ips</code>: <code>bug_type</code> 210, <code>pageSize</code> 16384. In the <code>processes</code> array, Music shows <code>rpages</code> 300,000 and no <code>reason</code>; your app shows <code>rpages</code> 260,000, <code>states ["frontmost"]</code>, and <code>reason "per-process-limit"</code>. Crash or kill? Who died, why did the bigger claim survive, and what do you fix first?</li>
+</ol>
+<p><strong>Part II — IPC and the launch path (chapters 03-04)</strong></p>
+<ol>
+<li>"Checking a uid on every operation" and "holding a send right" both control access. What does ambient authority permit that a capability makes structurally impossible — use the confused deputy and the check-to-use window — and what does the capability <em>not</em> give you, which the audit token exists to supply?</li>
+</ol>
+<ol>
+<li>Your camera app hands a 12 MB photo to an XPC thumbnail service on every shot. A teammate proposes a plain TCP socket "for portability"; your Android counterpart says Binder would move it in one copy. For socket, Binder, and a page-aligned OOL descriptor with <code>deallocate</code> set: count the copies, name who frees, and name the first hard wall each hits.</li>
+</ol>
+<ol>
+<li>Sixty processes each fault, read-only, on the same three shared-cache data pages; the kernel fixes each at page-in into the cache's VM object. Count the fixed physical pages. Then process A writes a global on page 2, and process B writes a global on page 2 too. Recount — and state the invariant that makes your first count possible.</li>
+</ol>
+<ol>
+<li>A TestFlight build's first launch after every update takes 2.1 s; the second takes 380 ms. The team files "regression: dyld is slow," attaching a Mac profile captured with <code>DYLD_PRINT_STATISTICS=1</code> (180 ms pre-main). Diagnose the user's number and the profiler's number — what was invalidated, and why did the instrument lie?</li>
+</ol>
+<p><strong>Part III — trust, and the two-platform view (chapter 05 + the comparisons)</strong></p>
+<ol>
+<li>A stack overflow in an arm64e <em>system</em> process offers four moves: (a) a ret-to-libc chain through a corrupted saved LR; (b) replay of a leaked, correctly signed return address; (c) a jump to a legitimate function entry with controlled arguments; (d) blind-forged return addresses over 1,000 crash-loop restarts. Dead or alive, each, and why? Why does the same overflow still work in a third-party app's own code?</li>
+</ol>
+<ol>
+<li>A build script copies a codec dylib into the app bundle <em>after</em> the <code>codesign</code> phase. On macOS, with <code>disable-library-validation</code>, the app runs; on iOS the process is <code>killed: 9</code> at first launch. What was missing from the signature, which two checks did iOS run that macOS was told to skip, and what is the pipeline fix?</li>
+</ol>
+<ol>
+<li>Android's Zygote and iOS's shared cache solve the same problem with opposite mechanisms. Which cost is amortized into a <em>process</em> and which into a <em>file</em>? Which design shares <em>dirtied</em> pages? And why does iOS's no-fork, kill-first model require the file answer?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<p><strong>Part I</strong></p>
+<ol>
+<li>The task owns a <strong>vm map</strong>, an <strong>ipc space</strong> (the port-rights table), and <strong>threads</strong>; a thread brings only registers and a stack — the resource-container / execution-unit split (ch01). <code>task_for_pid</code> (trap 26) mints a <em>task port</em>: read/write over the victim's entire vm map. Ungated, that would turn every process's memory into ambient authority, so macOS gates it with <code>taskgated</code> and iOS with entitlements (ch01; the port machinery is ch03).</li>
+</ol>
+<ol>
+<li><strong>TLB coverage:</strong> 48 × 4 KB = 192 KB; 48 × 16 KB = <strong>768 KB</strong>. <strong>Page tables:</strong> at 4K an L3 table covers 2 MB, so 2 GB costs 1024 tables × 4 KB = <strong>4 MB</strong>; at 16K it covers 32 MB, so 64 tables × 16 KB = <strong>1 MB</strong>. Both improve by the <strong>same 4x</strong>: each entry covers 4x more VA at identical per-entry cost. The price is internal fragmentation — the unit of allocation, protection, and transfer quadruples; one touched byte in a sparse structure dirties 16 KB (ch01's bet on density).</li>
+</ol>
+<ol>
+<li><strong>RSS = 102 MB</strong> (72 MB resident dirty + 30 MB clean; the folded pages left the page tables, and the 12 MB copy is unattributed). <strong>phys_footprint = 84 MB</strong> (72 MB <code>internal</code> + 12 MB <code>internal_compressed</code>; clean file-backed pages are excluded — droppable, re-faultable). <strong>RAM back: 36 MB</strong> — compression <em>creates</em> memory: 12 MB spent to park data that cost 48 MB resident. The band limit checks <strong>footprint</strong>: killing you frees the compressed copy — the debt an RSS-only tool cannot see (ch02).</li>
+</ol>
+<ol>
+<li>Three tiers (ch02; the ledger underneath is module 01 ch03): <strong>clean file-backed</strong> — not in footprint, dropped and re-faulted from the file; <strong>volatile purgeable</strong> — dirty by content, disposable by promise, not in footprint, held in 8 age groups and dropped oldest-first under pressure, the purge disclosed only when you re-mark; <strong>nonvolatile/dirty</strong> — billed as <code>internal</code>, compressed or killed with you. The 200 MB cache marked volatile carries a regeneration promise the kernel accepts as payment; the decoded bitmap is live anonymous data with no promise — billed, then compressed, then killed for.</li>
+</ol>
+<ol>
+<li><strong>A kill, not a crash.</strong> <code>bug_type</code> 210 is the Jetsam report — no thread backtraces by design (crashes are 309, with stacks). The victim is the entry with <code>reason</code>: your app, at 260,000 × 16,384 ≈ <strong>4.1 GB</strong> claimed while frontmost. <code>per-process-limit</code> means footprint crossed <em>its own band's</em> resident limit — a ledger check, not a comparison — so Music's larger <code>rpages</code> are irrelevant: charged to a different, bigger allowance, no global shortage required. Fix footprint itself: mapped assets instead of decoded copies, volatile purgeable caches — the dirty + compressed gauge showed this coming (ch02).</li>
+</ol>
+<p><strong>Part II</strong></p>
+<ol>
+<li>Ambient authority re-derives permission from <em>who the process is</em>, per operation: anyone passing an identity check can steer a privileged process into acting for them (the confused deputy), and check and use are separated in time — a window to race. A send right cannot even <em>name</em> an un-granted port: names index a kernel-owned table, entries arrive only by delegation or inheritance, and every <code>mach_msg</code> validates against that table — possession is the permission, no check to fool, no window (ch03). What it cannot supply is the caller's <em>identity</em>: capabilities authenticate the channel, not who is on it. The kernel-stamped audit token (pid, pid-version, uids, code-signing word) names the caller for the handler's policy — checked per message, since the token follows the latest message (ch03; the signing word is ch05).</li>
+</ol>
+<ol>
+<li><strong>Socket: two copies</strong> — into a kernel buffer, out again; the receiver frees its buffer. <strong>Binder: one copy</strong> into the receiver's pre-mapped ~1 MB pool — a 12 MB parcel dies as <code>TransactionTooLargeException</code>: the pool is the first wall (module 05 ch03). <strong>Mach OOL, page-aligned with <code>deallocate</code>: zero copies</strong> — the kernel <em>moves</em> the sender's pages into the receiver's map (the sender's mapping vanishes); the receiver owns them and must <code>vm_deallocate</code> or leaks them until exit. The ~2 GiB inline ceiling never applies: the payload rides out-of-line. Per shot, two 12 MB copies is a battery line too; large <code>xpc_data</code> already rides OOL (ch03).</li>
+</ol>
+<ol>
+<li><strong>Three fixed pages.</strong> Each faulted page is fixed once — the kernel applies the chained fixups and inserts the page into the cache's VM object, which backs every mapper — and the <strong>uniform per-boot slide</strong> is the invariant that makes one fixed copy valid for all sixty: per-process slides would force a private fixed copy each — the 200 MB × N <code>__DATA</code> arithmetic again (ch04). After the two writes: <strong>five</strong> — A and B each take a private COW copy of page 2, the fixed original still serving the other fifty-eight; pages 1 and 3 stay single copies (ch04; the fault is module 01 ch03's).</li>
+</ol>
+<ol>
+<li>Neither number is a dyld regression. The 2.1 s is the <strong>first-launch regime</strong>: the update re-signed or replaced images, so the cached launch closure — keyed to an exact image set by UUID — was discarded; that launch paid the closure rebuild plus cold page-ins, the launch budget's one-time column (ch04). The 380 ms second launch is the steady state: closure validates, pages map warm. The 180 ms is an artifact: on macOS any <code>DYLD_*</code> environment variable disables closure use for that process, so the instrument measured the fallback doing full symbol resolution — a path users never take (ch04). If pre-main still hurts, audit <code>+load</code> and dylib count.</li>
+</ol>
+<p><strong>Part III</strong></p>
+<ol>
+<li>(a) <strong>Dead</strong> — <code>PACIBSP</code> signed LR (B key, SP as context); the chain's <code>AUTIBSP; RET</code> authenticates a value nobody signed and fails with probability 1 − 2^−24. (b) <strong>Alive</strong> — a leaked signed return address is pre-forged: the (pointer, tag) pair is complete, and replay passes; leaks still convert to control flow. (c) <strong>Alive</strong> — <code>ret</code> guards the backward edge only; steering to legitimate entries with controlled arguments is the forward edge, CFI/BTI's rung. (d) <strong>Dead</strong> — keys re-roll at every <code>exec</code>, so 1,000 restarts are 1,000 independent 2^−24 attempts, no partial credit, each a loud logged kill; progress needs a same-process oracle — a signing gadget or a PACMAN-style leak. The same overflow works in a third-party app because app code is still plain arm64: PAC hardens the system code <em>around</em> your pages, not yours (ch05).</li>
+</ol>
+<ol>
+<li><strong>Missing: the dylib was in no signature.</strong> Copied in after <code>codesign</code> ran, it appears in no <code>_CodeSignature/CodeResources</code> (sealed-resources) hashes, and no CodeDirectory covers its pages. On iOS, <strong>library validation</strong> requires every executable page to trace to a signature chain or trust-cache entry — the check <code>disable-library-validation</code> tells macOS to skip — and <strong>page-in validation</strong> (<code>cs_validate_range</code>, in the fault path) hashes the first faulted page, finds no matching slot, marks the process CS_INVALID, and SIGKILLs: unsigned code never materializes, so death lands at first use, not exec. Fix: sign after every bundle mutation; gate CI on <code>codesign --verify --deep --strict</code> (ch05).</li>
+</ol>
+<ol>
+<li><strong>Zygote: amortized into a process.</strong> Android's apps <code>fork</code> from one warm parent and inherit its <em>already-dirtied</em> pages via COW — the sharing includes the dirt (module 05 ch01; module 01 ch03's fork-COW pointed at warm state). <strong>Shared cache: amortized into a file</strong> — pre-linked and pre-signed at OS build, mapped COW, data pages kernel-fixed and shared only <em>while clean</em>; a write is a private copy (ch04). The kill model forces the file answer: iOS denies third-party <code>fork()</code> and ranks every process for death by band (ch02) — a warm shared parent would be un-killable state every victim takes down with it, while the file's pages are clean, reclaimable for free, untouched by any death. Same pay-once economics, opposite halves of the COW machinery.</li>
+</ol>
+</details>
+<div class="post-footer"><p>Chapter list: <a href="index.html">Module 06</a>. Module 01 also has the <a href="../quiz.html">interactive quiz</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

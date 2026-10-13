@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Escape analysis, write barriers, safepoints — deep-roots</title>
+<meta name="description" content="Chapter 04 of module 10: Escape analysis, write barriers, safepoints">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Escape analysis, write barriers, safepoints — deep-roots">
+<meta property="og:description" content="Chapter 04 of module 10: Escape analysis, write barriers, safepoints">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Escape analysis, write barriers, safepoints — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of module 10: Escape analysis, write barriers, safepoints">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 10 &middot; where memory models are manufactured</div>
+<h1 class="post-title">Escape analysis, write barriers, safepoints</h1>
+<div class="post-meta">chapter 04 &middot; ~14 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> A GC language hands its compiler three duties a C compiler never has. First: prove when a "heap" object never needs the heap — escape analysis; Go decides per <code>&amp;x</code>, HotSpot C2 dissolves objects into registers (SROA from chapter 02 in a GC hat). Second: report mutations — a generational GC must hear about every store that could create an old→young pointer, so the compiler emits a <em>write barrier</em> at each such store; the 512-byte card table is the ledger. Third: be stoppable — the GC needs every thread at a <em>safepoint</em>, a PC where references are mapped, so compiled code polls on loop backedges. And because JITs guess, compiled frames carry deoptimization metadata: every frame is <em>abortable</em>, un-compilable back to interpreter state mid-flight.</blockquote>
+<h2 id="the-contract-three-duties-the-compiler-owes-the-collector">The contract: three duties the compiler owes the collector</h2>
+<p>A tracing GC (module 01 ch12/15) needs three things it cannot get for itself:</p>
+<ol>
+<li><strong>A root map.</strong> A register holding <code>0x7f3a41c0</code> is just bits; only the compiler knows if it is a reference or an integer.</li>
+<li><strong>Mutation reports.</strong> Generational and concurrent collectors scan lazily; a quiet <code>oldObj.next = youngRef</code> creates an edge they will never see — and they will free a live object. Every pointer store pays a toll.</li>
+<li><strong>A stoppable state.</strong> Stacks, objects, and roots move; the GC needs all threads frozen at a PC where the root map is valid — reached <em>cooperatively</em>, hence polls.</li>
+</ol>
+<p>The JIT adds a fourth duty for itself: it compiled on speculation, and speculation must be escapable at runtime — that escape hatch is deoptimization.</p>
+<h2 id="escape-analysis-proving-a-heap-object-can-live-and-die-in-registers">Escape analysis: proving a heap object can live and die in registers</h2>
+<p><strong>Go — one question per address.</strong> Does <code>&amp;x</code> outlive the frame that created <code>x</code>? If yes, <code>x</code> is <em>moved to heap</em>: allocated on the GC heap, scanned, collected. If no, <code>x</code> is a stack slot — its death is the function's return, free. The analysis is conservative: unprovable means heap.</p>
+<p>The subtle part is parameters. In <code>func id(p *int) *int { return p }</code>, <code>p</code> escapes into the caller's world — the function cannot know what happens to the result. Go records this as <strong>"leaking param: p to result ~r0 level=0"</strong>: the pointer (level 0) flows to the unnamed result slot. Writing through a pointer (<code>*pp = q</code>, destination unknown) leaks the <em>content</em> of <code>pp</code> — level 1. The remark family, decoded:</p>
+<ul>
+<li><code>moved to heap: x</code> — the slot becomes a heap allocation.</li>
+<li><code>leaking param: p</code> — may reach a caller-invisible location; callers heap-allocate their arguments.</li>
+<li><code>leaking param: p to result ~r0 level=0</code> — flows through the return value.</li>
+<li><code>leaking param content: p</code> — something reachable <em>through</em> <code>p</code> escapes.</li>
+<li><code>p does not escape</code> — provably stack-safe.</li>
+<li><code>... argument does not escape</code> — a call's variadic slice stays on the stack, though <code>fmt.Println(x)</code> still boxes <code>x</code>.</li>
+</ul>
+<p><strong>HotSpot C2 — objects dissolved.</strong> <code>new Point(i, i+1)</code> asks the same question. If the object does not escape, C2 performs <strong>scalar replacement</strong>: no allocation; the fields become individual SSA values living in registers (or spill slots — chapter 03). An "object" can end as two 32-bit values in <code>r8d</code>/<code>r9d</code> — no header, no address, no existence as far as the GC is concerned. Escape analysis <em>is SROA for a GC language</em>: chapter 02's <code>mem2reg</code> extended to objects, plus bail-outs when object <em>identity</em> is observable — locked by <code>synchronized</code>, passed to native code, given an identity hash code. C1 does none of this; it is a C2 luxury, budgeted at <code>EscapeAnalysisTimeout</code> = 20 s, arrays capped at <code>EliminateAllocationArraySizeLimit</code> = 64 elements (JDK 21).</p>
+<h2 id="write-barriers-rent-paid-at-every-pointer-store">Write barriers: rent paid at every pointer store</h2>
+<p>Module 01 ch12: minor GCs are cheap because they scan roots plus only the old-generation cards that point into young. <code>oldObj.next = youngRef</code> manufactures exactly such an edge; unrecorded, the next minor GC frees <code>youngRef</code> while it is still reachable. The compiler must emit the store <em>and</em> the report: the <strong>write barrier</strong>, recorded in the <strong>card table</strong>:</p>
+<pre><code class="language-text">  old generation (contiguous heap)            card table (side array: 1 byte / card)
+  +0x0000  +------------------------------+    +----+----+----+----+----+--
+           | card 0   512 bytes (2^9)     |    | 0  | 0  | 1  | 0  | 0  |   0 = clean
+  +0x0200  +------------------------------+    +----+----+----+----+----+-- 1 = dirty:
+           | card 1   512 bytes            |                ^      "somewhere in
+           |   oldObj.next = youngRef      |&lt;--- store ------'      this 512-B span
+  +0x0400  +------------------------------+       barrier:           lives a young
+           | card 2   ...                  |       card 1 -&gt; 1      pointer"
+           +------------------------------+
+
+  the store as JIT-compiled pseudo-assembly (x86-64, HotSpot-style):
+      mov    [oldObj + 12], youngRef        ; 1. the pointer store, FIRST
+      ;    card address = ((oldObj + 12) &gt;&gt; 9) + card_table_base
+      mov    byte [card_addr], 0xff         ; 2. the mark, AFTER</code></pre>
+<p>512-byte cards (HotSpot JDK 21, x86-64): the map costs 1/512 of the heap — 1 MB per 512 MB of old gen — and the mark is one shift plus one byte store, no call. The barrier roughly doubles the store's cost, so JITs filter: only <em>reference-typed</em> fields into <em>old</em> objects, never stores into fresh young objects (young→anything cannot create an old→young edge).</p>
+<p><strong>Exact placement — why AFTER the store.</strong> The barrier's promise is: <em>if the card is dirty, the pointer is already in the object.</em> Mark first, store second, and there is a window where the card is dirty but the pointer is not yet visible — a concurrent collector scans the card, reads the old value, finds no young pointer, moves on; the store then lands, and the edge is forever unrecorded. Dirty-before-store is a lie with a deadline. Store-before-dirty cannot lie: whoever observes the dirty bit must observe the store — a store→store ordering the runtime must enforce (module 09 ch01).</p>
+<p><strong>SATB vs incremental — the barrier that goes before.</strong> Concurrent <em>marking</em> (G1's old-gen cycle, Go's GC) adds a second style with the opposite placement, because it protects the <em>old</em> value. <strong>Incremental (Dijkstra, insertion)</strong>: after <code>p.f = q</code>, ensure <code>q</code> gets marked — the barrier trails the store, like card marking. <strong>SATB (Yuasa, deletion, snapshot-at-the-beginning)</strong>: the invariant "everything reachable when marking started gets marked" means overwriting <code>p.f</code> can remove the only path to an object — so the barrier runs <strong>before</strong> the store, logging the old value into a buffer, because after the store it is unrecoverable. "After" protects what you just wrote; "before" protects what you are about to destroy. Go 1.8+ fuses both into one hybrid barrier (module 01 ch11): a Go pointer store compiles to the store plus a buffered slot record, not a card byte. V8 (module 01 ch15) records exact <em>slots</em>, not cards — same duty, tighter ledger.</p>
+<h2 id="safepoints-the-collector-needs-a-quorum-loops-need-a-poll">Safepoints: the collector needs a quorum, loops need a poll</h2>
+<p>To move objects, the GC stops every thread at a PC where the compiler emitted a reference map (which registers and stack slots hold pointers — the oop map). Those PCs are <strong>safepoints</strong>; compiled code cooperates by <strong>polling</strong> a shared location — HotSpot uses a polling page/poll word — and when the GC has protected it, the test faults (or branches) into a handler that parks the thread. Straight-line code polls at returns, which it reaches in bounded time. <strong>Loops poll on the backedge</strong> because a hot loop may not return for hours — otherwise one thread holds the whole process hostage:</p>
+<pre><code class="language-text">  backedge poll (HotSpot C2, strip-mined loop, JDK 10+):
+
+     L_outer:  test   [poll_word]        ; the poll: one load + branch, no call
+               jne    slow_path          ; -&gt; park the thread HERE (map valid here)
+               mov    ecx, 1000          ; strip size
+     L_inner:  ...    1000 iterations ... ; counted body: no poll, full speed
+               dec    ecx
+               jne    L_inner
+               jmp    L_outer            ; &lt;- the backedge that polls</code></pre>
+<p>The metric insiders obsess over is <strong>time-to-safepoint (TTSP)</strong> — the gap between "GC requests a stop" and "last thread parked," shown directly in <code>-Xlog:safepoint</code> as <code>Reaching safepoint:</code>. A 4 ms GC pause can be 1 ms of GC and 250 ms of waiting for one thread; users feel the total. The notorious cause was the counted loop without a poll — fixed in JDK 10 by <strong>loop strip mining</strong> (JDK-8186027): C2 wraps the counted loop in an outer uncounted loop that polls, keeping the inner body poll-free.</p>
+<p><strong>The measurement trap: safepoint bias.</strong> A profiler that captures stacks <em>at safepoints</em> samples where threads are when they stop — and threads stop at polls, which live on backedges. Method entries and straight-line code are under-sampled; loops are overweighted: a function can be 40% of wall time yet invisible, while a modest loop looks like the whole program. hprof-era tools and early JFR had this bias; async-profiler exists largely to sample via signals at arbitrary moments instead. When a profile contradicts wall clock, check where samples were taken before blaming the code.</p>
+<h2 id="deoptimization-every-jit-frame-is-abortable-by-design">Deoptimization: every JIT frame is abortable by design</h2>
+<p>C2 compiled <code>count(Shape s)</code> believing the call site monomorphic (<code>Tri</code> only) and inlined <code>Tri.edges()</code>. The moment a <code>Square</code> arrives, the code is <em>wrong for this input</em> and cannot be patched in place — the runtime discards it: the method is marked <strong>not entrant</strong>, and any frame executing it is converted on the spot back into an interpreter frame, locals re-materialized from compiled slots, resuming at the matching bytecode index. That is <strong>deoptimization</strong>: "uncompile this frame." Hence metadata no C frame carries — the oop map (for the GC), the scope/safepoint table (bytecode↔PC mapping, live locals), and out-of-line <em>uncommon trap</em> stubs that transfer to the deopt machinery. JIT frames look weird in a core dump because they are abortable contracts, not just code (module 04 ch05's RE payoff). Deopt fires on tier transitions and every invalidated speculation; until C2 recompiles, the hot loop runs at interpreter speed.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong><code>-gcflags='-m'</code> is the insider's favorite Go flag; <code>-m -m</code> (twice) prints the reasons</strong> — the flow edges (<code>flow: ~r0 = &amp;x</code>) behind each verdict. "Leaking param: p to result ~r0 level=0" is about the <em>caller's</em> argument allocation, not this function's. Go's analysis is also inlining-limited: function-scoped, so a returned-pointer helper avoids the heap only when inlined and the result dies in the caller.</li>
+<li><strong>Card size is cache-line economics:</strong> 512 B = 2^9, so card index is <code>addr &gt;&gt; 9</code> — one shift, map cost 0.2% of old gen. G1 (JDK 21) keeps 512-byte cards but refines them into per-region remembered sets on background threads; V8 records exact slots; Go 1.8+ logs pointer slots to per-P buffers. One duty, three ledgers.</li>
+<li><strong>TTSP is the metric that bites:</strong> read <code>Reaching safepoint</code> (quorum time) separately from <code>At safepoint</code> (GC work) in <code>-Xlog:safepoint</code>. Large first + small second = a loop or native call stalling the world; the GC is innocent.</li>
+<li><strong>Safepoint bias is the profiler artifact</strong> that made async-profiler necessary: poll-time samples overweight backedges. A profile that contradicts wall clock is a sampling-location problem before it is a code problem.</li>
+<li><strong>Deopt metadata is how you recognize JIT frames in RE:</strong> PC-keyed oop/scope tables, uncommon-trap stubs, <code>made not entrant</code> lines in <code>-XX:+PrintCompilation</code> — module 04 ch05 starts from these fingerprints.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p><strong>Lab A (Go) — read the compiler's escape verdicts.</strong> Go is not installed on the machine this chapter was written on; the output is a documented walkthrough transcribed from go1.22.5, linux/amd64 — run it and compare (the remarks are the point; line:column match only an identical layout). Save as <code>esc.go</code>, then <code>go build -gcflags='-m' .</code>:</p>
+<pre><code class="language-go">package main
+
+import "fmt"
+
+var sink *int
+
+type S struct{ f *int }
+
+var gsink S
+
+func ret1() *int {
+	x := 42
+	return &amp;x
+}
+
+func use1() int {
+	x := 42
+	p := &amp;x
+	return *p
+}
+
+func toGlobal(p *int) { sink = p }
+
+func id(p *int) *int { return p }
+
+func deref(p *int) int { return *p }
+
+func fill(p *int, v int) { *p = v }
+
+func printlnInt(v int) { fmt.Println(v) }
+
+func closure() func() int {
+	x := 1
+	return func() int { return x }
+}
+
+func copyIn(s *S) { gsink = *s }
+
+func fresh() []int { return make([]int, 3) }
+
+func main() {}</code></pre>
+<p>The verdicts (go1.22.5, linux/amd64):</p>
+<pre><code class="language-text">./esc.go:12:2: moved to heap: x
+./esc.go:13:9: &amp;x escapes to heap
+./esc.go:22:15: leaking param: p
+./esc.go:24:9: leaking param: p to result ~r0 level=0
+./esc.go:26:9: p does not escape
+./esc.go:28:9: p does not escape
+./esc.go:30:22: ... argument does not escape
+./esc.go:30:23: v escapes to heap
+./esc.go:33:2: moved to heap: x
+./esc.go:34:9: func literal escapes to heap
+./esc.go:37:15: leaking param content: s
+./esc.go:39:28: make([]int, 3) escapes to heap</code></pre>
+<p>What to notice: <code>use1</code> prints <em>nothing</em> — the pointer provably dies in-frame. <code>toGlobal</code>/<code>id</code>/<code>deref</code> is the parameter-escape taxonomy: stored-into-unknown (leak), returned (caller decides), dereferenced-only (no escape). <code>copyIn</code> is the level-1 content leak: <code>gsink = *s</code> copies the struct <em>and its <code>f</code> pointer</em> into a global. <code>printlnInt</code> is the interface tax: the <code>...</code> slice is stack-safe, but <code>v</code> still escapes into the boxed <code>any</code>.</p>
+<p><strong>Lab B (Java, run here) — scalar replacement, measured with a per-thread allocation counter.</strong> OpenJDK 21.0.12 (linux/amd64, 64-bit, compressed oops on), single-file source mode:</p>
+<pre><code class="language-java">import java.lang.management.ManagementFactory;
+
+public class EALab {
+    static final int ITERS = 100_000_000;
+
+    // 24 B/object (64-bit HotSpot, compressed oops)
+    static class Point { int x, y; Point(int x, int y) { this.x = x; this.y = y; } }
+
+    static Object sink;
+
+    static long sumEscapes() {          // each Point must be materialized
+        long s = 0;
+        for (int i = 0; i &lt; ITERS; i++) {
+            Point p = new Point(i, i + 1);
+            s += p.x;
+            sink = p;                        // static store: escapes
+        }
+        return s;
+    }
+
+    static long sumScalarized() {       // no store: C2 may dissolve every Point
+        long s = 0;
+        for (int i = 0; i &lt; ITERS; i++) {
+            Point p = new Point(i, i + 1);
+            s += (p.x + p.y) &amp; 1L;
+        }
+        return s;
+    }
+
+    static long allocBytes(Runnable r) {
+        var tb = (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
+        long id = Thread.currentThread().threadId();
+        long before = tb.getThreadAllocatedBytes(id);
+        r.run();
+        return tb.getThreadAllocatedBytes(id) - before;
+    }
+
+    public static void main(String[] a) {
+        for (int warm = 0; warm &lt; 3; warm++) { sumEscapes(); sumScalarized(); }
+        System.out.println("iterations per method : " + ITERS);
+        System.out.println("sumEscapes()   alloc  : " + allocBytes(EALab::sumEscapes)   + " bytes");
+        System.out.println("sumScalarized() alloc : " + allocBytes(EALab::sumScalarized) + " bytes");
+        System.out.println("expect if all escape  : " + (long) ITERS * 24 + " bytes (24 B/Point)");
+    }
+}</code></pre>
+<p>Real output on this machine:</p>
+<pre><code class="language-text">$ java EALab.java
+iterations per method : 100000000
+sumEscapes()   alloc  : 2400000000 bytes
+sumScalarized() alloc : 0 bytes
+expect if all escape  : 2400000000 bytes (24 B/Point)</code></pre>
+<p>One stored reference line (<code>sink = p;</code>) is the difference between exactly 2,400,000,000 bytes and exactly <strong>zero</strong> (100M × 24 B). Prove the elimination is a compile-time decision, not a language guarantee — a 10M-iteration variant (<code>EALab2</code>) with the JIT removed:</p>
+<pre><code class="language-text">$ java -Xint EALab2.java                      # interpreter only
+result=10000000  time=544 ms  threadAllocated=263026112 bytes
+$ java -XX:TieredStopAtLevel=1 EALab2.java    # C1 only
+result=10000000  time=61 ms  threadAllocated=263027616 bytes</code></pre>
+<p>In the interpreter and in C1, all 10M Points allocate (~240 MB plus ~23 MB JVM startup). Only C2 dissolves them — chapter 03's compile-time budget, again. And the quorum duty, live: <code>java -Xlog:safepoint EALab.java 2&gt;&amp;1 | grep Reaching</code> shows <code>Reaching safepoint: 3390 ns</code> — microseconds, because every hot loop polls.</p>
+<p><strong>Lab C (Java, run here) — watch a deoptimization happen.</strong> A call site goes monomorphic → bimorphic; watch the compiled code get thrown away:</p>
+<pre><code class="language-java">public class DeoptLab {
+    interface Shape { int edges(); }
+    static final class Tri implements Shape { public int edges() { return 3; } }
+    static final class Square implements Shape { public int edges() { return 4; } }
+
+    static int count(Shape s) { return s.edges(); }  // starts monomorphic
+    public static void main(String[] a) {
+        Shape only = new Tri();
+        long sink = 0;
+        for (int i = 0; i &lt; 20_000_000; i++) sink += count(only);   // inlines Tri.edges()
+        System.out.println("phase 1 done, sink=" + (sink % 10));
+        Shape second = new Square();
+        for (int i = 0; i &lt; 20_000_000; i++) sink += count(second); // speculation broken
+        System.out.println("phase 2 done, sink=" + (sink % 10));
+    }
+}</code></pre>
+<pre><code class="language-text">$ java -XX:+PrintCompilation DeoptLab.java 2&gt;&amp;1 | grep "DeoptLab"
+571 1146 %     4       DeoptLab::main @ 13 (101 bytes)      &lt;- C2 OSR: loop 1, Tri inlined
+phase 1 done, sink=0
+577 1142       2       DeoptLab::count (7 bytes)         made not entrant
+577 1145       3       DeoptLab::main (101 bytes)        made not entrant   &lt;- deopt
+580 1175 %     4       DeoptLab::main @ 62 (101 bytes)   &lt;- recompiled, bimorphic</code></pre>
+<p>The second <code>Shape</code> arrives right after "phase 1 done" — every compiled version of <code>main</code>/<code>count</code> is immediately <code>made not entrant</code>: frames deoptimize to interpreter state, then C2 recompiles with the bimorphic profile.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Go performance triage:</strong> run <code>go build -gcflags='-m'</code> (then <code>-m -m</code>) on the hot path. An <code>escapes to heap</code> inside a loop is an allocation and a future GC bill; usual culprits are interface boxing, <code>fmt</code>, pointers from non-inlined helpers.</li>
+<li><strong>Java allocation work:</strong> measure first — per-thread allocation counter or JFR. A hot constructor absent from the profile was scalar-replaced (free); one that shows has a single escaping reference (a store, a lock, an identity hash) worth hunting.</li>
+<li><strong>Pause forensics:</strong> split any stall. <code>-Xlog:gc</code> says how long the GC worked; <code>-Xlog:safepoint</code>'s <code>Reaching safepoint</code> says how long you waited for threads. Large TTSP + small GC = a non-polling loop or a long native call — fix loop shape, not GC flags.</li>
+<li><strong>Distrust loop-heavy profiles:</strong> if a sampling profile contradicts wall clock, ask whether it samples at safepoints; prefer signal-based samplers.</li>
+<li><strong>Reading JIT frames in dumps:</strong> <code>made not entrant</code> lines, uncommon-trap stubs, and PC-keyed oop/scope tables mark abortable JIT frames — module 04 ch05's workflow starts here.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch11 (Go):</strong> Go's concurrent GC consumes the hybrid write barrier this chapter's compiler emits — per-P buffers from the factory floor.</li>
+<li><strong>Module 01 ch12 (Java/G1):</strong> the 512-byte cards, remembered sets, SATB logs, and minor-GC arithmetic — manufactured by the barrier insertions derived here.</li>
+<li><strong>Module 01 ch15 (V8):</strong> remembered-set slots and incremental marking — the same store-report duty, different ledger encoding.</li>
+<li><strong>Module 10 ch01:</strong> where these passes sit in the pipeline — after SSA optimization, tied to lowering and codegen.</li>
+<li><strong>Module 10 ch02:</strong> the unification — escape analysis is SROA (<code>mem2reg</code>) generalized to heap objects; barrier filtering reuses alias facts.</li>
+<li><strong>Module 10 ch03:</strong> why C1 (linear scan, fast compiles) skips escape analysis while C2 does it — compile-time budget as a tier decision.</li>
+<li><strong>Module 04 ch05 (queued):</strong> deopt metadata, oop maps, and uncommon traps as the RE fingerprints of JIT frames.</li>
+<li><strong>Module 09 ch01 (queued):</strong> the store→mark ordering is a happens-before edge the GC relies on — a memory-model requirement, not an implementation detail.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><strong>Concept.</strong> The card-marking barrier is emitted <em>after</em> the pointer store. What failure would marking <em>before</em> the store cause, and what invariant does store-then-mark protect?</li>
+<li><strong>Concept.</strong> Straight-line code polls only at returns; loops poll on the backedge. What property of loops makes return-only polling insufficient?</li>
+<li><strong>Predict.</strong> For each Go function, predict the <code>-gcflags=-m</code> remark: (a) <code>func f() *int { x := 1; return &amp;x }</code>, (b) <code>func g(p *int) *int { return p }</code>, (c) <code>func h(p *int) int { return *p }</code>.</li>
+<li><strong>Predict.</strong> A 64-bit HotSpot JVM (JDK 21, compressed oops on) runs a 100M-iteration loop of <code>new Point(int, int)</code> (two <code>int</code> fields), every instance escaping: how many bytes are allocated, and what fills each object? Separately: a 512 MB old generation with 512-byte cards needs a card table of what size?</li>
+<li><strong>Bug diagnosis.</strong> A Java 21 service stalls 650 ms. The GC log shows a 6 ms pause; <code>-Xlog:safepoint</code> reports <code>Reaching safepoint: 640000000 ns</code> for that stop. What class of bug is this, and why is the GC innocent?</li>
+<li><strong>Bug diagnosis.</strong> A Go microbenchmark shows one allocation per call though the function "only builds a small struct" — but the struct goes to a helper that caches it in a package-level map. What does <code>-gcflags='-m'</code> print on the helper, and whose allocation is triggered?</li>
+<li><strong>Cross-chapter (module 01 ch12).</strong> A minor GC faces 12 dirty cards in a 512 MB old generation (512-byte cards). How many bytes must it scan, and which compiler-inserted code made skipping the rest possible?</li>
+<li><strong>Cross-chapter (module 04 ch05).</strong> In a core dump, a compiled frame's code has out-of-line stubs that reconstruct an interpreter frame from compiled-frame state, plus PC-keyed tables mapping machine code to bytecode indices. What is this machinery for, and which JIT design decision made it mandatory?</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Store-then-mark keeps the ledger truthful.</strong> Mark first, and there is a window where the card is dirty but the new pointer is not yet visible: a concurrent collector scans the card, reads the old value, finds no young pointer, moves on; the store then lands, and the edge is forever unrecorded — the next minor GC frees the young object while <code>oldObj.next</code> still points at it. After-the-store enforces "card dirty ⇒ store visible" — a store→store ordering the runtime must guarantee (module 09 ch01).</li>
+<li><strong>Unbounded residence.</strong> Straight-line code reaches a return in bounded time; a hot loop can execute its backedge billions of times without returning. Safepointing is cooperative — a loop that never polls holds the GC's quorum hostage indefinitely, and TTSP grows without bound. The "GC pause" is really a waiting-for-one-thread pause.</li>
+<li>(a) <code>moved to heap: x</code> (plus <code>&amp;x escapes to heap</code> on the return) — the address outlives the frame. (b) <code>leaking param: p to result ~r0 level=0</code> — the caller must treat its argument as escaping, unless inlining proves otherwise. (c) <code>p does not escape</code> — only the pointee is read; callers may pass a stack address.</li>
+<li><strong>2,400,000,000 bytes</strong> — 24 B per Point: 8 B mark + 4 B compressed klass + 2 × 4 B fields = 20 B, rounded to 24 B by 8-byte alignment; 100M × 24 = 2.4 GB. Card table: 512 MB ÷ 512 B = 2^20 cards = <strong>1 MB</strong>, 0.2% of old gen.</li>
+<li><strong>Time-to-safepoint, not GC.</strong> The GC did 6 ms of work but waited 640 ms for one thread to reach a poll: a hot compiled loop without a poll (hand-rolled uncounted loop, or code that never reached C2's strip mining) or a long native call. <code>jstack</code> during the stall to find the spinning frame; re-shape the loop (bound it, add a call or <code>Thread.onSpinWait</code>).</li>
+<li>The helper prints <code>leaking param: s</code> (or <code>leaking param content: ...</code> depending on what is cached): the struct flows into a package-level map, outliving the caller. The allocation happens at the <em>call site</em> — escape analysis sees the leaking param and moves the caller's stack struct to the heap: one allocation per call, caused by the callee's signature.</li>
+<li>12 cards × 512 B = <strong>6,144 bytes</strong> out of 512 MB — about 0.001% of old gen. The enabler is the write barrier at every potentially intergenerational reference store (store, then mark the card byte), which lets the collector trust "no dirty card ⇒ no old→new edge."</li>
+<li>It is <strong>deoptimization machinery</strong>: the PC-keyed tables are scope/safepoint (and oop) maps; the stubs are uncommon-trap/deopt entry points that rebuild interpreter frames from compiled state. Mandatory because the JIT compiled on speculation (profiled types, inlining, range assumptions); when a speculation breaks, running frames must be un-compiled in place — every JIT frame is abortable, and this metadata makes aborting possible (module 04 ch05: these tables fingerprint JIT code in RE).</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 10 — Compilers &amp; runtime internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

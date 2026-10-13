@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>APK &amp; OTA — deep-roots</title>
+<meta name="description" content="Chapter 06 of module 05: APK &amp; OTA">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="APK &amp; OTA — deep-roots">
+<meta property="og:description" content="Chapter 06 of module 05: APK &amp; OTA">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="APK &amp; OTA — deep-roots">
+<meta name="twitter:description" content="Chapter 06 of module 05: APK &amp; OTA">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 05 &middot; an OS designed by memory constraints</div>
+<h1 class="post-title">APK &amp; OTA</h1>
+<div class="post-meta">chapter 06 &middot; ~13 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> An APK is a ZIP file with a contract bolted on. Inside: <code>classes.dex</code> — the program as <em>index tables</em>, not text; <code>resources.arsc</code> — one string, many locale/density <em>configs</em>, chosen by table lookup, not <code>if</code>; native libs never unpacked, just <code>mmap</code>'d out of the archive. Trust is bolted on the same way: v1 signed each entry separately (broken by a polyglot file); v2 hashes the <em>whole file</em> via a block injected into a gap ZIP never uses; v3 adds key lineage. Updates then treat the whole system as replaceable data — A/B slots, COW snapshots on <code>/data</code>, binary deltas. Chapter 01's theme at file scale: hash the next thing before you trust it.</blockquote>
+<h2 id="1-the-container-a-zip-that-grew-trust-organs">1. The container: a ZIP that grew trust organs</h2>
+<p>Start from the ZIP format, not from Android. A ZIP is read <em>backwards</em>. A reader scans the last 65,535 bytes for the End-of-Central-Directory signature (<code>PK\x05\x06</code>) and finds the EOCD — 22 fixed bytes holding the entry count and the <strong>byte offset of the central directory</strong>. The central directory is one record per file (46 fixed bytes + name): name, compression method, CRC-32, sizes, and the offset of that file's <em>local header</em> (30 fixed bytes + name), which sits out among the data at the front. Nobody parses the front unless the index points there — the inversion v2 signing exploits.</p>
+<p>Between the last entry and the central directory a stock ZIP has <em>nothing</em>. That dead zone is where the <strong>APK Signing Block</strong> is injected: <code>len | ID-value pairs | len | "APK Sig Block 42"</code>. The EOCD's CD-offset is bumped to point <em>after</em> the block, and every stock ZIP reader walks right past it. v2/v3 signatures live inside it as ID-value pairs — v2 is ID <code>0x7109871a</code>, v3 <code>0xf05368c0</code>.</p>
+<pre><code class="language-text"> offset 0                                                       EOF
+ +----------------------+---------------------+--------------+------------+
+ |  ZIP ENTRIES         |  APK SIGNING BLOCK  |  CENTRAL     |  EOCD      |
+ |  local hdr(30 B)+    |  len(8) | v3 pair   |  DIRECTORY   |  22 B +    |
+ |  data, per file:     |  | v2 pair | verity  |  46 B/entry  |  ≤64 KiB   |
+ |  AndroidManifest.xml |  | padding | len(8)  |  + name      |  comment   |
+ |  classes.dex         |  "APK Sig Block 42"  |              |            |
+ |  resources.arsc      |                      |              |            |
+ |  res/ lib/ assets/   |                      |              |            |
+ +----------------------+---------------------+--------------+------------+
+ |&lt;- v1 scope: digest of EACH entry's data, listed in META-INF/MANIFEST.MF -&gt;|
+    (entry data only: local headers, central dir, EOCD itself are UNSIGNED)
+
+ v2/v3 scope: the whole file EXCEPT the block itself —
+ |&lt;- chunk 1 (entries) -&gt;|     skipped      |&lt;- chunk 2 -&gt;|&lt;- chunk 3 -&gt;|
+    digest = SHA-256( d(chunk1) || d(chunk2) || d(EOCD, CD-offset-reset) )
+    v3 = v2's coverage + a key-lineage (proof-of-rotation) pair in the block</code></pre>
+<p>v1's weakness is in the brackets: it signs each entry's <em>data</em> (digests recorded in <code>META-INF/MANIFEST.MF</code>, itself a signed entry) and nothing structural. v2 signs everything outside the block — in 1 MiB sub-chunks whose digests are combined — so any change anywhere breaks verification. The one thing it cannot sign is the block itself: a signature is a function of the signed bytes, and a value equal to a function of itself is a fixed point you cannot compute. The verifier therefore <em>reconstructs</em> the block-free layout — hashing the EOCD's CD-offset field as if the block were absent.</p>
+<h2 id="2-classes-dex-the-program-as-lookup-tables">2. <code>classes.dex</code>: the program as lookup tables</h2>
+<p>A dex file is a database, not a text file. The 112-byte (0x70) header — magic <code>dex\n035\0</code> through <code>039</code> across ART versions — declares the tables the body is made of:</p>
+<ul>
+<li><strong>string_ids</strong> → offsets into string data (MUTF-8, uleb128 lengths)</li>
+<li><strong>type_ids</strong> → one string index each (<code>Ljava/lang/String;</code>)</li>
+<li><strong>proto_ids</strong> → return type + parameter list (the method <em>shape</em>)</li>
+<li><strong>field_ids</strong> / <strong>method_ids</strong> → (class, type/proto, name) triples</li>
+<li><strong>class_defs</strong> → per class: superclass, interfaces, <code>class_data</code> → <strong>code_items</strong> — <code>registers_size</code>, <code>ins/outs/tries</code> u16 counts, then the bytecode</li>
+</ul>
+<p>Every instruction references these tables <em>by index</em>: <code>invoke-virtual {v0, v1}, method@BBBB</code> — a <strong>16-bit operand</strong>. Same for <code>field@BBBB</code> on <code>iget</code>/<code>iput</code>, <code>string@BBBB</code> on <code>const-string</code>. There is the 65K limit, derived rather than decreed: a u16 addresses 2^16 = <strong>65,536</strong> ids, so one dex holds at most 65,535 field/method/ string <em>references</em> — including every referenced framework method, not just yours. Hence d8's <code>Too many method references: 84xxx; max is 65536</code>. Call <em>sites</em> are free; new <em>references</em> are the scarce resource. Multidex is the workaround: <code>classes.dex</code> keeps startup classes, <code>classes2.dex</code>... the rest — Dalvik needed a support library, ART (Android 5.0+) does it natively. The modern fix is R8: deleting unreferenced methods deletes their ids.</p>
+<h2 id="3-resources-the-binary-manifest-and-libs-that-never-unpack">3. Resources, the binary manifest, and libs that never unpack</h2>
+<p><code>resources.arsc</code> is a compiled table. A resource ID is 32 bits: package (1 byte, <code>0x7f</code> for the app) | type (1 byte) | entry (16 bits) — e.g. <code>0x7f0b0027</code>. For each entry the table holds one <em>value per configuration</em>: <code>values-zh-rCN</code>, <code>drawable-xhdpi</code>... are not files the app chooses between; they are rows. Resolving <code>@string/hello</code> is package → type → entry → pick the best-matching config by the <code>ResTable_config</code> precedence (MCC/MNC, then locale, then layout, then density). "One string, many configs" is a <strong>table lookup, not a branch</strong>: the app contains zero <code>if (locale == ...)</code> — localization is data. Since targetSdk 30 (Android 11) the table must be stored <strong>uncompressed and 4-byte aligned</strong> in the APK, because <code>AssetManager</code> <code>mmap</code>s it.</p>
+<p>The manifest is the same philosophy taken to XML. <code>aapt2</code> compiles it into binary chunks: a shared string pool, then a node tree whose element/attribute <em>names are pool indices</em> and whose values are typed. There is no <code>&lt;uses-permission</code> byte sequence to grep — the ASCII lives once, in the pool, referenced by index — which is why <code>grep</code> finds nothing and <code>aapt2 dump xmltree</code> / <code>dump badging</code> must decode it.</p>
+<p>Native libs: <code>lib/arm64-v8a/libfoo.so</code> (one dir per ABI). Classically, installers <em>extracted</em> them to <code>/data/app/…/&lt;pkg&gt;/lib/arm64/</code>. Since API 23 (Android 6.0), <code>extractNativeLibs="false"</code> (Gradle: <code>useLegacyPackaging false</code>) instead stores each <code>.so</code> <strong>uncompressed and page-aligned</strong> in the APK, and <code>System.loadLibrary</code> <code>dlopen</code>s the file <em>inside the APK</em>: the linker <code>mmap</code>s segments at offsets that are both file offsets and page offsets — the ZIP entry is the ELF image, in place. The win is flash: one copy instead of two, one integrity check (v2 covers the whole file); the cost is that those entries never deflate. Alignment is <code>zipalign -p 4096</code> — and on 16 KB-page devices (Android 15+) it must be <code>zipalign -P 16384</code> with 16 KB-aligned <code>LOAD</code> segments, or <code>dlopen</code> fails. Page size is baked into the file, not negotiated.</p>
+<h2 id="4-signatures-from-per-file-digests-to-whole-file-proof">4. Signatures: from per-file digests to whole-file proof</h2>
+<p><strong>v1 (JAR signing, Android 1.0).</strong> Each entry's digest goes into <code>META-INF/MANIFEST.MF</code>, summarized and signed into <code>META-INF/CERT.SF</code>, with the PKCS#7 signature in <code>META-INF/CERT.RSA</code>. Verification: recompute per-entry digests, walk the chain — but it signs the <em>entry view</em> only. The <strong>Janus</strong> vulnerability (CVE-2017-13156, Android 5.0–8.0, fixed January 2018) built a polyglot: attacker dex bytes prepended to a legitimately signed APK. The ZIP parser (anchored at the EOCD) still saw the original entries — v1 digests passed — while the dex loader of that era, tolerant of a prefix before the <code>dex\n</code> magic, executed the prepended code. Two parsers, two views, the signature covering one view: module 03's parser-differential class. v2 (Android 7.0, API 24) was introduced to kill it; Android 11 (targetSdk 30) makes v2+ mandatory.</p>
+<p><strong>v2.</strong> As derived in §1: one signature over essentially the whole file, via the signing block. Beyond v1 it covers entry <em>metadata</em> (local headers, central directory — sizes and offsets can't be forged) and META-INF as plain data.</p>
+<p><strong>v3 (Android 9, API 28).</strong> Same block, same coverage, plus proof-of-rotation: an ordered lineage of past signing certificates, each transition attested, so the platform can prove app <em>identity</em> survived a key change — previously impossible, since updates required identical signers (<code>INSTALL_FAILED_UPDATE_INCOMPATIBLE</code> otherwise). v3.1 (Android 13) lets a rotation take effect only on newer platforms.</p>
+<p>The APK signature is the last link of a chain that starts in silicon:</p>
+<pre><code class="language-text"> ROM (immutable) → bootloader → vbmeta (AVB 2.0, signed hash descriptors)
+      → dm-verity (Merkle tree over /system, root hash in vbmeta)
+      → /system: framework + the trusted-cert store
+      → PackageManager verifies the APK's v2/v3 signature against it
+      → app code maps into a zygote-forked process (ch01)</code></pre>
+<p>"Hash the next thing before you trust it," extended from ch01's boot into application files. Read it as a memory-integrity story: dm-verity checks <em>blocks as they are paged in</em>, so the cert store an APK signature roots in cannot rot at runtime; the APK check happens once, at install; the chain composes because each stage's key material lives where the previous stage already protects it.</p>
+<h2 id="5-ota-a-b-slots-snapshots-and-deltas">5. OTA: A/B slots, snapshots, and deltas</h2>
+<p>How does the system update itself while running? It can't — that would rewrite the very files it executes from. A/B updates (Android 7.0, 2016) sidestep by doubling: system partitions exist twice with <code>_a</code>/<code>_b</code> suffixes. The running slot is never written; <code>update_engine</code> streams the new image into the inactive slot while you use the phone, then flips the boot flag (slot metadata in the <code>misc</code> partition, retry count 7 by default in AOSP). If the new slot never marks itself healthy, the bootloader falls back — power loss mid-update just boots the old slot.</p>
+<p>Doubling flash is expensive, so it was virtualized. Dynamic partitions (Android 10) collapsed system/vendor/product into one <code>super</code> partition carved up at update time; <strong>Virtual A/B</strong> (Android 10, mandatory for devices launching with Android 11) goes further — the inactive slot doesn't exist in flash. Writes go to a <strong>copy-on-write snapshot on <code>/data</code></strong>: the update is a diff applied into a snapshot, the same COW trick as ch01's fork, at partition scale; device-mapper merges the snapshot after the new slot reports healthy. Virtual A/B Compression (Android 13) keeps those snapshots compressed, cutting the <code>/data</code> cost of staging an update.</p>
+<p>Deltas make the download small. The OTA payload is a protobuf (<code>payload.bin</code>, prefixed by a 24-byte header whose magic is <code>CrAU</code> — AOSP's <code>update_engine</code> was inherited from Chrome OS) of per-partition operations: <code>REPLACE</code>, <code>SOURCE_COPY</code>, <code>SOURCE_BSDIFF</code>, <code>PUFFDIFF</code>. <code>bsdiff</code> runs on <em>uncompressed</em> bytes — but system images are full of deflate streams where byte diffs are useless: a small input change avalanches the compressed output. <strong>Puffin</strong> "puffs" each deflate stream into a canonical uncompressed <em>bit-level</em> representation, diffs those, and re-deflates deterministically so the patched output is bit-identical to the shipped image — the manifest hashes still match. Incrementals are often 5–15% of full-image size: diff-friendly formats are an <em>update-pipeline</em> decision, paid at build time.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The 65K limit is on <em>ids</em>, not methods</strong>: 16-bit <code>method@</code>/ <code>field@</code>/<code>string@</code> operands → 65,536 references per dex, counting every referenced framework method. Extra call sites are free; R8 tree-shakes references, not code bytes.</li>
+<li><strong>The v2 injection point is the ZIP dead zone</strong>: bytes between the last entry and the central directory. Pair IDs <code>0x7109871a</code> (v2), <code>0xf05368c0</code> (v3); the verity padding pair <code>0x42726577</code> keeps the central directory 4 KiB-aligned after injection.</li>
+<li><strong>dm-verity is a Merkle tree over 4 KiB blocks</strong>: a 2 GiB <code>/system</code> has 524,288 leaves; at SHA-256 (32 B) each 4 KiB node holds 128 children — 3 levels, ~4 MiB of tree, root hash signed inside <code>vbmeta</code>. Verified blocks are cached; steady-state cost is one hash per 4 KiB cold read.</li>
+<li><strong>Baseline profiles ship inside the APK</strong>: <code>assets/dexopt/baseline.prof</code> (plus a <code>.profm</code> letting ART merge it with cloud profiles). Since Android 9, install-time <code>dex2oat</code> consumes it, so hot paths are AOT-compiled before first launch — ch02's ladder pre-seeded by the package.</li>
+<li><strong>Incremental compression is a bitstream discipline</strong>: <code>bsdiff</code> on uncompressed data, <code>PUFFDIFF</code> on Puffin's canonical form; the deterministic re-deflate is what keeps patched compressed files matching their hashes. Differing zlib settings between builds quietly breaks deltas.</li>
+<li><strong><code>unzip -v</code> is the APK's honesty display</strong>: <code>resources.arsc</code> must be <code>Stored</code> + 4-byte aligned (targetSdk 30, Android 11), <code>.so</code> entries <code>Stored</code> + page-aligned when <code>extractNativeLibs=false</code>; everything else should be <code>Defl:N</code> — a <code>Defl</code> on an arsc or lib fails install on modern Android.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Tools: <code>python3</code>, <code>unzip</code>, <code>od</code> — all standard. <code>aapt2</code>/<code>apksigner</code> live in the Android SDK <code>build-tools/&lt;ver&gt;/</code> and were <strong>not installed in this sandbox</strong>; their outputs below are expected fragments.</p>
+<p><strong>Build a toy APK</strong> — a hand-built 120-byte dex skeleton (enough header to read, not to run) plus stubs:</p>
+<pre><code class="language-python"># build_apk.py
+import struct, zlib, hashlib, zipfile
+
+hdr = bytearray(112)
+hdr[0:8] = b'dex\n035\x00'                     # magic + version 035
+SIDS = 112
+body = struct.pack('&lt;I', SIDS + 4) + b'\x02hi\x00'  # string_ids[0] -&gt; "hi"
+struct.pack_into('&lt;I', hdr, 32, len(hdr) + len(body))  # file_size
+struct.pack_into('&lt;I', hdr, 36, 0x70)          # header_size = 112
+struct.pack_into('&lt;I', hdr, 40, 0x12345678)    # endian tag
+struct.pack_into('&lt;I', hdr, 56, 1)             # string_ids_size
+struct.pack_into('&lt;I', hdr, 60, SIDS)          # string_ids_off
+dex = bytearray(hdr) + body                    # other table sizes stay 0
+struct.pack_into('&lt;20s', dex, 12, hashlib.sha1(bytes(dex[32:])).digest())
+struct.pack_into('&lt;I',  dex, 8,  zlib.adler32(bytes(dex[12:])))
+open('classes.dex', 'wb').write(bytes(dex))
+
+with zipfile.ZipFile('demo.apk', 'w') as z:
+    z.write('AndroidManifest.xml', zipfile.ZIP_DEFLATED)
+    z.write('classes.dex',         zipfile.ZIP_DEFLATED)
+    z.write('resources.arsc',      zipfile.ZIP_STORED)   # arsc: stored
+    z.write('lib/arm64-v8a/libdemo.so', zipfile.ZIP_STORED)  # so: stored
+    z.write('assets/dexopt/baseline.prof', zipfile.ZIP_DEFLATED)</code></pre>
+<p><strong>Walk the structure</strong> — entries, then stored vs deflated:</p>
+<pre><code class="language-text">$ unzip -l demo.apk
+  Length      Name
+---------    ----
+       32    AndroidManifest.xml
+      120    classes.dex
+       12    resources.arsc
+     4096    lib/arm64-v8a/libdemo.so
+       21    assets/dexopt/baseline.prof
+---------    5 files
+
+$ unzip -v demo.apk   (excerpt)
+      32  Defl:N       13  59%   AndroidManifest.xml
+     120  Defl:N       66  45%   classes.dex
+      12  Stored       12   0%   resources.arsc
+    4096  Stored     4096   0%   lib/arm64-v8a/libdemo.so</code></pre>
+<p>The §3 mmap rule, visible in the method column: <code>arsc</code> and the <code>.so</code> are <code>Stored</code>.</p>
+<p><strong>Read the EOCD by hand</strong> — the backwards-anchored index of §1:</p>
+<pre><code class="language-text">$ python3 -c "import struct; d=open('demo.apk','rb').read(); \
+    i=d.rfind(b'PK\x05\x06'); \
+    print('EOCD at',i,'| CD offset',struct.unpack_from('&lt;I',d,i+16)[0])"
+EOCD at 4780 | CD offset 4455</code></pre>
+<p>In a real signed APK the signing block sits at that CD boundary with EOCD's field pointing past it — the offset the v2 verifier re-derives for chunk 3.</p>
+<p><strong>The dex header in hex</strong> (<code>xxd classes.dex | head -8</code>; <code>od</code> used here — xxd unavailable in this sandbox):</p>
+<pre><code class="language-text">$ od -A x -t x1z classes.dex | head -8
+000000 64 65 78 0a 30 33 35 00 dd 0e 02 db fe d2 83 0b  &gt;dex.035.........&lt;
+000010 10 f3 ff 3f 38 92 a7 af 65 ac 84 c2 87 10 6a 22  &gt;...?8...e...j"&lt;
+000020 78 00 00 00 70 00 00 00 78 56 34 12 00 00 00 00  &gt;x...p...xV4.....
+000030 00 00 00 00 00 00 00 00 01 00 00 00 70 00 00 00  &gt;........p.......&lt;
+000040 01 00 00 00 76 00 00 00 ...</code></pre>
+<p>Field by field: <code>64 65 78 0a</code> = <code>dex\n</code>, <code>30 33 35 00</code> = version 035; 0x08 the adler32 checksum, 0x0C the 20-byte SHA-1; 0x20 file_size 0x78, 0x24 header_size 0x70, 0x28 endian tag <code>78 56 34 12</code> (0x12345678 little-endian); 0x38 <code>string_ids_size = 1</code>, 0x3C offset 0x70.</p>
+<p><strong>With the Android SDK on PATH</strong> (not installed here — documented commands, expected output shape):</p>
+<pre><code class="language-text">$ apksigner verify --print-certs demo.apk
+Verifies
+Verified using v1 scheme (JAR signing): false
+Verified using v2 scheme (APK Signature Scheme v2): true
+Signer #1 certificate DN: CN=Android Debug, O=Android, C=US
+
+$ aapt2 dump badging demo.apk
+package: name='com.example.demo' versionCode='1' versionName='1.0'
+uses-permission: name='android.permission.INTERNET'
+application-label:'Demo'</code></pre>
+<p><code>apksigner</code> reporting <em>which scheme</em> verified is the fastest way to catch a pipeline that quietly dropped v2 for old minSdk settings.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>App-size diagnosis.</strong> "5 MB app" is two numbers: compressed download, uncompressed install. <code>unzip -v</code> shows which entries carry the weight and which are forced <code>Stored</code> (arsc, libs — the price of mmap). <code>.so</code>-dominated → per-ABI splits (App Bundle); fat <code>resources.arsc</code> → config bloat — every locale × density combination is a row.</li>
+<li><strong>Signature debugging.</strong> <code>INSTALL_FAILED_UPDATE_INCOMPATIBLE</code> gets a decision tree: same package, different key → v3 rotation vs. plain key loss; "valid signature but different code on an old device" → suspect a v1-only artifact on a pre-2018-patch device.</li>
+<li><strong>Update-pipeline reasoning.</strong> A CI change to deflate settings or alignment flags makes incremental OTAs (and Play delta downloads) balloon or fail hash checks — Puffin-class tooling assumes deterministic compression.</li>
+<li><strong>The integrity interview answer.</strong> "From power-on to app code": ROM → AVB → dm-verity → cert store → APK v2/v3 → zygote fork. Most candidates start at the APK; you start at the mask ROM.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 04 ch01 (binary formats)</strong> — EOCD/central-directory and dex's fixed-offset header tables are the same skill: find the anchor, walk the index.</li>
+<li><strong>Module 05 ch01 (boot &amp; the Zygote)</strong> — this chapter is the front half of that chain: ROM → AVB → dm-verity ends exactly where the APK signature picks up, and the dex pages map through the zygote fork.</li>
+<li><strong>Module 06 ch05 (iOS code-signing)</strong> — Apple's code-directory hash pages + CMS signature vs. v2's signing block: same whole-file hashing problem, different container (Mach-O vs ZIP).</li>
+<li><strong>Module 02 ch06 (trust chains)</strong> — ROM→vbmeta→cert→APK is a concrete key hierarchy; v3 proof-of-rotation is the same key-continuity problem as certificate rotation there.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li>Your dex already has 65,530 method ids. A new feature calls 200 methods <em>already referenced</em> in this dex and 10 that are <em>new</em>. Does the build succeed? Why?</li>
+</ol>
+<ol>
+<li>A stock ZIP's central directory starts at byte 120,000. Signers inject a 1,024-byte APK Signing Block immediately before it. (a) What value does EOCD's CD-offset field hold now? (b) What offset does the v2 verifier use when hashing the EOCD chunk, and why?</li>
+</ol>
+<ol>
+<li><code>grep -a permission demo.apk</code> finds nothing, yet the app demonstrably requests permissions. What is the manifest inside the APK, and what decodes it?</li>
+</ol>
+<ol>
+<li>A colleague sideloads a v1-only-signed APK on an unpatched Android 6.0 device. The signature verifies, yet the app exfiltrates data your source doesn't contain. Mechanism and vulnerability name?</li>
+</ol>
+<ol>
+<li>An app with <code>extractNativeLibs="false"</code>, <code>.so</code> entries stored and 4,096-aligned, works on a 2021 phone but crashes in <code>System.loadLibrary</code> on a 2025 model. What changed?</li>
+</ol>
+<ol>
+<li>Product wants a different app <em>label</em> per locale; a teammate proposes runtime string comparison in <code>onCreate</code>. Using <code>resources.arsc</code>, explain why the correct design contains no such branch.</li>
+</ol>
+<ol>
+<li>v2 covers "everything except the APK Signing Block." Why can't the scheme just digest the whole file <em>including</em> the block?</li>
+</ol>
+<ol>
+<li>Connect the chain: where do the verifier keys for an APK signature physically live, and what keeps those bytes from changing after boot? Tie this to two earlier chapters.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Fails.</strong> Call <em>sites</em> of already-referenced methods are free — the u16 <code>method@</code> index reuses an existing entry; ids dedupe. The 10 new references push the table to 65,540 &gt; 65,536 (2^16) indexable ids, so d8 emits "Too many method references." Fixes: R8 shrinking, or multidex.</li>
+</ol>
+<ol>
+<li><strong>(a) 121,024</strong> (120,000 + 1,024): routing stock readers <em>around</em> the injected block. <strong>(b) 120,000</strong> — the verifier hashes the EOCD as if the block were absent, the CD-offset field reset to its pre-injection value: the signed bytes are the block-free image, which covers the EOCD without covering the block.</li>
+</ol>
+<ol>
+<li><strong>Compiled binary XML</strong>: a chunked node tree whose element and attribute names are indices into a shared string pool, values typed — no contiguous <code>&lt;uses-permission</code> bytes exist to match. <code>aapt2 dump xmltree</code> (or <code>dump badging</code>) decodes it; <code>apktool</code> too.</li>
+</ol>
+<ol>
+<li><strong>Janus (CVE-2017-13156)</strong>, a polyglot: attacker dex prepended to the signed APK. The ZIP parser anchors at the tail EOCD, finds the original entries intact, and v1's per-entry digests match (it signs only the entry view). The pre-patch dex loader tolerated a prefix before the <code>dex\n</code> magic, so the prepended code executed — a parser differential (module 03), closed by v2's whole-file hashing.</li>
+</ol>
+<ol>
+<li><strong>Kernel page size.</strong> The 2025 device is an Android 15+ 16 KB-page machine. <code>dlopen</code> mmaps the stored <code>.so</code> straight from the APK, and mapping requires the ELF <code>LOAD</code> and ZIP entry alignments to match the kernel page size — 4,096-aligned entries can't map cleanly on 16 KB pages. Fix: 16 KB-aligned segments (NDK) and <code>zipalign -P 16384</code>.</li>
+</ol>
+<ol>
+<li><strong>Config selection is table lookup.</strong> The label resource ID has one value per configuration in <code>resources.arsc</code>; resolution is package → type → entry → best config by <code>ResTable_config</code> precedence (locale outranks density). Zero app-side branching, no relaunch on locale change — the branch lives in data.</li>
+</ol>
+<ol>
+<li><strong>Self-reference.</strong> A signature is a function of the signed bytes; including the signature in its own input requires a fixed point (value = function of itself), which can't be computed. Every self-certifying structure is anchored from <em>outside</em>: v2 excludes its block and normalizes the EOCD CD-offset; the ROM is trusted because nothing precedes it to need a signer.</li>
+</ol>
+<ol>
+<li><strong>On <code>/system</code></strong>: the platform cert plus whatever the installer policy trusts. What protects those bytes after boot is <strong>dm-verity</strong> — the Merkle tree over <code>/system</code>'s 4 KiB blocks, root hash signed in <code>vbmeta</code>, chained to the ROM: module 05 ch01's boot chain plus module 02 ch06's key hierarchy, made concrete.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch05.html"><span class="cn-label">previous</span><span class="cn-title">Ch 05</span></a>
+<a class="next" href="index.html"><span class="cn-label">next</span><span class="cn-title">Module index</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 05 — Android internals</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

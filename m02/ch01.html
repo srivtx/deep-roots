@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The attacker's model — deep-roots</title>
+<meta name="description" content="Chapter 01 of module 02: The attacker's model">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="The attacker's model — deep-roots">
+<meta property="og:description" content="Chapter 01 of module 02: The attacker's model">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The attacker's model — deep-roots">
+<meta name="twitter:description" content="Chapter 01 of module 02: The attacker's model">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 02 &middot; the dark mirror of module 01</div>
+<h1 class="post-title">The attacker's model</h1>
+<div class="post-meta">chapter 01 &middot; ~16 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Module 01 taught you what memory <em>is</em>; this module teaches what happens when the wrong bytes get into it. An exploit is a chain: a <strong>bug</strong> (a missing check) yields a <strong>primitive</strong> (a memory operation — overwrite N bytes here, read M there), a <strong>technique</strong> turns the primitive into control, and the <strong>impact</strong> is what the attacker gains. Memory corruption is the crown jewel of bug classes because arbitrary read + arbitrary write is a skeleton key that works on any C/C++ program. This chapter builds the threat model — assets, boundaries, capabilities — walks the 40-year arms race, and fixes the five terms (bug, vulnerability, exploit, payload, primitive) the module speaks.</blockquote>
+<h2 id="1-assets-trust-boundaries-attacker-capabilities">1. Assets, trust boundaries, attacker capabilities</h2>
+<p>A process is a flat address space (module 01 ch03) full of bytes. Sort them by what the <em>machine</em> does with them, and the attacker's three assets fall out:</p>
+<ol>
+<li><strong>Control data</strong> — bytes the CPU fetches as instructions or dereferences as addresses: return addresses (ch04), function pointers in <code>.data</code> (ch08), vptrs at offset 0 (ch06), GOT entries (ch07).</li>
+<li><strong>Trusted metadata</strong> — bytes the program believes without checking: lengths, indices, type tags, a uid, a refcount — read by the program as decisions, written by the attacker as levers.</li>
+<li><strong>Secrets</strong> — keys, tokens, messages. Reading them is the whole attack; nothing needs corrupting.</li>
+</ol>
+<p>The CIA triad is that table in disguise: read secrets — confidentiality; rewrite control or metadata — integrity; corrupt randomly — availability. Impact = byte class × damage.</p>
+<p>Boundaries: page tables enforce isolation only at <em>privilege transitions</em> — syscall entry, cross-process access. Inside one process there are no walls: pages are writable per their PTE flags, and the CPU executes whatever it fetches. The only doors are ones the OS opens — <code>recv()</code>, <code>read()</code>, IPC, file opens. A <strong>trust boundary</strong> is any line across which less-trusted bytes become readable by more-trusted code: network→daemon, file→parser, other-uid→setuid, JavaScript→engine (ch15). The exploit never breaks a door; it smuggles <em>meaning</em> through one — data that arrives as input and, one bug later, is read as control data.</p>
+<pre><code class="language-text">        [ network: completely untrusted bytes ]
+              |  (1) recv() — the legal door: bytes enter as *data*
+              v
+   +--------------------------------------------------------------+
+   |  process address space (ch03: private, flat, no walls)       |
+   |                                                              |
+   |   parse() frame            heap                  .data       |
+   |   [len:2][buf:64][fp:8]    [chunks + metadata]    [fn ptrs]  |
+   |      (2) BUG lands          (3) PRIMITIVE buys     (4) IMPACT |
+   |          here                   here                   here  |
+   +--------------------------------------------------------------+
+              |  (5) the door swings back OUT under attacker control
+              v
+        [ exfiltrated keys / a spawned shell ]</code></pre>
+<p>The last variable is <strong>attacker capability</strong> — what the adversary can already do. It prices the vulnerability:</p>
+<div class="table-wrap"><table><thead><tr><th>Capability</th><th>Position</th><th>Implication</th></tr></thead><tbody><tr><td>Remote, zero-click</td><td>Parses unsolicited data: preview, VOIP ring</td><td>Maximum value; CVSS <code>AV:N, UI:N</code>; the WhatsApp class</td></tr><tr><td>Remote, one-click</td><td>Opens your file, visits your URL</td><td>Still <code>AV:N</code>, user cooperates once</td></tr><tr><td>Local, unprivileged</td><td>Other account, same machine</td><td>Setuid and local daemons; <code>AV:L</code> halves the CVSS base</td></tr><tr><td>Same process</td><td>JavaScript in your renderer sandbox (ch15)</td><td>Bug needed is only a <em>sandbox escape</em></td></tr><tr><td>Adjacent / physical</td><td>Rowhammer, DMA, cache probing</td><td>No bytes corrupted — chapter 07</td></tr></tbody></table></div>
+<p>This module is one sentence applied six ways: <strong>the attacker crosses a trust boundary with bytes; a memory-safety bug converts them into control data.</strong></p>
+<h2 id="2-the-chain-bug-primitive-technique-impact">2. The chain: bug → primitive → technique → impact</h2>
+<p>Exploit engineering is four separable skills, with separate markets — stages (2) through (4) in the diagram above, plus the payoff. A worked example at every hop — the program you will run in the lab. A daemon reads a 2-byte length, then copies that many bytes into an 8-byte field:</p>
+<pre><code class="language-c">struct Rec { char name[8]; void (*fp)(void); };  /* fp sits 8 bytes above name */
+uint16_t len; char buf[512];
+fread(&amp;len, 2, 1, stdin);                        /* attacker writes this field  */
+fread(buf, 1, len &gt; sizeof buf ? sizeof buf : len, stdin);
+memcpy(r.name, buf, len);                        /* BUG: len never checked vs 8 */
+r.fp();                                          /* PRIMITIVE lands here        */</code></pre>
+<ul>
+<li><strong>Bug.</strong> <code>len</code> is never compared to <code>sizeof r.name</code> — one missing comparison. Every bug in this module is one unchecked invariant from module 01: a size, a lifetime, a type.</li>
+<li><strong>Primitive.</strong> "Write up to 511 attacker-chosen bytes starting at <code>r.name</code> — full control of the adjacent 8-byte code pointer." The canonical primitives are <strong>arbitrary read</strong> and <strong>arbitrary write</strong> ("write-what-where," in CVE prose); real bugs first grant limited versions (linear, off-by-N, one-byte), and a technique's first job is upgrading them.</li>
+<li><strong>Technique.</strong> Send <code>len = 16</code>: 8 junk bytes plus the address of a function you prefer. At <code>r.fp()</code> the call goes through attacker-chosen bytes — a control-flow hijack from perfectly legal operations. Under NX + ASLR it grows: leak an address (beat ASLR), aim at <em>existing</em> code (beat NX) — chapter 03's ROP.</li>
+<li><strong>Impact.</strong> In the lab, a printed line; in production: execution as the daemon's uid, the TLS keys elsewhere in the address space, a sandbox escape. Same four hops — only the payload differs.</li>
+</ul>
+<p>The shape scales to famous incidents. Heartbleed (CVE-2014-0160, OpenSSL 1.0.1–1.0.1f, April 2014): the heartbeat trusts its own 2-byte length (bug) → out-of-bounds <em>read</em> of up to 65,535 bytes of adjacent heap (primitive) → malformed heartbeats in a loop (technique) → private TLS keys disclosed (impact). No write primitive, so impact caps at confidentiality — "just a leak" ≠ "just a write." WhatsApp (CVE-2019-3568, NSO Group, fixed May 2019): VOIP overflow → write primitive → a crafted call → code execution on a phone whose owner did <em>nothing</em> — zero-click, the boundary crossed on the ring itself.</p>
+<h2 id="3-why-memory-corruption-is-the-crown-jewel">3. Why memory corruption is the crown jewel</h2>
+<p>Compare families by what the attacker gets. A <strong>logic bug</strong> — auth bypass, wrong price — grants one wrong answer from the program's own vocabulary: bounded; you are still inside the program doing program things. A <strong>memory-safety bug</strong> hands over the machine <em>underneath</em> it:</p>
+<ol>
+<li>Arbitrary write makes some bytes <em>somewhere</em> attacker-chosen. A GOT entry, a vptr at offset 0 (ch06), the <code>is_admin</code> byte — all just bytes at addresses.</li>
+<li>Overwriting a <em>code pointer</em> redirects <em>existing</em> code. NX bans "execute my injected bytes"; it does not ban "call <code>system</code> with my argument" — those code bytes were placed by the linker (ch03's ret2libc, ROP).</li>
+<li>Chaining redirections through <code>ret</code>-terminated fragments yields arbitrary computation from the process's own instructions — a "weird machine" (Dullien's term): corrupted state driving a real CPU.</li>
+<li>Arbitrary read closes the last gap: one leaked pointer re-derives every base (ch03's fixed offsets, used against their designer).</li>
+</ol>
+<p>Insiders' composition rule: <strong>leak + write ≈ game over.</strong> Neither alone is fatal — Heartbleed was read-only, many heap bugs are write-only — but together they work on <em>any</em> C/C++ program: that universality is the crown-jewel claim, and what module 01 ch21's data looks like read adversarially (~70% of severe CVEs at Microsoft MSRC and Chromium, 2019). A quieter reason: <em>programmable</em> severity — a logic bug's impact is fixed at report time; a write primitive's is decided later by whoever spends engineering: today a crash, QA files it <code>DoS, low</code>; next year someone aims it (chapter 02).</p>
+<h2 id="4-the-attack-surface-is-the-memory-map">4. The attack surface is the memory map</h2>
+<p>Module 01 ch03 had you read <code>/proc/pid/maps</code>; the attacker reads it as a menu. The <strong>attack surface</strong> is the set of regions that attacker-influenced bytes can reach — by landing in them (an overflow writes adjacent bytes), by addressing them (a corrupted pointer), or by timing them (ch07). The map becomes this module's table of contents:</p>
+<pre><code class="language-text">   higher addresses
+   0x7ffd_xxxx_xxxx  [ stack ]   frames: locals, saved RIP, canary ..... ch02
+   0x7fxx_xxxx_xxxx  [ libc ]   code + data: gadgets, system() ........ ch03
+   0x7fxx_xxxx_xxxx  [ heap ]   chunk metadata, C++ objects, vptrs ..... ch04-05
+   0x5555_xxxx_xxxx  [ .data ]  global fn pointers, .got/.got.plt ..... ch02-03
+   0x5555_xxxx_xxxx  [ .text ]  the instruction stream (R-X under NX) ... target
+   0x0000_0000_0000  [ guard ]  unmapped: any deref = SIGSEGV .......... noise
+   (PIE/ASLR move every base at exec; the order is fixed)</code></pre>
+<p>Each region buys a different primitive: the stack's saved RIP and locals (chapter 02); a heap chunk header's <code>size</code>/<code>fd</code>/<code>bk</code>/tcache fields (chapter 04); a heap object's vptr at offset 0 and length fields (chapter 05); <code>.got.plt</code>'s one-write redirect of the next call (chapters 02–03). libc <code>.text</code> is not writable but readable — gadgets are ammunition (chapter 03). Kernel memory is not in your map at all: syscall bugs or chapter 07's channels (modules 05–07).</p>
+<p>Two defender moves follow, both <em>impact</em> engineering: <strong>compartmentalize</strong> — parse untrusted input in a sandboxed child with no secrets mapped (Chrome's renderer model), so the same primitive buys less; <strong>shrink the map's value</strong> — <code>seccomp</code>, dropping privileges after <code>bind()</code>, closing doors for step (5). Neither finds a bug; both are why modern chains need more of them (chapter 06's ledger).</p>
+<h2 id="5-forty-years-of-arms-race">5. Forty years of arms race</h2>
+<p>Every mitigation is a <em>reply</em> to a named attacker move, and the reply date is the part outsiders get wrong. Chapter 06 prices each rung; the middle chapters weaponize around each:</p>
+<div class="table-wrap"><table><thead><tr><th>Year</th><th>Attacker move</th><th>Defender rung</th><th>Residual hole</th></tr></thead><tbody><tr><td>1988</td><td><strong>Morris worm</strong>: <code>gets()</code> overflow in BSD <code>fingerd</code> + <code>sendmail DEBUG</code>; ~6,000 of ~60,000 hosts in days</td><td>Nothing yet — the event creates CERT</td><td>ch02</td></tr><tr><td>1996</td><td><strong>Aleph One</strong>, "Smashing the Stack for Fun and Profit" (Phrack 49, File 14): the canonical frame diagram</td><td>—</td><td>ch02</td></tr><tr><td>1998</td><td>—</td><td><strong>StackGuard</strong> (Cowan et al., USENIX Sec 1998): canary before the return address → ProPolice (2000) → gcc <code>-fstack-protector</code> (gcc 4.1, 2006)</td><td>Canary leak — ch02</td></tr><tr><td>2003–04</td><td>Injected shellcode on the stack</td><td><strong>W^X/NX</strong>: OpenBSD 3.3, AMD64 NX (2003), Windows XP SP2 DEP (2004)</td><td>Code reuse, already 6 years old — ch03</td></tr><tr><td>2004–05</td><td>Jump to <em>known</em> addresses</td><td><strong>ASLR</strong>: PaX (2001) → Linux 2.6.12 <code>randomize_va_space</code> (2005); Windows Vista (2007)</td><td>One leak re-derives all bases — ch03, ch06</td></tr><tr><td>2007+</td><td><strong>ROP</strong>: Shacham, "The Geometry of Innocent Flesh on the Bone" (CCS 2007) — any <code>ret</code>-terminated fragment is a gadget</td><td>—</td><td>ch03</td></tr><tr><td>2015–20s</td><td>Ever-longer chains (leak + write + bypass)</td><td><strong>CFI/hardware</strong>: clang CFI (2014–15), Microsoft CFG (2014), Intel CET (2020), ARM PAC (2018), ARM MTE (Pixel 8, 2023)</td><td>ch06's honest ledger</td></tr></tbody></table></div>
+<p>Read the two trends — the module's thesis. The attacker's unit of work went from one bug (1988: overflow → shellcode → root) to a chain of four to six (2024: renderer memory bug + infoleak + sandbox escape + kernel LPE + persistence); the defender's, from "fix bugs" to "make each bug buy less." Each exchange buys time and raises the attacker's next price. The 2020s rungs (PAC, MTE) are the first to attack memory <em>interpretation</em> itself — why they close the module (ch06).</p>
+<h2 id="6-the-terminology-contract">6. The terminology contract</h2>
+<p>Five words, used as if everyone agreed on them. Pin them now:</p>
+<div class="table-wrap"><table><thead><tr><th>Term</th><th>Definition</th><th>Heartbleed's value</th></tr></thead><tbody><tr><td><strong>Bug</strong></td><td>A code defect: an invariant (size, lifetime, type) not enforced. Exists whether or not anyone notices.</td><td>Trusting the heartbeat's own length field</td></tr><tr><td><strong>Vulnerability</strong></td><td>A bug <em>reachable</em> across a trust boundary with attacker-controlled input. Most bugs are not.</td><td>Present in every OpenSSL 1.0.1 server speaking TLS</td></tr><tr><td><strong>Primitive</strong></td><td>The memory-safety capability yielded, stated as memory operations. The tradable asset.</td><td>OOB read, up to 65,535 B of adjacent heap, repeatable</td></tr><tr><td><strong>Exploit (technique)</strong></td><td>The operations converting the primitive into control or disclosure.</td><td>Malformed heartbeats in a loop</td></tr><tr><td><strong>Payload</strong></td><td>What runs or gets taken <em>after</em> the technique wins; under code reuse, built from the process's own functions.</td><td>The exfiltrated keys and tickets</td></tr></tbody></table></div>
+<p>Two confusions cause most misuse. <em>Bug ≠ vulnerability</em>: a check missing in a helper no untrusted input reaches has no attacker — until refactoring moves it under a parser; reachability is call-graph + boundary, not code. <em>Exploit ≠ payload</em>: the ROP chain is the exploit, <code>system("/bin/sh")</code> the delivery — "exploit in the wild" says a primitive got spent; the payload says whether you were surveilled or botneted.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>gdb disables ASLR by default</strong> (<code>set disable-randomization on</code>): every exploit that works <em>under the debugger</em> and dies in production died because production rolled different dice. <code>setarch $(uname -m) -R ./prog</code> reproduces gdb's frozen layout without gdb — the first sanity check when a chain "randomly" fails.</li>
+<li><strong>The gray market prices chains, not bugs.</strong> Zerodium's 2019 published rates: up to $2.5M for a zero-click iOS <em>full chain</em> (RCE + escape + persistence), while Google's VRP paid ~$250k for comparable Chrome chains — an arbitrage that explains where 0-days surface instead.</li>
+<li><strong>Zero-click is a capability class.</strong> CVE-2019-3568 (WhatsApp VOIP overflow, NSO Group, fixed May 2019) crossed the trust boundary on the <em>ring itself</em>. Anything parsing unsolicited data prices at <code>UI:N</code> and is worth an order of magnitude more to buyers.</li>
+<li><strong>CVE prose has a grammar; read the primitive sentence first.</strong> MSRC-era descriptions literally say "allows an attacker to write to an arbitrary address (write-what-where condition)." The technique in a write-up is marketing; the primitive clause is the asset.</li>
+<li><strong>Fork freezes the dice</strong>: a pre-forking server execs once, so every child shares the parent's randomized layout <em>and</em> its canary (chapter 02's trap, met early). Crash-and-retry against it is exhaustive search, not a lottery; <code>exec</code> per connection removes the guarantee.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>Stock Ubuntu 22.04 (gcc 11, Python 3.10+, binutils). Build the lab daemon from section 2 — the four-link chain on 16 lines, modern defaults <em>off</em>:</p>
+<pre><code class="language-bash">mkdir chain &amp;&amp; cd chain
+cat &gt; demo.c &lt;&lt;'EOF'
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdint.h&gt;
+struct Rec { char name[8]; void (*fp)(void); };  /* fp sits 8 bytes above name */
+void win(void)  { puts("[+] control transferred to win"); }
+void lose(void) { puts("[-] no transfer"); }
+int main(void) {
+    struct Rec r = { "AAAA", lose };
+    uint16_t len; char buf[512];
+    fread(&amp;len, 2, 1, stdin);       /* trust boundary: attacker's length field */
+    fread(buf, 1, len &gt; sizeof buf ? sizeof buf : len, stdin);
+    memcpy(r.name, buf, len);       /* BUG: len never checked against 8        */
+    r.fp();                         /* PRIMITIVE lands here                    */
+    return 0;
+}
+EOF
+gcc -O0 -fno-stack-protector -no-pie -o demo demo.c
+# Ubuntu gcc defaults (canaries + PIE) disabled on purpose; ch02 re-enables them.</code></pre>
+<p><strong>Step 1 — inventory the surface</strong>:</p>
+<pre><code class="language-bash">readelf -hW demo | grep 'Type:'        # EXEC = no PIE (fixed base 0x400000)
+readelf -lW demo | grep GNU_STACK      # flags RW = NX on; RWE = NX off
+checksec --file=demo                   # pwntools 4.x: one line per rung</code></pre>
+<p>Expected fragments (Ubuntu 22.04, gcc 11):</p>
+<pre><code class="language-text">  Type:      EXEC
+  GNU_STACK      ... RW ...
+  [*] 'demo'
+      RELRO:    Partial RELRO
+      Stack:    No canary found
+      NX:       NX enabled
+      PIE:      No PIE (0x400000)</code></pre>
+<p><code>No canary / NX / No PIE / Partial RELRO</code> is a 2004 posture: stack non-executable, everything else 1996.</p>
+<p><strong>Step 2 — fire the chain</strong> (one pipe):</p>
+<pre><code class="language-bash">nm demo | grep ' T '                   # where win() landed: 0x4011xx on this gcc
+python3 -c "import struct,sys; sys.stdout.buffer.write(
+    struct.pack('&lt;H',16) + b'A'*8 + struct.pack('&lt;Q',0x401176))" | ./demo</code></pre>
+<p>Expected (use <em>your</em> <code>nm</code> value for <code>win</code>):</p>
+<pre><code class="language-text">  0000000000401176 T win
+  [+] control transferred to win</code></pre>
+<p>Mapped to the chain: the header is the trusted field (hop 1); <code>b'A'*8</code> walks <code>memcpy</code> to <code>name</code>'s edge (hop 2); <code>win</code>'s address is the technique — under NX, existing code, ret2libc in miniature (hop 3); the print is impact. Chapter 02 upgrades "call win" to "own the frame."</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Triage crash reports by primitive, not mood.</strong> A fuzzer crash with the instruction pointer at <code>0x4141414141414141</code> is not "a DoS": input bytes reached control data — the DoS is the same primitive aimed badly. Translate the signature into a primitive sentence; severity follows mechanically.</li>
+<li><strong>Read advisories in the right order.</strong> Find the primitive clause in the CVE prose, then the CVSS <code>AV:</code>/<code>UI:</code> fields — exploitability predicted before the vendor's reassurances. Read-only primitives cap at confidentiality; writes keep climbing.</li>
+<li><strong>Threat-model your service as a memory map.</strong> Mark which regions untrusted bytes reach — what parses input, and what lives in its neighborhood — then decide where parsing <em>should</em> live. <code>checksec</code> your production binaries: the surface you rely on is a rung list.</li>
+<li><strong>Answer the standard interview questions from derivation</strong>: bug vs vulnerability (reachability across a trust boundary); why arbitrary write beats NX (it redirects <em>existing</em> code pointers; NX only bans injected code); why ~70% of severe CVEs are memory-safety (leak + write composes across every C/C++ program).</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch03 (virtual memory)</strong> — the <code>/proc/maps</code> menu and the leak-one-pointer-derive-all-bases arithmetic are sections 3–4 reused adversarially.</li>
+<li><strong>Module 01 ch04 (the stack)</strong> — the frame layout is chapter 02's battlefield; our <code>struct Rec</code> was a frame in miniature.</li>
+<li><strong>Module 01 ch05 + ch19 (heap, allocators)</strong> — chunk headers, bins, tcache metadata: chapter 04's attack surface.</li>
+<li><strong>Module 01 ch06 (object layout)</strong> — vptr at offset 0 is the pivot chapter 05's UAF turns into control; ch08 (C) supplies the unchecked <code>memcpy</code> family.</li>
+<li><strong>Module 01 ch10 (Rust) and ch21</strong> — Rust compiles these bug classes into type errors; ch21's ladder is what chapters 02–06 expand.</li>
+<li><strong>Module 02 ch02–ch07</strong> — ch02 takes this chapter's overwrite to the saved RIP; ch03 is life after control (ret2libc, ROP, SROP); ch04 is glibc heap metadata; ch05 the modern dominant class (reclaim → confuse → control); ch06 prices the ladder with bypass histories; ch07 the attacks that corrupt no bytes at all.</li>
+<li><strong>Queued modules</strong> — module 03: the fuzzing/sanitizer pipeline that finds these bugs; module 04: gadget hunting is applied chapter 03; modules 05/06: where MTE and PAC ship; module 07: per-OS ASLR entropy and allocator differences behind ch06's numbers.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><em>(concept)</em> Map Heartbleed (CVE-2014-0160) onto the terminology contract: state its bug, vulnerability, primitive, technique, and payload — and the impact ceiling it proves for read-only primitives.</li>
+<li><em>(concept)</em> "With NX enabled, an arbitrary write is no longer game over." Derive why this is false: walk the syllogism from write-what-where to arbitrary computation, naming what each step overwrites.</li>
+<li><em>(predict)</em> In the lab daemon, <code>nm</code> reports <code>win</code> at <code>0x401176</code> and <code>lose</code> at <code>0x40119a</code>. The attacker sends <code>len = 9</code> with 8 junk bytes plus the single byte <code>0x76</code>. What prints, and why did one byte suffice?</li>
+<li><em>(predict)</em> A pre-forking server execs once at boot; each connection is a forked child, and a wrong guess crashes only the child (respawn ~10 ms). The attacker must locate libc: 28 bits of mmap entropy (x86-64 Linux). At 100 guesses/second, what is the worst-case time to <em>guaranteed</em> success, and what design change makes each guess an independent lottery?</li>
+<li><em>(diagnose)</em> A user pastes a 300-character string into a desktop app and it crashes. QA files "low: DoS, user must misbehave." What two questions must you ask of the crash dump, and which answers upgrade the severity?</li>
+<li><em>(diagnose)</em> A fuzzing campaign returns 12 crashers: (a) 5 with the instruction pointer at <code>0x4141414141414141</code>; (b) 4 with ASan reporting <code>heap-buffer-overflow WRITE of size 8</code>; (c) 3 aborting inside glibc's <code>malloc</code> with <code>free(): invalid pointer</code>. Translate each into a primitive sentence and rank by what an exploit developer would pay.</li>
+<li><em>(cross-chapter, module 01 ch03)</em> Page tables give every process a private address space and the MMU checks every access. Why does none of that machinery notice the attacker rewriting the process's own return address — and which two hardware features (chapter 06) first check intra-process misuse?</li>
+<li><em>(cross-chapter)</em> Re-run Morris's 1988 <code>gets()</code> stack overflow against a 2025 Ubuntu binary built with default gcc (canary, PIE, NX, ASLR, full RELRO). Name each rung that fires and the module 02 chapter that shows the way around it — and what that implies about the worm's 2025 equivalent.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>Bug:</strong> the heartbeat handler trusts the message's own 2-byte length (OpenSSL 1.0.1–1.0.1f). <strong>Vulnerability:</strong> on every TLS-speaking server, reachable with attacker input. <strong>Primitive:</strong> OOB <em>read</em>, up to 65,535 bytes of adjacent heap, repeatable. <strong>Technique:</strong> malformed heartbeats in a loop. <strong>Payload:</strong> the exfiltrated keys. No write primitive means nothing can be redirected — impact caps at confidentiality, still enormous because secrets lived in the readable neighborhood.</li>
+<li><strong>False at step one.</strong> (1) Write-what-where puts 8 attacker-chosen bytes <em>somewhere</em>: a GOT entry, a function pointer, a vptr (module 01 ch06) — bytes at addresses like any others. (2) NX governs <em>page execute permission</em>; redirecting a call to existing code — <code>system</code> with an attacker argument — violates no PTE flag: ret2libc (chapter 03). (3) Chained through <code>ret</code>-terminated fragments (ROP): arbitrary computation. The remaining friction, ASLR, falls to an arbitrary read — leak one pointer, derive the bases (module 01 ch03). Leak + write ≈ game over.</li>
+<li><strong><code>[+] control transferred to win</code>.</strong> The 9-byte copy overwrites only the <em>low</em> byte of <code>fp</code> (<code>0x9a → 0x76</code>), leaving bytes 1–7 intact: x86-64 is little-endian (module 01 ch07), so the least-significant byte sits at the lowest address — the first byte the overflow reaches. It sufficed because both functions share the same 256-byte region, hence their upper seven address bytes: the <em>partial overwrite</em>, a primitive cheaper than it looks.</li>
+<li><strong>≈ 31 days worst case; <code>exec</code> per connection is the fix.</strong> Fork children inherit the parent's layout — the dice rolled once, at exec — so each failed guess eliminates a candidate: the exhaustive search finishes within 2^28 = 268,435,456 guesses ÷ 100/s ≈ 31 days (≈ 15 on average). Re-exec per connection and each child rolls fresh: every guess an independent 1-in-268-million lottery. The same inheritance is why forked children share the parent's <em>canary</em> — chapter 02's trap.</li>
+<li><strong>Question 1: what is at the crash site?</strong> If the faulting instruction pointer or a register equals part of the pasted string, input reached control data — a hijack primitive with bad aim, not a DoS. <strong>Question 2: did input <em>bytes</em> land there, or only input <em>length</em>?</strong> Crash distance proportional to paste length means a linear overwrite of attacker-chosen extent. Either answer upgrades severity: bug demo vs weapon demo is aim, not access.</li>
+<li><strong>(a)</strong> Input became the instruction pointer — a hijack primitive, but landing it needs a leak plus an NX-compatible technique (chapter 03). <strong>(b)</strong> A controlled 8-byte write adjacent to a heap object — the workhorse: with allocator determinism (module 01 ch19) it becomes vptr overwrite, length-field corruption, or tcache-adjacent attack (chapters 04–05). <strong>(c)</strong> Corrupted chunk metadata — powerful (chapter 04's House-of-* territory) but needing grooming. Ranking: (b), (c), (a) — under ASLR+NX, PC control is worth <em>less</em> than a controlled write.</li>
+<li><strong>The MMU checks addresses, not intent.</strong> Page tables enforce isolation only at privilege boundaries — syscall entry, cross-process access — asking "may this privilege level touch this page?" Within one process every writable page is equally writable: the return address is 8 bytes on a stack page the process already owns, and rewriting it violates no PTE flag; RIP is a register the hardware fetches through (module 01 ch07). Return-address checking is <em>semantic</em>, and semantics live in the program, not the MMU. The first intra-process hardware checks: Intel CET's shadow stack and ARM MTE (4-bit tags per 16-byte granule) — chapter 06's final rungs.</li>
+<li><strong>The one-bug worm is dead; its 2025 shape is a chain.</strong> The overwrite hits the <strong>canary</strong> first (gcc <code>-fstack-protector-strong</code>) — bypassed via NUL-byte leaks or non-frame targets (chapter 02). Aiming at code hits <strong>PIE + ASLR</strong> — unknown until a leak (chapter 03). Shellcode hits <strong>NX</strong> — answered since 1997 by ret2libc/ROP (chapter 03). A GOT overwrite hits <strong>full RELRO</strong> — forcing heap/UAF routes (chapters 04–05). Morris's one bug owned ~10% of the 1988 Internet; today it must be packaged as leak + corruption + bypass: the defense made it insufficient, not impossible.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<span class="cn-only"></span>
+<a class="next" href="ch02.html"><span class="cn-label">next</span><span class="cn-title">Ch 02</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 02 — Memory security &amp; exploitation</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>

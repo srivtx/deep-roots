@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recovering C++ — deep-roots</title>
+<meta name="description" content="Chapter 04 of module 04: Recovering C++">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="deep-roots learning program">
+<meta property="og:title" content="Recovering C++ — deep-roots">
+<meta property="og:description" content="Chapter 04 of module 04: Recovering C++">
+<meta property="og:url" content="https://srivtx.github.io/deep-roots/">
+<meta property="og:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Recovering C++ — deep-roots">
+<meta name="twitter:description" content="Chapter 04 of module 04: Recovering C++">
+<meta name="twitter:image" content="https://srivtx.github.io/deep-roots/og-image.png">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('roots-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="../index.html"><span class="brand-mark">deep-roots</span><span class="brand-sub">first principles</span></a>
+  <div class="header-right">
+    <nav><a href="../index.html#module-01">Module 01</a><a href="../index.html#roadmap">Modules</a><a href="../quiz.html">Quiz</a><a href="../roadmap.html">Roadmap</a><a href="../index.html#about">About</a><a href="https://github.com/srivtx/deep-roots">GitHub</a></nav>
+    <button class="theme-toggle" aria-label="Toggle dark / light mode" title="Toggle dark / light mode">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+<main class="blog-main">
+<article class="post">
+<div class="post-kicker">module 04 &middot; reading what compilers leave behind</div>
+<h1 class="post-title">Recovering C++</h1>
+<div class="post-meta">chapter 04 &middot; ~11 min read &middot; deep-roots learning program</div>
+<blockquote><strong>The 30-second version.</strong> Strip every symbol from a C++ binary and its skeleton survives. Every polymorphic object begins with a <strong>vptr</strong> pointing at a <strong>vtable</strong> whose Itanium-ABI layout is fixed — <code>[offset-to-top | typeinfo | virtuals]</code> — so vtables, the inheritance graph (RTTI), and the names (mangling decodes by hand) are all <em>derivable</em> from bytes. Constructors betray themselves by writing vptrs (two writes = base then derived), <code>operator new</code> leaks the class size and the allocator, the STL leaves standard shapes (32-byte strings, 24-byte vector triples, red-black nodes), and exceptions are tables, not code.</blockquote>
+<h2 id="the-vptr-one-pointer-carries-the-whole-class-system">The vptr: one pointer carries the whole class system</h2>
+<p>Module 01 ch06: a polymorphic C++ object carries exactly one extra word, the vptr. From the binary side, that word is a thread you can pull. Lab binary: <code>g++ 14.2.0, x86-64, -O0</code>, <code>geo::Circle</code> derived from <code>geo::Shape</code>, two virtuals plus a virtual destructor.</p>
+<pre><code class="language-text">geo::Circle object — 24 bytes (hence operator new(0x18))
++0x00          +0x08       +0x0c      +0x10
++--------------+-----------+----------+-----------------+
+| vptr (8 B)   | id_ (4 B) | pad (4)  | r_ (double, 8B) |
++--------------+-----------+----------+-----------------+
+   |     fields in declaration order (module 01 ch06)
+   |     vptr = vtable ADDRESS POINT = vtable symbol + 0x10
+   v
+vtable for geo::Circle   _ZTVN3geo6CircleE @ 0x3d48   (.data.rel.ro)
++--------+-------------------------+-----------------------------------+
+| offset | value                   | meaning                           |
++--------+-------------------------+-----------------------------------+
+| -0x10  | 0                       | offset-to-top (0: primary base)  |
+| -0x08  | 0x3da8                  | -&gt; typeinfo for geo::Circle      |
+|  0x00  | 0x12e6   &lt;- vptr HERE   | ~Circle() complete-object (D1)   |
+| +0x08  | 0x1310                  | ~Circle() deleting       (D0)    |
+| +0x10  | 0x12a8                  | Circle::area()  — slot 2         |
+| +0x18  | 0x12d4                  | Circle::name()  — slot 3         |
++--------+-------------------------+-----------------------------------+</code></pre>
+<p><strong>The layout is ABI-fixed</strong> (Itanium C++ ABI — gcc and clang on Linux): offset-to-top and the typeinfo pointer always precede the function pointers, so the vtable symbol sits 16 bytes before where the vptr points; every <code>lea ...vtable+0x10</code> feeding a store to offset 0 is a vptr write, never a call target. <strong>Virtuals appear in declaration order</strong>, with one trap: a virtual destructor occupies <em>two</em> slots (D1 = the destructor, D0 = destructor + <code>operator delete</code>). Count slots and you have the virtual interface of a class you never saw. <strong>Only constructors write the vptr</strong>, and derivation forces two writes:</p>
+<pre><code class="language-text">geo::Circle::Circle(double)   (gcc 14.2.0, -O0)
+    call  11e2 &lt;geo::Shape::Shape()&gt;     ; base ctor wrote vtable-for-Shape
+    lea   ...,%rdx  # 3d58 &lt;vtable for geo::Circle+0x10&gt;
+    mov   %rdx,(%rax)                    ; vptr write #2
+    movsd %xmm0,0x10(%rax)               ; r_ at +0x10</code></pre>
+<p>Two stores to offset 0 bracketing the base call — the base-then-derived fingerprint, and it is semantically required: a virtual call inside the base constructor must dispatch to the <strong>base</strong> version, so the intermediate vptr is observable. At <code>-O2</code>, with the base constructor inlined and no virtual call between the writes, gcc dead-store-eliminates the base store and devirtualizes <code>s-&gt;area()</code> entirely — it just wrote that vptr, so it knows the dynamic type. Optimized C++ <em>erases</em> vtable dispatch wherever the type is locally known; the indirect calls that remain mark genuinely polymorphic boundaries.</p>
+<p>The call site is chapter 03's addressing-mode method one level deeper: <code>mov (%rax),%rax</code> (vptr), <code>add $0x10,%rax</code> (slot 2 = <code>area</code>), <code>mov (%rax),%rdx</code>, <code>call *%rdx</code> — two dependent loads per dispatch, and the slot constant says <em>which</em> virtual was called.</p>
+<h2 id="rtti-the-inheritance-graph-sits-in-data-rel-ro">RTTI: the inheritance graph sits in .data.rel.ro</h2>
+<p>Every vtable points at a typeinfo object — a small structure you parse as bytes:</p>
+<pre><code class="language-text">typeinfo for geo::Circle   _ZTIN3geo6CircleE @ 0x3da8  (.data.rel.ro)
++0x00  vptr -&gt; vtable for __cxxabiv1::__si_class_type_info (+0x10)  [relocated]
++0x08  name -&gt; "N3geo6CircleE" (mangled!) in .rodata
++0x10  base -&gt; 0x3dc0 = typeinfo for geo::Shape</code></pre>
+<p>The first word is a discriminator, <em>chosen by the compiler to encode the inheritance shape</em>:</p>
+<div class="table-wrap"><table><thead><tr><th>vptr points at</th><th>class shape</th></tr></thead><tbody><tr><td><code>__cxxabiv1::__class_type_info</code></td><td>no base classes</td></tr><tr><td><code>__cxxabiv1::__si_class_type_info</code></td><td>single inheritance — one base pointer at +0x10</td></tr><tr><td><code>__cxxabiv1::__vmi_class_type_info</code></td><td>multiple/virtual inheritance — base count + flags at +0x10</td></tr></tbody></table></div>
+<p>Recovery is a table walk: collect every <code>_ZTI*</code> symbol, read each vptr to classify it, follow the base pointers — the <strong>whole inheritance DAG</strong> without executing an instruction (exactly what Ghidra's and IDA's class recoverers automate, chapter 05). Two details in the bytes: typeinfo lives in <code>.data.rel.ro</code> because its vptr needs per-load relocation (chapter 02), and the name string is stored <strong>mangled</strong>. With <code>-fno-rtti</code> the layout is unchanged but the typeinfo slot at -0x08 is written <strong>0</strong> and the <code>_ZTI*</code> symbols vanish — a zeroed word at <code>vptr-8</code> is the fingerprint of deliberate RTTI removal.</p>
+<h2 id="mangled-names-a-compression-scheme-you-can-read">Mangled names: a compression scheme you can read</h2>
+<p>The Itanium ABI encodes the full signature into the symbol name. The grammar is short enough to decode by hand:</p>
+<pre><code class="language-text">_Z N K 3geo 6Circle 4area E v          (read left to right, token by token)
+ |  | |  |    |       |     |  |
+ |  | |  |    |       |     |  + parameter list: v = void
+ |  | |  |    |       |     + E = end of nested name
+ |  | |  |    |       + 4 bytes: "area" (the member name)
+ |  | |  |    + 6 bytes: "Circle" (the class)
+ |  | |  + 3 bytes: "geo" (the namespace)
+ |  | + K = const member (method qualifier)
+ |  + N = nested name: length-prefixed scope components follow
+ + _Z = mangled name
+
+_ZTV N 3geo 6Circle E   -&gt;   TV = "vtable for";  TS/TI = typeinfo name/object</code></pre>
+<p><code>_ZNK3geo6Circle4areaEv</code> reads "const member <code>area</code> of <code>Circle</code> in <code>geo</code>, no parameters." Parameters add qualifier letters (<code>R</code> reference, <code>K</code> const, <code>P</code> pointer) and type codes (<code>i</code> int, <code>d</code> double, <code>v</code> void): <code>_ZNSt6vectorIiSaIiEE9push_backERKi</code> = <code>std::vector&lt;int, std::allocator&lt;int&gt;&gt;::push_back(int const&amp;)</code>. Constructors and destructors are <code>C1/C2</code> and <code>D0/D1/D2</code> — complete/base-object constructors, deleting/complete/base destructors. Tools: <code>c++filt</code>, or the demangle flag <code>nm -C</code> / <code>objdump -dC</code>. Windows uses a different but equally regular scheme:</p>
+<div class="table-wrap"><table><thead><tr><th>piece</th><th>example</th><th>meaning</th></tr></thead><tbody><tr><td><code>?</code></td><td><code>?area@Circle@@...</code></td><td>decorated name begins</td></tr><tr><td>scope chain</td><td><code>area@Circle@geo@@</code></td><td>innermost first, <code>@@</code> terminates</td></tr><tr><td>special names</td><td><code>??0Circle@@</code> / <code>??1Circle@@</code></td><td><code>??0</code> ctor, <code>??1</code> dtor, <code>??2</code> operator new</td></tr><tr><td>access/kind</td><td><code>Q</code>, <code>U</code>, <code>S</code>, <code>A</code>, <code>Y</code></td><td>public / public-virtual / public-static / private / global</td></tr><tr><td>types</td><td><code>H</code>, <code>N</code>, <code>X</code>, <code>PEAVCircle@@</code></td><td><code>int</code>, <code>double</code>, <code>void</code>, <code>Circle*</code></td></tr><tr><td>end</td><td><code>@Z</code></td><td>parameter list terminator</td></tr></tbody></table></div>
+<p><code>??0Circle@@QEAA@N@Z</code> is "public constructor of <code>Circle</code> taking a <code>double</code>" — the same information as <code>_ZN3geo6CircleC1Ed</code> in another dialect.</p>
+<h2 id="new-and-delete-the-allocator-s-autograph">new and delete: the allocator's autograph</h2>
+<p>Every <code>new T</code> compiles to <code>operator new(sizeof(T))</code> — the ELF import <code>_Znwm</code> — and since C++14 gcc emits <strong>sized deallocation</strong>: <code>operator delete(void*, unsigned long)</code>. The lab binary calls <code>operator new(0x18)</code> and <code>operator delete(ptr, 0x18)</code>: the class size leaks at every construction <em>and</em> destruction site — a free <code>sizeof</code> oracle. Arrays of non-trivial objects add an 8-byte count <strong>cookie</strong> (<code>operator new(10*24+8)</code>).</p>
+<p><code>_Znwm</code> forwards to the malloc-family allocator, and <em>which one</em> is a fingerprint module 01 ch19 taught you to read at call sites: <strong>glibc</strong> = <code>malloc</code>/<code>free</code> via PLT, 16-byte chunks, 8-byte header — here (glibc 2.41) <code>malloc(31)</code> yields usable 40; <strong>jemalloc</strong> = <code>mallocx</code>/<code>dallocx</code>/<code>sdallocx</code> with <code>MALLOCX_*</code> flags, <code>je_</code>-prefixed symbols when static; <strong>tcmalloc</strong> = <code>tc_malloc</code>/<code>tc_free</code> and <code>MallocExtension</code> calls; <strong>custom</strong> = every size a multiple of one quantum (0x40, 0x100), frees never called (bump/arena), direct <code>mmap</code> past a threshold. Spotting the allocator is step zero for heap grooming and exploit feasibility (module 02 ch04-05).</p>
+<h2 id="the-stl-s-standard-shapes">The STL's standard shapes</h2>
+<p>The STL is templates expanded into module 01 ch06's layouts — every container is a fixed-size record recognizable in a core dump. <code>libstdc++</code>, x86-64:</p>
+<pre><code class="language-text">std::string — sizeof = 32
++0x00  _M_p (8 B)     data pointer: obj+0x10 when short, heap when long
++0x08  length (8 B)
++0x10  union (16 B)   local char buffer[16]  OR  heap capacity (8 B) + pad
+                      SSO threshold: &lt;= 15 chars inline (15 + NUL = 16)</code></pre>
+<p>Verified live: a 15-char string has <code>data() == &amp;s + 0x10</code> (no allocation); a 16-char string calls <code>operator new(17)</code> — the request is always <code>len + 1</code> for the NUL. libc++ (Clang) packs 23 chars into 24 bytes; MSVC 15 in 32.</p>
+<pre><code class="language-text">std::vector&lt;T&gt; — sizeof = 24:  the triple
++0x00  _M_start          -&gt; first element
++0x08  _M_finish         -&gt; one past last element        (size)
++0x10  _M_end_of_storage -&gt; one past last allocated slot (capacity)</code></pre>
+<p>Every <code>push_back</code> has the same shape: compare <code>_M_finish</code> vs <code>_M_end_of_storage</code>; if equal, allocate ~2x, copy, free old, rewrite <em>all three</em> words. <code>map</code>/<code>set</code> are red-black trees: the 48-byte map object holds a sentinel header plus node count; each node is <code>[color(4)+pad][parent(8)][left(8)][right(8)][pair]</code> — 40 bytes for <code>map&lt;int,int&gt;</code> (verified: <code>new(40)</code> on first insert).</p>
+<h2 id="exceptions-tables-that-never-execute">Exceptions: tables that never execute</h2>
+<p>C++ exceptions are data, not code — three emissions:</p>
+<ul>
+<li><strong><code>.eh_frame</code></strong> — frame descriptions (CFI) for every function: how to restore registers and find the caller. Present even in C (backtraces need it); <code>.eh_frame_hdr</code> is its binary-search index.</li>
+<li><strong><code>.gcc_except_table</code></strong> — the <strong>LSDA</strong> (language-specific data area), one per function that <em>catches</em> or runs cleanups. A function that only throws has no LSDA at all.</li>
+<li><strong><code>__gxx_personality_v0</code></strong> — imported from libstdc++ (<code>U</code> symbol plus a <code>DW.ref.*</code> pointer in <code>.data.rel.ro</code>), consulted per frame during unwinding: "does this frame handle this exception?"</li>
+</ul>
+<p>The throw site is recognizable by its sequence: <code>__cxa_allocate_exception (sizeof(E))</code>, store the fields, <code>__cxa_throw(obj, &amp;typeinfo_for_E, dtor)</code> — the typeinfo argument (<code>rsi</code>) <em>names the exception type</em>. The catching side decodes byte by byte (gcc 14.2.0):</p>
+<pre><code class="language-text">.gcc_except_table @ 0x2134 — LSDA for main() @ 0x11b6
++--------+--------------+------------------------------------------------+
+| 0x2134 | ff           | LPStart encoding: omit (base = function entry) |
+| 0x2135 | 9b           | type-table encoding: pcrel+indirect+sdata4     |
+| 0x2136 | 11           | type-table offset: 17 (table ends at 0x2148)   |
+| 0x2137 | 01           | call-site encoding: uleb128, rel. to base      |
+| 0x2138 | 08           | call-site table length: 8 bytes                |
+| 0x2139 | 18 05 24 01  | site 1: start main+0x18 (call risky), len 5,   |
+|        |              |   landing pad main+0x24, action 1              |
+| 0x213d | 2d 05 00 00  | site 2: main+0x2d (_Unwind_Resume call), no    |
+|        |              |   landing pad, no action                       |
+| 0x2141 | 01 00        | action 1: filter +1 = catch type #1, end       |
+| 0x2144 | f4 1e 00 00  | type[1] = +0x1ef4 from 0x2144 -&gt; 0x4038 =     |
+|        |              |   DW.ref._ZTI1E -&gt; [0x4038] = typeinfo for E   |
++--------+--------------+------------------------------------------------+</code></pre>
+<p>Site 1's landing pad <code>main+0x24</code> is exactly the <code>cmp $0x1,%rdx</code> dispatcher that calls <code>__cxa_begin_catch</code> or <code>_Unwind_Resume</code>. <strong>What an LSDA encodes</strong> is: <em>for this instruction range, if an exception is in flight, jump here and try these type filters</em> — negative filters mean cleanup-only (run destructors, keep unwinding), landing pad 0 means "pass through." One table, parsed by a personality routine that never appears in your call graph.</p>
+<h2 id="what-insiders-know">What insiders know</h2>
+<ul>
+<li><strong>The SSO threshold is a library fingerprint</strong>: libstdc++ 15 chars inline in 32 bytes (pointer +0, length +8, 16-byte buffer +0x10); libc++ 23 chars in 24 bytes; MSVC 15 in 32. Check <code>data() - &amp;s</code> first.</li>
+<li><strong>The vector triple</strong>: any <code>std::vector</code> on x86-64 is exactly <code>[begin | end | end_of_storage]</code> = 24 bytes. Three pointer rewrites bracketing a copy loop and a free is a <code>push_back</code> growth event.</li>
+<li><strong>RTTI hides at vptr-16, in .data.rel.ro</strong>: the typeinfo pointer is the vtable slot before the address point; the typeinfo's own vptr selects <code>__class_type_info</code> / <code>__si_class_type_info</code> / <code>__vmi_class_type_info</code>, so the inheritance DAG is one array walk. <code>-fno-rtti</code> zeroes the slot but keeps the layout.</li>
+<li><strong>Two vptr writes = base+derived construction</strong> at -O0; at -O2 with the base ctor inlined, dead-store elimination can leave one, and devirtualized calls may erase the vtable call entirely.</li>
+<li><strong>Sized delete leaks sizeof</strong>: C++14 <code>operator delete(void*, size)</code> passes the class size in <code>rsi</code> at every delete site.</li>
+<li><strong>Demangle flags</strong>: <code>c++filt -s gnu-v3</code> forces the modern ABI (legacy <code>gnu-v2</code> names decode wrong by default); <code>nm -C</code> / <code>objdump -dC</code> demangle in place; <code>-C</code> is useless on a stripped binary — RTTI is your only name source there.</li>
+</ul>
+<h2 id="see-it-yourself">See it yourself</h2>
+<p>One file and binutils (gcc 14.2.0 Debian, binutils 2.44, glibc 2.41, x86-64 — mark your own versions):</p>
+<pre><code class="language-cpp">// shapes.cpp
+namespace geo {
+struct Shape {
+    Shape() : id_(0) {}
+    virtual ~Shape() {}
+    virtual double area() const { return 0.0; }
+    virtual const char* name() const { return "shape"; }
+    int id_;
+};
+struct Circle : Shape {
+    Circle(double r) : r_(r) {}
+    double area() const override { return 3.141592653589793 * r_ * r_; }
+    const char* name() const override { return "circle"; }
+    double r_;
+};
+}
+int main() {
+    geo::Shape* s = new geo::Circle(2.0);
+    double a = s-&gt;area();
+    delete s;
+    return a &gt; 0.0 ? 0 : 1;
+}</code></pre>
+<pre><code class="language-text">$ g++ -g -O0 -o shapes shapes.cpp
+$ nm shapes | rg _ZTV            # locate the vtables
+0000000000003d78 V _ZTVN3geo5ShapeE
+0000000000003d48 V _ZTVN3geo6CircleE
+$ objdump -s -j .data.rel.ro shapes    # raw vtable bytes
+ 3d48 00000000 00000000 a83d0000 00000000  .........=......
+ 3d58 e6120000 00000000 10130000 00000000  ................
+ 3d68 a8120000 00000000 d4120000 00000000  ................
+$ objdump -d -C shapes | rg -B1 -A2 "call.*Shape::Shape"
+    1284: e8 59 ff ff ff      call   11e2 &lt;geo::Shape::Shape()&gt;
+    1289: 48 8d 15 c8 2a ...  lea    ...# 3d58 &lt;vtable for geo::Circle+0x10&gt;
+    1294: 48 89 10             mov    %rdx,(%rax)   # vptr write #2</code></pre>
+<p>Cross-check against the source: two virtuals + virtual dtor = four slots (D1, D0, area, name); <code>r_</code> is the double at <code>+0x10</code>; sizeof = 24 = the <code>operator new(0x18)</code> argument in <code>main</code>. Every number in the source now has an address. In gdb: <code>p *((void**)s)</code> prints the vptr, <code>x/6xg 0x3d48</code> dumps the six vtable words, <code>info vtbl geo::Circle</code> (gdb 12+) names the slots. Then check yourself:</p>
+<pre><code class="language-text">$ c++filt _ZNK3geo6Circle4areaEv
+geo::Circle::area() const
+$ c++filt _ZTVN3geo6CircleE
+vtable for geo::Circle</code></pre>
+<p>Rebuild at <code>-O2</code> and diff: the base vptr store is gone (dead-store eliminated after inlining) and <code>s-&gt;area()</code> devirtualized to a constant.</p>
+<h2 id="how-to-use-this-knowledge">How to use this knowledge</h2>
+<ul>
+<li><strong>Cold triage of a C++ binary</strong>: <code>nm -C</code> (or an RTTI sweep on a stripped binary) plus the vtable walk yields class list, inheritance DAG, and virtual interfaces in minutes — the standard first hour of malware analysis on a C++ target.</li>
+<li><strong>Crash triage</strong>: a segfault at <code>call *%rdx</code> after a vptr load means an object-lifetime bug (use-after-free, uninitialized or memset-zeroed object); match the freed chunk's size against the class's <code>operator new</code> argument to name the dead class.</li>
+<li><strong>Exploitability assessment</strong>: a class is vtable-hijackable only if polymorphic — now you can enumerate exactly which heap objects carry vptrs (module 02 ch05's reclaim-then-dispatch needs that list).</li>
+<li><strong>ABI/library audits</strong>: the SSO threshold and demangled <code>.dynsym</code> symbols identify libstdc++ vs libc++ vs MSVC — which decides link compatibility and which runtime advisories apply.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<ul>
+<li><strong>Module 01 ch06</strong> — the vptr/object-layout diagrams there are the same bytes this chapter reconstructs from outside; ch09 (RAII) explains why destructor slots (D0/D1/D2) appear at every scope exit.</li>
+<li><strong>Module 04 ch03</strong> — its struct-offset methodology is the tool applied here to vtable slots; ch05 automates all of this (RTTI parsers, vtable xref scripts).</li>
+<li><strong>Module 02 ch05</strong> — use-after-free: the reclaimed object's vptr is the attacker's dispatch; fake vtables are built from this chapter's layout.</li>
+<li><strong>Module 01 ch19</strong> — allocator fingerprints (glibc chunk math, jemalloc size classes) are what you apply at <code>operator new/delete</code> call sites.</li>
+<li><strong>Module 10 ch05</strong> — the emitter's side of the same ABI: mangling grammar, vtable emission, construction vtables/VTT, thunks.</li>
+</ul>
+<h2 id="quiz">Quiz</h2>
+<ol>
+<li><code>geo::Circle::Circle(double)</code> stores to <code>(%rax)</code> twice (the second via the inlined base constructor). Why does the ABI require the intermediate, base-class vptr value? Give the one situation in which the compiler may legally delete the first store.</li>
+</ol>
+<ol>
+<li>Predict: what argument does <code>main</code> pass to <code>operator new</code> for <code>new geo::Circle(2.0)</code>, and which vtable offset does <code>s-&gt;area()</code> load its target from? Derive both from the source.</li>
+</ol>
+<ol>
+<li>Predict: for <code>std::string a = "012345678901234"</code> (15 chars) and <code>std::string b = "0123456789012345"</code> (16 chars) on libstdc++ x86-64 — where does each <code>data()</code> point, and what does <code>b</code> pass to <code>operator new</code>?</li>
+</ol>
+<ol>
+<li>A typeinfo object's vptr targets <code>__cxxabiv1::__si_class_type_info</code>. What does that tell you about the class, and what changes in the binary if it was built with <code>-fno-rtti</code>?</li>
+</ol>
+<ol>
+<li>A crash at <code>call *%rdx</code> after <code>mov (%rax),%rax; add $0x8,%rax; mov (%rax),%rdx</code>, where <code>rax</code> pointed into a 48-byte chunk glibc had just reused. Diagnose the bug class and the mechanism.</li>
+</ol>
+<ol>
+<li>This loop crashes with a heap-use-after-free, but only sometimes: <code>for (auto it = v.begin(); it != v.end(); ++it) if (cond(*it)) v.push_back(*it);</code> Explain the failure using the vector triple.</li>
+</ol>
+<ol>
+<li>Decode by hand: <code>_ZNK3geo6Circle4nameEv</code> and <code>_ZTVN3geo5ShapeE</code>.</li>
+</ol>
+<ol>
+<li>A 30-character <code>std::string</code> triggers <code>operator new(31)</code>, yet glibc 2.41 reports <code>malloc_usable_size</code> of 40 for that block. Reconcile both numbers.</li>
+</ol>
+<details>
+<summary>Answers</summary>
+<ol>
+<li><strong>The intermediate vptr is observable.</strong> During base construction the object <em>is</em> a base: a virtual call inside the base constructor must dispatch to the base's override, and it reads the vptr the base constructor wrote. The store is removable only when the compiler can prove no such observation — at <code>-O2</code> with the base constructor inlined and no virtual calls between the writes (the lab's -O2 <code>main</code> shows one store).</li>
+</ol>
+<ol>
+<li><strong><code>operator new(0x18)</code>, slot <code>+0x10</code>.</strong> sizeof(Circle) = vptr(8) + id_(4) + pad(4) + r_(8) = 24 = 0x18. The vtable is declaration-ordered with the virtual destructor in two slots first (D1, D0), so <code>area()</code> is entry 3: vptr + 0x10, matching <code>mov (%rax),%rax; add $0x10,%rax; ...</code>.</li>
+</ol>
+<ol>
+<li><strong><code>a.data() == &amp;a + 0x10</code> (no allocation); <code>b</code> gets a heap block via <code>operator new(17)</code>.</strong> The 16-byte SSO buffer sits at object +0x10 (after <code>_M_p</code> and the length), holding at most 15 chars + NUL. Sixteen chars exceeds it, so <code>_M_p</code> switches to the heap; the request is <code>len + 1</code> = 17 for the terminator.</li>
+</ol>
+<ol>
+<li><strong>Single, non-virtual inheritance</strong> — <code>__si_class_type_info</code> is emitted only for exactly one non-virtual base, and the typeinfo carries a base pointer at +0x10 to walk upward. With <code>-fno-rtti</code>, the vtable's typeinfo slot (address point -0x08) still exists but is 0, and the <code>_ZTI*</code>/ <code>_ZTS*</code> symbols vanish.</li>
+</ol>
+<ol>
+<li><strong>Use-after-free surfacing at the virtual dispatch.</strong> The object was freed; glibc put the 0x30-class chunk in tcache, whose next/key pointers overwrite the first 16 bytes — exactly where the vptr lives. Reuse overwrites it with new data; the virtual call (<code>add $0x8</code> selects the D0 deleting-destructor slot) then loads its target from corrupted bytes. Module 02 ch05's reclaim-confuse-control: own the first 8 bytes and you own the dispatch (fake vtable).</li>
+</ol>
+<ol>
+<li><strong>The triple is rewritten under the iterator.</strong> <code>push_back</code> on a full vector (<code>_M_finish == _M_end_of_storage</code>) allocates a bigger block, copies, frees the old block, and rewrites all three pointers. The saved <code>it</code> is <code>_M_start</code>-relative and now points into freed memory, so <code>*it</code> and <code>++it</code> read freed bytes; the stale <code>v.end()</code> can also loop forever.</li>
+</ol>
+<ol>
+<li><strong><code>const char* geo::Circle::name() const</code></strong> — <code>_Z</code> (mangled) + <code>N</code> (nested) + <code>K</code> (const member) + <code>3geo 6Circle 4name</code> + <code>E</code> (end) + <code>v</code> (no parameters). <strong><code>vtable for geo::Shape</code></strong> — <code>_Z</code> + <code>TV</code> ("vtable for") + nested <code>3geo 5Shape</code> + <code>E</code>.</li>
+</ol>
+<ol>
+<li><strong><code>std::string</code> requests <code>len + 1</code></strong> — 30 characters plus the NUL = 31. glibc rounds to chunk granularity: 31 + 8-byte header = 39, rounded to a 16-byte-aligned 48-byte chunk, of which 48 - 8 = 40 bytes are user-usable — module 01 ch19's bin arithmetic.</li>
+</ol>
+</details>
+<nav class="chapter-nav">
+<a class="prev" href="ch03.html"><span class="cn-label">previous</span><span class="cn-title">Ch 03</span></a>
+<a class="next" href="ch05.html"><span class="cn-label">next</span><span class="cn-title">Ch 05</span></a>
+</nav>
+<div class="post-footer"><p>This chapter is part of <a href="index.html">Module 04 — Decompilation &amp; reverse engineering</a>. Markdown source lives with the module. When done, take the <a href="final-exam.html">module final exam</a>. The work ledger is <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>.</p></div>
+</article>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div>
+      <div class="f-brand">deep-roots</div>
+      <div class="f-note">
+        computer science from first principles &middot; the root knowledge each field keeps
+        to itself &middot; memory models first, everything else after &middot;
+        dark and light, like a good reading room
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="../index.html">Home</a>
+      <a href="../index.html#module-01">Module 01</a>
+      <a href="../quiz.html">Quiz</a>
+      <a href="../roadmap.html">Roadmap</a>
+      <a href="https://github.com/srivtx/deep-roots">GitHub</a>
+      <a href="https://github.com/srivtx/deep-roots/blob/main/agents.md">agents.md</a>
+    </div>
+  </div>
+</footer>
+<script src="../assets/theme.js"></script>
+</body>
+</html>
