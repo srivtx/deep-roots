@@ -74,3 +74,10 @@ same format.
   handled the same way: verify the artifact, trust the artifact.
 - **Result:** all 12 modules LIVE, committed and pushed to `main`:
   <https://srivtx.github.io/deep-roots/>.
+
+- **Deploy note (postscript):** the first legacy Pages build of the expanded
+  site errored (Jekyll choked; module 10 ch03 contains template-like `{{`
+  braces); fixed by adding `.nojekyll` (raw static serving). Site verified
+  live across all 12 modules (33-page URL sweep, 0 failures; module 01's
+  legacy URLs untouched). A `deploy.yml` Actions workflow is also committed
+  as the optional modern path if Pages is ever switched to workflow builds.
